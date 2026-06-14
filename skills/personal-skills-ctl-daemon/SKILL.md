@@ -1,11 +1,13 @@
 ---
-name: daemon-skill
-description: ローカルのCodexスキルやエージェント設定を監視・同期し、変更があればGitHubへdraft PRを作るCLI/daemonを設計・実装する。監視対象、同期先repo、実装言語、PR方式、常駐方式を確認し、未指定ならshxでone-shot syncから作る。
+name: personal-skills-ctl-daemon
+description: personal-skills repo専用の同期CLI/daemonを設計・実装する。デフォルトでは ~/.codex/skills を ~/repos/personal-skills/skills へ同期し、変更があればGitHubへdraft PRを作る。実装言語は確認し、未指定ならshxでone-shot syncから作る。
 ---
 
-# daemon-skill
+# personal-skills-ctl-daemon
 
-Codexスキルなどのローカル設定を個人repoへ同期し、変更があればdraft PRを作るCLI/daemonを作成・更新するための設計スキル。
+`personal-skills` repoを管理する専用CLI/daemonを作成・更新するための設計スキル。
+
+主対象は `~/.codex/skills` と `~/repos/personal-skills/skills` の同期。汎用daemon作成スキルではなく、このrepoの管理ツールを作るために使う。
 
 ## 基本方針
 
@@ -56,7 +58,7 @@ personal-skills/
   skills/
     review/
       SKILL.md
-    daemon-skill/
+    personal-skills-ctl-daemon/
       SKILL.md
   scripts/
     install-symlinks.sh
@@ -80,7 +82,7 @@ personal-skills init
 
 ## 同期ルール
 
-- sourceからdestへ同期する。
+- `~/.codex/skills` から `~/repos/personal-skills/skills` へ同期する。
 - `.system/` など管理対象外のsystem skillsはデフォルトで除外する。
 - symlinkはリンク先を勝手に取り込まない。必要なら設定で明示する。
 - 削除も同期対象にするが、`--dry-run` で必ず表示する。
