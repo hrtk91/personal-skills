@@ -1,0 +1,14 @@
+{
+  "name": "tmux-log-cli",
+  "version": "1.0.0",
+  "description": "tmuxログを取得・作業単位でまとめるCLI",
+  "main": "tmux-log.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}
