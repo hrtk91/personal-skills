@@ -1,0 +1,4 @@
+interface:
+  display_name: "Create Pull Request"
+  short_description: "日本語PR作成時に背景と非採用案まで整える"
+  default_prompt: "Use $create-pull-request to draft a Japanese pull request."

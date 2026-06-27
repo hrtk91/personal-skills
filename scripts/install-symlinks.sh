@@ -1,28 +1,55 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/usr/bin/env shx
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 CODEX_SKILLS_DIR="${CODEX_SKILLS_DIR:-$HOME/.codex/skills}"
+HERMES_SKILLS_DIR="${HERMES_SKILLS_DIR:-$HOME/.hermes/skills}"
 
-mkdir -p "$CODEX_SKILLS_DIR"
+link_skill() {
+  skill_dir="$1"
+  target="$2"
 
-for skill_dir in "$REPO_ROOT"/skills/*; do
+  if ! mkdir -p "$(dirname "$target")" {
+    echo "skip: cannot create parent for $target" >&2
+    return 0
+  }
+
+  if [ -L "$target" ] {
+    current="$(readlink "$target")"
+    if [ "$current" = "$skill_dir" ] {
+      echo "ok: $target -> $skill_dir"
+      return
+    }
+    rm "$target"
+  } elif [ -e "$target" ] {
+    echo "skip: $target already exists and is not a symlink" >&2
+    return
+  }
+
+  if ln -s "$skill_dir" "$target" {
+    echo "linked: $target -> $skill_dir"
+  } else {
+    echo "skip: failed to link $target -> $skill_dir" >&2
+  }
+}
+
+hermes_category_for() {
+  skill_name="$1"
+  match "$skill_name" {
+    "create-pull-request" => {
+      echo "github"
+    }
+    _ => {
+      return 1
+    }
+  }
+}
+
+for skill_dir in "$REPO_ROOT"/skills/* {
   [ -d "$skill_dir" ] || continue
   skill_name="$(basename "$skill_dir")"
-  target="$CODEX_SKILLS_DIR/$skill_name"
+  link_skill "$skill_dir" "$CODEX_SKILLS_DIR/$skill_name"
 
-  if [ -L "$target" ]; then
-    current="$(readlink "$target")"
-    if [ "$current" = "$skill_dir" ]; then
-      echo "ok: $target -> $skill_dir"
-      continue
-    fi
-    rm "$target"
-  elif [ -e "$target" ]; then
-    echo "skip: $target already exists and is not a symlink" >&2
-    continue
-  fi
-
-  ln -s "$skill_dir" "$target"
-  echo "linked: $target -> $skill_dir"
-done
+  if category="$(hermes_category_for "$skill_name")" {
+    link_skill "$skill_dir" "$HERMES_SKILLS_DIR/$category/$skill_name"
+  }
+}
