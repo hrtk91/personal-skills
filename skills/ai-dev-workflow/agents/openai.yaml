@@ -1,0 +1,6 @@
+interface:
+  display_name: "AI Dev Workflow"
+  short_description: "AI実装フローを異常系込みで設計・検証"
+  default_prompt: "Use $ai-dev-workflow to design an AI coding workflow with failure-path integration tests."
+policy:
+  allow_implicit_invocation: true
