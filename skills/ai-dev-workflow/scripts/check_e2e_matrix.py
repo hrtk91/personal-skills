@@ -17,6 +17,8 @@ REQUIRED_PATTERNS = {
     "human needed": r"human_needed|human.*needed",
     "repair action success": r"repair_action.*success|repair_action.*succeed",
     "repair action failure": r"repair_action.*fail|repair_action.*qc_failed",
+    "watchdog classification": r"watchdog|stale_running|missing_logs|classif",
+    "live retained logs": r"live.*log|stream.*log|tee\(|retained.*log",
 }
 
 

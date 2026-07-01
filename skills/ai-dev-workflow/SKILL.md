@@ -39,6 +39,8 @@ For each state transition, specify:
 - completion condition: exact green/handoff condition
 
 Read [workflow-contract.md](references/workflow-contract.md) when designing or changing state transitions.
+Read [watchdog-and-observability.md](references/watchdog-and-observability.md) when adding failure detection, retry, repair, or notification behavior.
+Read [review-checklist.md](references/review-checklist.md) when reviewing an AI dev workflow change.
 
 ## Implementation Pattern
 
@@ -57,6 +59,9 @@ Keep AI judgment out of mechanical control flow:
 - `repair_action` is where fixes happen.
 - `human_needed` stops the chain.
 - Dirty worktrees are archived/classified before cleanup.
+- watchdog owns detection, classification, enqueueing, and escalation. It must not only report "summary required".
+- long-running QC wrappers must stream logs live and keep a copy for classification. Do not hide all output until failure.
+- failure notifications must include the failed numbered step, concrete command, extracted cause, and next queued action.
 
 ## Mandatory E2E Coverage
 
@@ -76,6 +81,8 @@ At minimum cover:
 - timeout/stale running recovery
 - dirty worktree archive/reuse/cleanup behavior
 - notification content includes progress and failure cause
+- watchdog classifies stalled/running, missing logs, executor failure, QC failure, and environment failure
+- retry wrappers stream logs while retaining machine-readable failure evidence
 
 Read [e2e-coverage.md](references/e2e-coverage.md) before finishing a new workflow or changing failure recovery.
 
@@ -101,5 +108,7 @@ When implementing an AI dev workflow, finish with:
 - E2E coverage added or updated
 - known states intentionally not automated
 - current queue/worker status if touching live automation
+- watchdog behavior changed, including detection interval, classification rules, and enqueue result
+- observability/logging behavior changed, including where live logs and retained logs are stored
 
 If a live existing failed run has already passed diagnosis before the new repair_action hook exists, enqueue or explicitly account for the repair_action once after deploying the new runner.
