@@ -1,0 +1,4 @@
+interface:
+  display_name: "Information Architecture UI Review"
+  short_description: "情報設計から画面導線とUIの改善点を具体的にレビュー"
+  default_prompt: "$information-architecture-ui-reviewを使い、画面の目的・情報階層・導線・状態・一貫性をレビューしてください。"
