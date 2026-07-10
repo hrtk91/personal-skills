@@ -1,0 +1,6 @@
+interface:
+  display_name: "Verifiable Minimal Writing"
+  short_description: "読者目的、文の役割、根拠、不明点、冗長さで文章を検品する。"
+  default_prompt: "verifiable-minimal-writing skill を使い、読者目的、文の役割、根拠、不明点、冗長さを点検し、必要なら媒体別referenceを参照して文章を整理してください。"
+policy:
+  allow_implicit_invocation: true
