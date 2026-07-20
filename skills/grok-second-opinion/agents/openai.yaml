@@ -1,0 +1,4 @@
+interface:
+  display_name: "Grok Second Opinion"
+  short_description: "Grokへ必要な文脈だけを安全に渡して第二意見を得る"
+  default_prompt: "Grokに読み取り専用で相談し、結果を検証して要点をまとめてください。"
