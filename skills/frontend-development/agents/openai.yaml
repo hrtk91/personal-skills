@@ -1,4 +1,4 @@
 interface:
-  display_name: "Frontend Development"
-  short_description: "Design React state boundaries and side effects"
-  default_prompt: "Use $frontend-development to design a React feature state model and side-effect boundaries."
+  display_name: "フロントエンド開発"
+  short_description: "Reactの状態設計と副作用境界を整理"
+  default_prompt: "$frontend-developmentを使ってReact featureの状態モデルと副作用境界を設計する。"
