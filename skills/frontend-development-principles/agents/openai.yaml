@@ -1,0 +1,4 @@
+interface:
+  display_name: "フロントエンド開発"
+  short_description: "Reactの状態設計と副作用境界を整理"
+  default_prompt: "$frontend-development-principlesを使ってフロントエンドfeatureの状態モデルと副作用境界を設計する。"
