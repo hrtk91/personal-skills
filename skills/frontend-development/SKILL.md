@@ -65,11 +65,10 @@ src/features/
     components/       # UI component/view
     state/            # union、reducer、状態導出
     adapters/         # 外部APIやplatform serviceとの境界
-    entrypoints/      # ナビゲーションや初期データの境界がある場合
     tests/
 ```
 
-feature内に独立した関心ごとが増えたら、`recording-library/`、`audio-replay/`、`transcription/`のようなsub-featureへ分ける。その中も同じ方針で、UI、state、外部境界、entrypointを整理する。フレームワークにhookという概念がある場合だけ`hooks/`を使う。union、reducer、状態導出、テストは所有する関心ごとの近くに置く。空のディレクトリや早すぎる分割は避ける。
+feature内に独立した関心ごとが増えたら、`recording-library/`、`audio-replay/`、`transcription/`のようなsub-featureへ分ける。その中も同じ方針で、UI、state、外部境界を整理する。画面に入るときのデータ取得やURL解析は、採用しているフレームワークの画面入口に閉じ込める。フレームワークにhookという概念がある場合だけ`hooks/`を使う。union、reducer、状態導出、テストは所有する関心ごとの近くに置く。空のディレクトリや早すぎる分割は避ける。
 
 ## 最低限の確認
 
