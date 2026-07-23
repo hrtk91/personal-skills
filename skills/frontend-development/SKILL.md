@@ -42,15 +42,13 @@ UIイベントは、そのままreducerへ渡さない。UIの境界で、業務
 
 入力を受け取って表示するだけのUIには、無理にreducerや状態機械を作らない。入力途中の文字列のような単純な値は、使っているフレームワークのlocal stateで管理してよい。
 
-### 5. hook/composableはUIと状態をつなぐ
+### 5. controller/viewmodelでUIと状態をつなぐ
 
-ReactのhookやVueのcomposableは、UIと状態・外部システムをつなぐcontroller/view-modelとして使う。UIから業務actionを受け取り、reducerや外部I/Oの結果をUIが表示できるstateへ渡す。
+controller/viewmodelは、UIと状態・外部システムをつなぐグルーです。UIから業務actionを受け取り、reducerや外部I/Oの結果をUIが表示できるstateへ渡します。ReactのhookやVueのcomposableは、このcontroller/viewmodelを実装するための枠です。
 
-hook/composableの中には、担当する一つの関心ごとの状態と副作用だけを置く。複数の業務関心ごとをまとめるworkflowは、別のcontrollerやworkflow層として名前と責務を明示する。ドメインの純粋な判定や状態遷移は、hook/composableの外に置いてテストできるようにする。
+controller/viewmodelの中には、担当する一つの関心ごとの状態と副作用だけを置きます。複数の業務関心ごとをまとめるworkflowは、別のcontrollerやworkflow層として名前と責務を明示します。ドメインの純粋な判定や状態遷移は、controller/viewmodelの外に置いてテストできるようにします。
 
-## controller/viewmodelとadapterを分ける
-
-controller/viewmodelは、UIと状態・副作用をつなぐグルーコードです。UIから業務イベントを受け取り、reducerやworkflowを動かし、外部処理の結果をUIへ返します。
+## adapterで外部I/Oを分ける
 
 外部通信は、差し替え可能なport（interface）を通して行います。adapterはportの実装であり、API、platform service、storageなどとの通信を担当します。adapterに業務状態や画面の判断を持たせません。
 
