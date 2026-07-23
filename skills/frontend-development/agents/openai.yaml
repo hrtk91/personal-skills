@@ -1,0 +1,4 @@
+interface:
+  display_name: "Frontend Development"
+  short_description: "Design React state boundaries and side effects"
+  default_prompt: "Use $frontend-development to design a React feature state model and side-effect boundaries."
