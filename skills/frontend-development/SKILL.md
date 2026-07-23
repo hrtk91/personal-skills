@@ -40,6 +40,12 @@ UIイベントは、そのままreducerへ渡さない。UIの境界で、業務
 
 入力を受け取って表示するだけのUIには、無理にreducerや状態機械を作らない。入力途中の文字列のような単純な値は、使っているフレームワークのlocal stateで管理してよい。
 
+### 5. hook/composableはUIと状態をつなぐ
+
+ReactのhookやVueのcomposableは、UIと状態・外部システムをつなぐcontroller/view-modelとして使う。UIから業務actionを受け取り、reducerや外部I/Oの結果をUIが表示できるstateへ渡す。
+
+hook/composableの中には、担当する一つの関心ごとの状態と副作用だけを置く。複数の業務関心ごとをまとめるworkflowは、別のcontrollerやworkflow層として名前と責務を明示する。ドメインの純粋な判定や状態遷移は、hook/composableの外に置いてテストできるようにする。
+
 ## 非同期処理と副作用
 
 - 外部API、platform service、audio要素、Blob URL、timer、storageなどを扱う場合は、先に`unavailable`、`loading`、`ready`、`error`などの状態を決める。
@@ -68,7 +74,7 @@ src/features/
     tests/
 ```
 
-feature内に独立した関心ごとが増えたら、`recording-library/`、`audio-replay/`、`transcription/`のようなsub-featureへ分ける。その中も同じ方針で、UI、state、外部境界を整理する。画面に入るときのデータ取得やURL解析は、採用しているフレームワークの画面入口に閉じ込める。フレームワークにhookという概念がある場合だけ`hooks/`を使う。union、reducer、状態導出、テストは所有する関心ごとの近くに置く。空のディレクトリや早すぎる分割は避ける。
+feature内に独立した関心ごとが増えたら、`recording-library/`、`audio-replay/`、`transcription/`のようなsub-featureへ分ける。その中も同じ方針で、UI、state、外部境界を整理する。画面に入るときのデータ取得やURL解析は、採用しているフレームワークの画面入口に閉じ込める。Reactなら`hooks/`、Vueなら`composables/`を、UIと状態を接着する実装の置き場として使う。union、reducer、状態導出、テストは所有する関心ごとの近くに置く。空のディレクトリや早すぎる分割は避ける。
 
 ## 最低限の確認
 
