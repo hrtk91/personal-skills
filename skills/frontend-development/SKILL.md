@@ -1,11 +1,11 @@
 ---
 name: frontend-development
-description: ReactやTypeScriptのフロントエンドを、業務状態・discriminated union・reducer・コンポーネント境界・副作用の責務分離に基づいて設計・リファクタリングする。画面機能、非同期リソース読み込み、URL駆動の画面、hook、状態管理の実装やレビューで使う。
+description: フロントエンドを、業務状態・discriminated union・reducer・UI境界・副作用の責務分離に基づいて設計・リファクタリングする。画面機能、非同期リソース読み込み、URL駆動の画面、状態管理の実装やレビューで使う。
 ---
 
 # フロントエンド開発
 
-フロントエンドの実装では、先に「何が起きる画面なのか」と「その状態を誰が持つのか」を決める。その後でコンポーネント、hook、reducerを配置する。
+フロントエンドの実装では、先に「何が起きる画面なのか」と「その状態を誰が持つのか」を決める。その後でUI、状態管理、外部システムとの境界を配置する。React、Vue、Svelteなどのフレームワーク固有の書き方は、この原則を実現する手段として選ぶ。
 
 ## 基本原則
 
@@ -30,29 +30,29 @@ type ResourceState =
 
 reducerに、現在の状態で許可されるイベントと遷移条件を書く。現在の状態で起こりえないイベントは無視する。
 
-DOMイベントは、そのままreducerへ渡さない。コンポーネントの境界で、業務上の意味が分かるactionへ変換する。
+UIイベントは、そのままreducerへ渡さない。UIの境界で、業務上の意味が分かるactionへ変換する。
 
-非同期の返事は、現在扱っている対象と一致する場合だけ状態へ反映する。古い対象の返事で現在の画面を上書きしない。
+非同期処理の応答は、現在扱っている対象と一致する場合だけ状態へ反映する。古い対象の応答で現在の画面を上書きしない。
 
 ### 4. 描画はstateから決める
 
 `view = f(state)`を基本にする。同じ事実をpropsとlocal stateの両方で判定したり、複数のbooleanから状態を推測したりしない。unionのdiscriminatorから描画を分岐する。
 
-propsを受け取って表示するだけのコンポーネントには、無理にreducerや状態機械を作らない。入力途中の文字列のような単純な値は`useState`で管理してよい。
+入力を受け取って表示するだけのUIには、無理にreducerや状態機械を作らない。入力途中の文字列のような単純な値は、使っているフレームワークのlocal stateで管理してよい。
 
 ## 非同期処理と副作用
 
-- 外部API、Tauri、audio要素、Blob URL、timer、storageなどを扱う場合は、先に`unavailable`、`loading`、`ready`、`error`などの状態を決める。
-- 副作用は、その外部リソースを所有するコンポーネントまたは専用hookに置く。
-- `useEffect`はpropsやstateを外部システムへ同期するために使う。親が子のフラグを監視して、別の業務処理を開始する用途には使わない。
-- effectの依存配列には、外部リソースを特定する値を含める。`key`による暗黙の再初期化や、空の依存配列で処理順序を隠さない。
+- 外部API、platform service、audio要素、Blob URL、timer、storageなどを扱う場合は、先に`unavailable`、`loading`、`ready`、`error`などの状態を決める。
+- 副作用は、その外部リソースを所有するUI、controller、専用hookなどに置く。
+- propsやstateを外部システムへ同期する仕組みを使う。Reactなら`useEffect`がその手段になる。親が子のフラグを監視して、別の業務処理を開始する用途には使わない。
+- 同期処理の依存値には、外部リソースを特定する値を含める。`key`による暗黙の再初期化や、空の依存配列で処理順序を隠さない。
 - 非同期処理のcleanupで、購読解除、object URL解放、timer停止などを行う。
 
 ## 状態源と責務の境界
 
-- URLが状態源なら、URLとloaderの値から画面stateを導出し、local stateへ二重にコピーしない。
-- 複数画面にまたがる業務workflowはworkflow hook/reducerに持たせ、UIには意味のあるstateとcallbackを渡す。
-- 子から親へはDOM操作ではなく業務イベントを通知する。
+- URLやナビゲーション情報が状態源なら、そこから画面stateを導出し、local stateへ二重にコピーしない。画面の初期データを取得する仕組みは、使っているフレームワークのentrypoint境界に閉じ込める。
+- 複数画面にまたがる業務workflowはworkflow controllerやreducerに持たせ、UIには意味のあるstateとcallbackを渡す。
+- 子から親へはUI操作ではなく業務イベントを通知する。
 - APIやplatform serviceのadapterはtyped boundaryの背後に置き、外部payloadとerrorを境界で変換する。
 
 ## featureの構成
@@ -62,19 +62,20 @@ propsを受け取って表示するだけのコンポーネントには、無理
 ```text
 src/features/
   recordings/
-    components/
-    hooks/
-    state/
-    route.ts
+    components/       # UI component/view
+    state/            # union、reducer、状態導出
+    adapters/         # 外部APIやplatform serviceとの境界
+    entrypoints/      # ナビゲーションや初期データの境界がある場合
+    tests/
 ```
 
-feature内に独立した関心ごとが増えたら、`recording-library/`、`audio-replay/`、`transcription/`のようなsub-featureへ分け、その中に`components/`、`hooks/`、`state/`を置く。union、reducer、状態導出、テストは所有する関心ごとの近くに置く。空のディレクトリや早すぎる分割は避ける。
+feature内に独立した関心ごとが増えたら、`recording-library/`、`audio-replay/`、`transcription/`のようなsub-featureへ分ける。その中も同じ方針で、UI、state、外部境界、entrypointを整理する。フレームワークにhookという概念がある場合だけ`hooks/`を使う。union、reducer、状態導出、テストは所有する関心ごとの近くに置く。空のディレクトリや早すぎる分割は避ける。
 
 ## 最低限の確認
 
 - reducerの主要な遷移をテストする
-- 許可されないイベントと古い非同期返事をテストする
-- props、route data、URLからの状態導出をテストする
+- 許可されないイベントと古い非同期応答をテストする
+- 入力、ナビゲーション情報、初期データからの状態導出をテストする
 - 外部境界のcleanupとerrorを確認する
 - buildとfeatureのunit testを実行する
 
