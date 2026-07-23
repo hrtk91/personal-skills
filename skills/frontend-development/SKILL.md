@@ -1,6 +1,6 @@
 ---
 name: frontend-development
-description: フロントエンドを、業務状態・discriminated union・reducer・UI境界・副作用の責務分離に基づいて設計・リファクタリングする。画面機能、非同期リソース読み込み、URL駆動の画面、状態管理の実装やレビューで使う。
+description: フロントエンドの設計原則。フロントエンドの実装・設計・リファクタリング・レビューを始めるときに参照する。業務状態、discriminated union、reducer、UI境界、副作用の責務分離、非同期処理、状態管理を扱う。
 ---
 
 # フロントエンド開発
