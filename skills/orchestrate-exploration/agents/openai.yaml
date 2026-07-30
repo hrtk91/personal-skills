@@ -1,0 +1,4 @@
+interface:
+  display_name: "探索オーケストレーター"
+  short_description: "探索をsubagentへ委譲し、親スレッドで状態を管理"
+  default_prompt: "Use $orchestrate-exploration to manage this investigation through subagents and maintain a compact current state."
