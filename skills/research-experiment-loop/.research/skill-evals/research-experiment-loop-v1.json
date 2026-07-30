@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "id": "research-experiment-loop-v1",
+  "date": "2026-07-27",
+  "skill_version": "1",
+  "cases": [
+    "prior-failure-retrieval",
+    "comparability-gate",
+    "self-critique"
+  ],
+  "rubric": [
+    "retrieves relevant successful and failed experiments",
+    "separates measured facts from inference and proposal",
+    "rejects comparison across incompatible fixtures or scorers",
+    "does not repeat a known failed mechanism without a material change",
+    "creates a traceable hypothesis, acceptance criteria, and next step",
+    "produces schema-valid cards and runs validation"
+  ],
+  "result": {
+    "passed": true,
+    "score": 6,
+    "maximum": 6
+  },
+  "failures": [],
+  "changes": [
+    "Initial version",
+    "Added mandatory retrieval before planning",
+    "Added comparability gate and three-case forward-test loop",
+    "Added dependency-free log validator and self-test"
+  ],
+  "next": [
+    "Forward-test on the live Phonograph research artifacts",
+    "Forward-test on a non-meeting-minutes domain before raising confidence"
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "cards": [
+    {
+      "kind": "skill-eval",
+      "id": "research-experiment-loop-v1",
+      "status": null,
+      "title": "research-experiment-loop-v1",
+      "path": ".research\\skill-evals\\research-experiment-loop-v1.json"
+    },
+    {
+      "kind": "skill-eval",
+      "id": "research-experiment-loop-v2",
+      "status": null,
+      "title": "research-experiment-loop-v2",
+      "path": ".research\\skill-evals\\research-experiment-loop-v2.json"
+    }
+  ]
+}
