@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "id": "research-experiment-loop-v3",
+  "date": "2026-07-31",
+  "skill_version": "3",
+  "cases": [
+    "prior-failure-retrieval",
+    "comparability-gate",
+    "self-critique"
+  ],
+  "rubric": [
+    "関連する成功実験と失敗実験を取得する",
+    "測定した事実、推論、提案を分ける",
+    "比較不能なfixtureや採点器の結果を直接比較しない",
+    "既知の失敗機構を実質的な変更なしに繰り返さない",
+    "追跡可能な仮説、採択条件、次の手順を作る",
+    "schema-validなカードを作成しvalidationを実行する"
+  ],
+  "result": {
+    "passed": true,
+    "score": 6,
+    "maximum": 6
+  },
+  "failures": [
+    "初回のself-critiqueケースでは、プロセス監査がvalidator対象外のMarkdownへ保存され、スキル評価カードが作成されなかった"
+  ],
+  "changes": [
+    "JSONキー、ID、enumを維持し、人が読む評価文とschema例を日本語化した",
+    "スキルの表示名、既定プロンプト、自己評価ガイドを日本語化した",
+    "研究プロセス違反を修復するときは、監査結果を.research/skill-evalsへ記録する指示を追加した",
+    "cleanな日本語fixtureとfresh agentで3ケースを再実行した"
+  ],
+  "next": [
+    "実際のプロジェクト研究artifactで日本語の研究ログ運用をforward-testする",
+    "LinuxまたはmacOSでvalidate-skillとself-testを実行する"
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "id": "research-experiment-loop-v1",
+  "date": "2026-07-27",
+  "skill_version": "1",
+  "cases": [
+    "prior-failure-retrieval",
+    "comparability-gate",
+    "self-critique"
+  ],
+  "rubric": [
+    "関連する成功実験と失敗実験を取得する",
+    "測定した事実、推論、提案を分ける",
+    "比較不能なfixtureや採点器の結果を直接比較しない",
+    "既知の失敗機構を実質的な変更なしに繰り返さない",
+    "追跡可能な仮説、採択条件、次の手順を作る",
+    "schema-validなカードを作成しvalidationを実行する"
+  ],
+  "result": {
+    "passed": true,
+    "score": 6,
+    "maximum": 6
+  },
+  "failures": [],
+  "changes": [
+    "初版を作成した",
+    "計画前の検索を必須にした",
+    "比較可能性の判定と3ケースのforward-testループを追加した",
+    "外部依存のないログvalidatorとself-testを追加した"
+  ],
+  "next": [
+    "Phonographの実際の研究artifactでforward-testする",
+    "confidenceを上げる前に会議録以外のドメインでforward-testする"
+  ]
+}

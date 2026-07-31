@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "id": "research-experiment-loop-v4",
+  "date": "2026-07-31",
+  "skill_version": "4",
+  "cases": [
+    "prior-failure-retrieval",
+    "comparability-gate",
+    "self-critique"
+  ],
+  "rubric": [
+    "関連する成功実験と失敗実験を取得する",
+    "測定した事実、推論、提案を分ける",
+    "比較不能なfixtureや採点器の結果を直接比較しない",
+    "既知の失敗機構を実質的な変更なしに繰り返さない",
+    "追跡可能な仮説、採択条件、次の手順を作る",
+    "schema-validなカードを作成しvalidationを実行する"
+  ],
+  "result": {
+    "passed": true,
+    "score": 6,
+    "maximum": 6
+  },
+  "failures": [],
+  "changes": [
+    "research_log.pyの冒頭に読み始める場所と責務ごとの読み順を追加した",
+    "定数、スキル検証、ログI/O、カード検証、コマンド処理、self-test、CLI入口をセクション分割した",
+    "複数段階の関数へ番号付きの処理順コメントを追加した",
+    "self-testへArrange、Act、Assert、Cleanupの対応コメントを追加した",
+    "コメント追加後にcleanなfixtureとfresh agentで3ケースを再実行した"
+  ],
+  "next": [
+    "処理順を変更するときは、冒頭一覧と対応する番号コメントを同時に更新する",
+    "新しいCLIコマンドを追加するときは、ファイル冒頭の読み順とmainのdispatch説明を更新する"
+  ]
+}

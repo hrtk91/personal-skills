@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "id": "research-experiment-loop-v5",
+  "date": "2026-07-31",
+  "skill_version": "5",
+  "cases": [
+    "prior-failure-retrieval",
+    "comparability-gate",
+    "self-critique"
+  ],
+  "rubric": [
+    "関連する成功実験と失敗実験を取得する",
+    "測定した事実、推論、提案を分ける",
+    "比較不能なfixtureや採点器の結果を直接比較しない",
+    "既知の失敗機構を実質的な変更なしに繰り返さない",
+    "追跡可能な仮説、採択条件、次の手順を作る",
+    "schema-validなカードを作成しvalidationを実行する"
+  ],
+  "result": {
+    "passed": true,
+    "score": 6,
+    "maximum": 6
+  },
+  "failures": [],
+  "changes": [
+    "実験、方針、confidenceの許可値が表す状態をコメントした",
+    "SKILL_NAME_PATTERNが許可するhyphen-caseと禁止する形式をコメントした",
+    "必須フィールド集合が追加キーを拒否しない設計理由をコメントした",
+    "実験、方針、スキル評価カードのフィールドを役割ごとにグルーピングした",
+    "コメント追加後にcleanなfixtureとfresh agentで3ケースを再実行した"
+  ],
+  "next": [
+    "定数の許可値や必須フィールドを変更するときは、対応する意味コメントとschemas.mdを同時に更新する",
+    "追加キーを拒否する方針へ変える場合は、後方互換性とドメイン拡張への影響を先に評価する"
+  ]
+}
