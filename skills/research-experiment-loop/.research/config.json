@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "tracks": {},
+  "source_documents": [
+    "references/self-evaluation.md"
+  ],
+  "artifact_roots": [
+    ".research/skill-evals"
+  ],
+  "notes": "research-experiment-loop自身の評価履歴"
+}

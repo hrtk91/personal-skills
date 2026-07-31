@@ -2,39 +2,62 @@
 
 UTF-8のJSONを`.research/`配下へ保存する。artifactのパスは可能な限り相対パスにする。
 
+## 設定
+
+研究テーマは`.research/config.json`へ宣言する。IDはCLIやカードから参照する安定した
+hyphen-case、`title`は人が読む表示名とする。
+
+```json
+{
+  "schema": 1,
+  "tracks": {
+    "query-performance": {
+      "title": "検索性能"
+    },
+    "result-quality": {
+      "title": "結果品質"
+    }
+  },
+  "source_documents": ["docs/research-notes.md"],
+  "artifact_roots": ["artifacts/benchmarks"],
+  "notes": "既存研究の参照先"
+}
+```
+
 ## 実験カード
 
 ```json
 {
   "schema": 1,
-  "id": "minutes-atomic-topic-v10",
+  "id": "index-layout-v2",
   "date": "2026-07-27",
-  "question": "アトミックトピックで議題への所属判定を改善できるか",
+  "track": "query-performance",
+  "question": "索引配置の変更により検索時間を短縮できるか",
   "status": "accepted",
-  "context": ["長いブロックには複数の独立した判断軸が含まれる。"],
-  "hypothesis": "提案アンカーと保守的なグルーピングにより過剰結合を減らせる。",
-  "prior_experiment_ids": ["minutes-one-shot-clustering"],
-  "method": ["最小単位の主張を抽出する", "提案の組み合わせを判定する"],
+  "context": ["既存方式ではランダムアクセスがボトルネックになった。"],
+  "hypothesis": "読み取り単位を連続配置するとp95検索時間を短縮できる。",
+  "prior_experiment_ids": ["index-layout-v1"],
+  "method": ["固定workloadを既存配置と候補配置で実行する"],
   "evaluation": {
-    "fixture": "qmsum-es2004a-ja",
+    "fixture": "search-workload-a",
     "baseline": {
-      "experiment_id": "minutes-two-pass",
-      "fixture": "qmsum-es2004a-ja"
+      "experiment_id": "index-layout-v1",
+      "fixture": "search-workload-a"
     },
-    "metrics": ["proposal_recall", "topic_f1", "over_merge"],
-    "acceptance": ["proposal_recall >= 0.8", "over_merge == 0"],
-    "stop_condition": "固定fixtureの採点が完了した時点で終了する。",
+    "metrics": ["p95_ms", "result_match_rate"],
+    "acceptance": ["p95_ms <= 80", "result_match_rate == 1.0"],
+    "stop_condition": "固定workloadを各方式で5回実行した時点で終了する。",
     "comparable": true,
-    "comparability_note": "同じfixtureと採点器を使用する。"
+    "comparability_note": "同じworkload、実行環境、測定器を使用する。"
   },
   "result": {
-    "metrics": {"proposal_recall": 1.0, "topic_f1": 0.718},
-    "artifacts": ["dist/eval/result.json"]
+    "metrics": {"p95_ms": 74, "result_match_rate": 1.0},
+    "artifacts": ["artifacts/benchmarks/index-layout-v2.json"]
   },
-  "worked": ["提案の再抽出により欠けていたアンカーを検出できた。"],
-  "failed": ["自由クラスタリングは独立した判断軸を過剰結合した。"],
-  "limitations": ["会議1件のみ", "CPUフォールバック"],
-  "next": ["ルールを変更せず、別の会議で検証する。"]
+  "worked": ["連続配置でランダムアクセス回数を削減できた。"],
+  "failed": ["大きすぎる読み取り単位ではメモリ使用量が採択条件を超えた。"],
+  "limitations": ["workload 1種類のみ", "単一実行環境"],
+  "next": ["配置を変更せず、別workloadで検証する。"]
 }
 ```
 
@@ -46,24 +69,31 @@ UTF-8のJSONを`.research/`配下へ保存する。artifactのパスは可能な
 - `failed`
 - `inconclusive`
 
+`track`はconfigに登録済みのテーマIDを一つ指定する。意味のある比較対象がまだ存在しない
+探索実験では`baseline`を`null`にできる。その場合は`comparable`を`false`にし、
+`comparability_note`へ比較できない理由を残す。
+
 ## 方針カード
 
 ```json
 {
   "schema": 1,
-  "id": "do-not-union-whole-blocks",
-  "statement": "共通する小トピックが一つあるだけで、ブロック全体を結合しない。",
+  "id": "fix-comparison-conditions",
+  "tracks": ["query-performance", "result-quality"],
+  "statement": "候補方式を比較するときは入力と測定環境を固定する。",
   "confidence": "high",
   "status": "active",
-  "evidence_ids": ["minutes-pair-structure", "minutes-atomic-topic-v10"],
-  "rationale": "長いブロックには複数の独立した判断軸が含まれる。",
-  "scope": ["meeting-minutes", "long-context"],
+  "evidence_ids": ["index-layout-v1", "index-layout-v2"],
+  "rationale": "条件が異なる測定値では方式による差を識別できない。",
+  "scope": ["固定workload", "同一測定環境"],
   "counterevidence": []
 }
 ```
 
 `confidence`には`low`、`medium`、`high`を使う。`status`には`active`、
-`provisional`、`retired`を使う。
+`provisional`、`retired`を使う。`tracks`には適用するテーマを一つ以上指定できる。
+`scope`にはテーマ名ではなく、入力規模、実行環境、対象範囲など、その方針が成立する条件を
+記録する。
 
 ## スキル評価カード
 

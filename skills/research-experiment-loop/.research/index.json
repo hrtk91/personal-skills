@@ -6,35 +6,48 @@
       "id": "research-experiment-loop-v1",
       "status": null,
       "title": "research-experiment-loop-v1",
-      "path": ".research\\skill-evals\\research-experiment-loop-v1.json"
+      "tracks": [],
+      "path": ".research/skill-evals/research-experiment-loop-v1.json"
     },
     {
       "kind": "skill-eval",
       "id": "research-experiment-loop-v2",
       "status": null,
       "title": "research-experiment-loop-v2",
-      "path": ".research\\skill-evals\\research-experiment-loop-v2.json"
+      "tracks": [],
+      "path": ".research/skill-evals/research-experiment-loop-v2.json"
     },
     {
       "kind": "skill-eval",
       "id": "research-experiment-loop-v3",
       "status": null,
       "title": "research-experiment-loop-v3",
-      "path": ".research\\skill-evals\\research-experiment-loop-v3.json"
+      "tracks": [],
+      "path": ".research/skill-evals/research-experiment-loop-v3.json"
     },
     {
       "kind": "skill-eval",
       "id": "research-experiment-loop-v4",
       "status": null,
       "title": "research-experiment-loop-v4",
-      "path": ".research\\skill-evals\\research-experiment-loop-v4.json"
+      "tracks": [],
+      "path": ".research/skill-evals/research-experiment-loop-v4.json"
     },
     {
       "kind": "skill-eval",
       "id": "research-experiment-loop-v5",
       "status": null,
       "title": "research-experiment-loop-v5",
-      "path": ".research\\skill-evals\\research-experiment-loop-v5.json"
+      "tracks": [],
+      "path": ".research/skill-evals/research-experiment-loop-v5.json"
+    },
+    {
+      "kind": "skill-eval",
+      "id": "research-experiment-loop-v6",
+      "status": null,
+      "title": "research-experiment-loop-v6",
+      "tracks": [],
+      "path": ".research/skill-evals/research-experiment-loop-v6.json"
     }
   ]
 }

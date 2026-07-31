@@ -16,10 +16,12 @@ self-test → CLI入口」の順に並べる。
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import re
 import shutil
 import tempfile
+from contextlib import redirect_stdout
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +45,10 @@ CONFIDENCES = {"low", "medium", "high"}
 # この形式により、先頭・末尾のハイフンや連続ハイフンも許可しない。
 SKILL_NAME_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
+# 研究テーマIDも、config、CLI、索引で同じ値を安全に扱えるhyphen-caseへ
+# 制限する。表示名はconfigのtitleへ分離するため、IDに特定言語を埋め込まない。
+TRACK_ID_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+
 # 各集合はカード直下の必須キーだけを定義する。ドメイン固有の測定値や
 # 将来のschema拡張を妨げないため、ここにない追加キーは拒否しない。
 
@@ -52,6 +58,7 @@ EXPERIMENT_FIELDS = {
     "schema",
     "id",
     "date",
+    "track",
     # 問い、前提、仮説、過去実験との関係、実行方法
     "question",
     "context",
@@ -74,6 +81,7 @@ PRINCIPLE_FIELDS = {
     # 識別情報と方針本文
     "schema",
     "id",
+    "tracks",
     "statement",
     # 現在の確からしさと採用状態
     "confidence",
@@ -231,9 +239,10 @@ def init_log(root: Path) -> None:
             config,
             {
                 "schema": 1,
+                "tracks": {},
                 "source_documents": [],
                 "artifact_roots": [],
-                "notes": "Add existing research docs and artifact directories.",
+                "notes": "既存の研究資料、artifact保存先、研究テーマを登録する。",
             },
         )
 
@@ -254,6 +263,64 @@ def card_files(base: Path) -> list[tuple[str, Path]]:
         for path in sorted((base / folder).glob("*.json")):
             result.append((kind, path))
     return result
+
+
+def validate_config(base: Path) -> tuple[set[str], list[str]]:
+    """研究テーマと外部資料の設定を検証し、利用可能なテーマIDを返す。"""
+
+    # 処理順:
+    # 1. config.jsonをUTF-8 JSONとして読む。
+    # 2. 共通フィールドと配列項目を検証する。
+    # 3. 研究テーマIDと表示名を検証し、利用可能なID集合を返す。
+
+    # 1. config.jsonをUTF-8 JSONとして読む。
+    config_path = base / "config.json"
+    try:
+        config = load_json(config_path)
+    except (OSError, json.JSONDecodeError) as exc:
+        return set(), [f"{config_path}: invalid JSON: {exc}"]
+    if not isinstance(config, dict):
+        return set(), [f"{config_path}: config must be an object"]
+
+    # 2. 共通フィールドと配列項目を検証する。
+    errors: list[str] = []
+    if config.get("schema") != 1:
+        errors.append(f"{config_path}: schema must be 1")
+    for field in ("source_documents", "artifact_roots"):
+        validate_list(config.get(field), f"{config_path}.{field}", errors)
+    tracks = config.get("tracks")
+    if not isinstance(tracks, dict):
+        errors.append(f"{config_path}.tracks must be an object")
+        return set(), errors
+
+    # 3. 研究テーマIDと表示名を検証し、利用可能なID集合を返す。
+    track_ids: set[str] = set()
+    for track_id, metadata in tracks.items():
+        if not isinstance(track_id, str) or not TRACK_ID_PATTERN.fullmatch(track_id):
+            errors.append(f"{config_path}: invalid track id {track_id!r}")
+            continue
+        track_ids.add(track_id)
+        if not isinstance(metadata, dict):
+            errors.append(f"{config_path}.tracks.{track_id} must be an object")
+            continue
+        if not isinstance(metadata.get("title"), str) or not metadata["title"].strip():
+            errors.append(
+                f"{config_path}.tracks.{track_id}.title must be a non-empty string"
+            )
+    return track_ids, errors
+
+
+def card_tracks(kind: str, card: dict[str, Any]) -> list[str]:
+    """カード種別ごとの研究テーマを、索引と検索向けの配列へ正規化する。"""
+
+    if kind == "experiment":
+        track = card.get("track")
+        return [track] if isinstance(track, str) else []
+    if kind == "principle":
+        tracks = card.get("tracks")
+        if isinstance(tracks, list):
+            return [track for track in tracks if isinstance(track, str)]
+    return []
 
 
 # =============================================================================
@@ -280,6 +347,8 @@ def validate_experiment(card: dict[str, Any], label: str, errors: list[str]) -> 
         errors.append(f"{label}: missing {sorted(missing)}")
     if card.get("status") not in EXPERIMENT_STATUSES:
         errors.append(f"{label}: invalid status {card.get('status')!r}")
+    if not isinstance(card.get("track"), str) or not card["track"]:
+        errors.append(f"{label}.track must be a non-empty string")
     for field in (
         "context",
         "prior_experiment_ids",
@@ -309,13 +378,23 @@ def validate_experiment(card: dict[str, Any], label: str, errors: list[str]) -> 
             errors.append(f"{label}.evaluation missing {field}")
     validate_list(evaluation.get("metrics"), f"{label}.evaluation.metrics", errors)
     validate_list(evaluation.get("acceptance"), f"{label}.evaluation.acceptance", errors)
+    if not isinstance(evaluation.get("fixture"), str) or not evaluation["fixture"]:
+        errors.append(f"{label}.evaluation.fixture must be a non-empty string")
+    if not isinstance(evaluation.get("comparable"), bool):
+        errors.append(f"{label}.evaluation.comparable must be a boolean")
+    if not isinstance(evaluation.get("comparability_note"), str):
+        errors.append(f"{label}.evaluation.comparability_note must be a string")
 
     # 3. baselineとfixtureの比較可能性を検証する。
     baseline = evaluation.get("baseline")
-    if not isinstance(baseline, dict):
-        errors.append(f"{label}.evaluation.baseline must be an object")
-    elif evaluation.get("comparable") is True:
+    if baseline is not None and not isinstance(baseline, dict):
+        errors.append(f"{label}.evaluation.baseline must be an object or null")
+    elif baseline is None and evaluation.get("comparable") is True:
+        errors.append(f"{label}: comparable=true requires a baseline")
+    elif isinstance(baseline, dict) and evaluation.get("comparable") is True:
         baseline_fixture = baseline.get("fixture")
+        if not baseline_fixture:
+            errors.append(f"{label}: comparable=true requires baseline.fixture")
         if baseline_fixture and baseline_fixture != evaluation.get("fixture"):
             errors.append(
                 f"{label}: comparable=true but fixtures differ "
@@ -323,6 +402,10 @@ def validate_experiment(card: dict[str, Any], label: str, errors: list[str]) -> 
             )
         if not evaluation.get("comparability_note"):
             errors.append(f"{label}: comparable=true requires comparability_note")
+    if evaluation.get("comparable") is False and not evaluation.get(
+        "comparability_note"
+    ):
+        errors.append(f"{label}: comparable=false requires comparability_note")
 
     # 4. resultのmetricsとartifactsを検証する。
     result = card.get("result")
@@ -344,8 +427,10 @@ def validate_principle(card: dict[str, Any], label: str, errors: list[str]) -> N
         errors.append(f"{label}: invalid confidence {card.get('confidence')!r}")
     if card.get("status") not in PRINCIPLE_STATUSES:
         errors.append(f"{label}: invalid status {card.get('status')!r}")
-    for field in ("evidence_ids", "scope", "counterevidence"):
+    for field in ("tracks", "evidence_ids", "scope", "counterevidence"):
         validate_list(card.get(field), f"{label}.{field}", errors)
+    if not card.get("tracks"):
+        errors.append(f"{label}: principle requires tracks")
     if not card.get("evidence_ids"):
         errors.append(f"{label}: principle requires evidence_ids")
 
@@ -371,16 +456,18 @@ def validate_log(root: Path) -> list[str]:
     """研究ログ全体と、カード間で参照するIDの整合性を検証する。"""
 
     # 処理順:
-    # 1. .researchの存在を確認する。
+    # 1. .researchとconfigを確認し、利用可能な研究テーマを取得する。
     # 2. 全カードを読み、共通項目と重複IDを検証しながらID集合を作る。
-    # 3. カード種別ごとのschemaと、方針から実験への参照を検証する。
+    # 3. カード種別ごとのschema、テーマ、カード間参照を検証する。
     # 4. 収集した全エラーを返す。
 
-    # 1. .researchの存在を確認する。
+    # 1. .researchとconfigを確認し、利用可能な研究テーマを取得する。
     base = research_dir(root)
     errors: list[str] = []
     if not base.exists():
         return [f"{base} does not exist; run init"]
+    track_ids, config_errors = validate_config(base)
+    errors.extend(config_errors)
 
     # 2. 全カードを読み、共通項目と重複IDを検証しながらID集合を作る。
     seen_ids: dict[str, Path] = {}
@@ -408,16 +495,33 @@ def validate_log(root: Path) -> list[str]:
         if kind == "experiment" and isinstance(card_id, str):
             experiment_ids.add(card_id)
 
-    # 3. カード種別ごとのschemaと、方針から実験への参照を検証する。
+    # 3. カード種別ごとのschema、テーマ、カード間参照を検証する。
     for kind, path, card in cards:
         label = str(path.relative_to(base))
         if kind == "experiment":
             validate_experiment(card, label, errors)
+            track = card.get("track")
+            if isinstance(track, str) and track not in track_ids:
+                errors.append(f"{label}: unknown track {track!r}")
+            prior_ids = card.get("prior_experiment_ids")
+            if isinstance(prior_ids, list):
+                for prior_id in prior_ids:
+                    if prior_id not in experiment_ids:
+                        errors.append(
+                            f"{label}: unknown prior experiment id {prior_id!r}"
+                        )
         elif kind == "principle":
             validate_principle(card, label, errors)
-            for evidence_id in card.get("evidence_ids", []):
-                if evidence_id not in experiment_ids:
-                    errors.append(f"{label}: unknown evidence id {evidence_id!r}")
+            tracks = card.get("tracks")
+            if isinstance(tracks, list):
+                for track in tracks:
+                    if track not in track_ids:
+                        errors.append(f"{label}: unknown track {track!r}")
+            evidence_ids = card.get("evidence_ids")
+            if isinstance(evidence_ids, list):
+                for evidence_id in evidence_ids:
+                    if evidence_id not in experiment_ids:
+                        errors.append(f"{label}: unknown evidence id {evidence_id!r}")
         else:
             validate_skill_eval(card, label, errors)
 
@@ -443,31 +547,39 @@ def build_index(root: Path) -> None:
                 "title": card.get("question")
                 or card.get("statement")
                 or card.get("id"),
-                "path": str(path.relative_to(root.resolve())),
+                "tracks": card_tracks(kind, card),
+                "path": path.relative_to(root.resolve()).as_posix(),
             }
         )
     write_json(base / "index.json", {"schema": 1, "cards": cards})
     print(base / "index.json")
 
 
-def query(root: Path, keywords: list[str]) -> None:
+def query(root: Path, keywords: list[str], track: str | None = None) -> list[str]:
     """カード本文を検索し、関連度が高い上位10件をJSON Linesで出力する。"""
 
     # 処理順:
-    # 1. 検索語を大文字小文字を区別しない形式へ正規化する。
-    # 2. 各カード内の出現回数を数え、候補を収集する。
+    # 1. configと指定された研究テーマを検証し、検索語を正規化する。
+    # 2. テーマが一致する各カード内の出現回数を数え、候補を収集する。
     # 3. スコアとパスで安定ソートし、上位10件の要約を出力する。
 
-    # 1. 検索語を大文字小文字を区別しない形式へ正規化する。
+    # 1. configと指定された研究テーマを検証し、検索語を正規化する。
     base = research_dir(root)
+    track_ids, errors = validate_config(base)
+    if errors:
+        return errors
+    if track is not None and track not in track_ids:
+        return [f"unknown track {track!r}"]
     needles = [value.casefold() for value in keywords if value.strip()]
 
-    # 2. 各カード内の出現回数を数え、候補を収集する。
+    # 2. テーマが一致する各カード内の出現回数を数え、候補を収集する。
     matches: list[tuple[int, str, Path, dict[str, Any]]] = []
     for kind, path in card_files(base):
         try:
             card = load_json(path)
         except (OSError, json.JSONDecodeError):
+            continue
+        if track is not None and track not in card_tracks(kind, card):
             continue
         haystack = json.dumps(card, ensure_ascii=False).casefold()
         score = sum(haystack.count(needle) for needle in needles)
@@ -485,6 +597,7 @@ def query(root: Path, keywords: list[str]) -> None:
                     "kind": kind,
                     "id": card.get("id"),
                     "status": card.get("status"),
+                    "tracks": card_tracks(kind, card),
                     "summary": card.get("question")
                     or card.get("statement")
                     or card.get("id"),
@@ -495,19 +608,24 @@ def query(root: Path, keywords: list[str]) -> None:
                 ensure_ascii=False,
             )
         )
+    return []
 
 
 # =============================================================================
 # 6. 自己テスト用fixture
 # =============================================================================
 
-def sample_experiment(fixture: str = "fixture-a") -> dict[str, Any]:
+def sample_experiment(
+    fixture: str = "fixture-a",
+    track: str = "quality",
+) -> dict[str, Any]:
     """自己テストで使う最小の正常な実験カードを返す。"""
 
     return {
         "schema": 1,
         "id": "sample-experiment",
         "date": "2026-01-01",
+        "track": track,
         "question": "Does the new method improve recall?",
         "status": "accepted",
         "context": ["Prior method missed one case."],
@@ -535,29 +653,67 @@ def self_test() -> None:
     """正常系と主要な失敗系を、一時ディレクトリだけで回帰テストする。"""
 
     # テストの流れ:
-    # 1. Arrange: 一時研究ログと正常な実験カードを準備する。
-    # 2. Act/Assert: 正常な研究ログがvalidationを通ることを確認する。
-    # 3. Act/Assert: fixture不一致の直接比較が拒否されることを確認する。
-    # 4. Arrange: 正常なスキルfixtureとUIメタデータを準備する。
-    # 5. Act/Assert: 正常なスキルfixtureがvalidationを通ることを確認する。
-    # 6. Act/Assert: 不正なUTF-8メタデータが拒否されることを確認する。
-    # 7. Cleanup: 成否にかかわらず一時ディレクトリを削除する。
+    # 1. Arrange: 複数テーマを持つ一時研究ログと正常なカードを準備する。
+    # 2. Act/Assert: 複数テーマとbaselineなしの研究ログがvalidationを通ることを確認する。
+    # 3. Act/Assert: テーマ指定検索が別テーマのカードを除外することを確認する。
+    # 4. Act/Assert: 索引の相対パスがOSに依存しないことを確認する。
+    # 5. Act/Assert: 未登録テーマとfixture不一致の直接比較を拒否することを確認する。
+    # 6. Arrange: 正常なスキルfixtureとUIメタデータを準備する。
+    # 7. Act/Assert: 正常なスキルfixtureがvalidationを通ることを確認する。
+    # 8. Act/Assert: 不正なUTF-8メタデータが拒否されることを確認する。
+    # 9. Cleanup: 成否にかかわらず一時ディレクトリを削除する。
 
-    # 1. Arrange: 一時研究ログと正常な実験カードを準備する。
+    # 1. Arrange: 複数テーマを持つ一時研究ログと正常なカードを準備する。
     temp = Path(tempfile.mkdtemp(prefix="research-log-self-test-"))
     try:
         init_log(temp)
+        config_path = research_dir(temp) / "config.json"
+        config = load_json(config_path)
+        config["tracks"] = {
+            "quality": {"title": "品質"},
+            "performance": {"title": "性能"},
+        }
+        write_json(config_path, config)
         write_json(
             research_dir(temp) / "experiments" / "sample-experiment.json",
             sample_experiment(),
         )
+        exploratory = sample_experiment(track="performance")
+        exploratory["id"] = "exploratory-experiment"
+        exploratory["question"] = "Which behavior should be measured first?"
+        exploratory["evaluation"]["baseline"] = None
+        exploratory["evaluation"]["comparable"] = False
+        exploratory["evaluation"]["comparability_note"] = (
+            "No meaningful baseline exists before the first measurement."
+        )
+        write_json(
+            research_dir(temp) / "experiments" / "exploratory-experiment.json",
+            exploratory,
+        )
 
-        # 2. Act/Assert: 正常な研究ログがvalidationを通ることを確認する。
+        # 2. Act/Assert: 複数テーマとbaselineなしの研究ログがvalidationを通ることを確認する。
         errors = validate_log(temp)
         if errors:
             raise AssertionError(f"valid fixture failed: {errors}")
 
-        # 3. Act/Assert: fixture不一致の直接比較が拒否されることを確認する。
+        # 3. Act/Assert: テーマ指定検索が別テーマのカードを除外することを確認する。
+        captured = io.StringIO()
+        with redirect_stdout(captured):
+            errors = query(temp, [], track="performance")
+        if errors:
+            raise AssertionError(f"track query failed: {errors}")
+        output = captured.getvalue()
+        if "exploratory-experiment" not in output or "sample-experiment" in output:
+            raise AssertionError("track query did not isolate the requested theme")
+
+        # 4. Act/Assert: 索引の相対パスがOSに依存しないことを確認する。
+        with redirect_stdout(io.StringIO()):
+            build_index(temp)
+        index = load_json(research_dir(temp) / "index.json")
+        if any("\\" in card["path"] for card in index["cards"]):
+            raise AssertionError("index paths must use portable separators")
+
+        # 5. Act/Assert: 未登録テーマとfixture不一致の直接比較を拒否することを確認する。
         invalid = sample_experiment("fixture-current")
         invalid["id"] = "invalid-comparison"
         invalid["evaluation"]["baseline"]["fixture"] = "fixture-other"
@@ -568,8 +724,16 @@ def self_test() -> None:
         errors = validate_log(temp)
         if not any("fixtures differ" in error for error in errors):
             raise AssertionError("incompatible fixture comparison was not rejected")
+        invalid["track"] = "unknown-track"
+        write_json(
+            research_dir(temp) / "experiments" / "invalid-comparison.json",
+            invalid,
+        )
+        errors = validate_log(temp)
+        if not any("unknown track" in error for error in errors):
+            raise AssertionError("unregistered track was not rejected")
 
-        # 4. Arrange: 正常なスキルfixtureとUIメタデータを準備する。
+        # 6. Arrange: 正常なスキルfixtureとUIメタデータを準備する。
         skill_dir = temp / "portable-skill"
         (skill_dir / "agents").mkdir(parents=True)
         (skill_dir / "SKILL.md").write_text(
@@ -590,19 +754,19 @@ def self_test() -> None:
             encoding="utf-8",
         )
 
-        # 5. Act/Assert: 正常なスキルfixtureがvalidationを通ることを確認する。
+        # 7. Act/Assert: 正常なスキルfixtureがvalidationを通ることを確認する。
         errors = validate_skill(skill_dir)
         if errors:
             raise AssertionError(f"valid skill fixture failed: {errors}")
 
-        # 6. Act/Assert: 不正なUTF-8メタデータが拒否されることを確認する。
+        # 8. Act/Assert: 不正なUTF-8メタデータが拒否されることを確認する。
         metadata.write_bytes(b"interface:\n  display_name: \"\xff\"\n")
         errors = validate_skill(skill_dir)
         if not any("cannot read as UTF-8" in error for error in errors):
             raise AssertionError("invalid UTF-8 metadata was not rejected")
         print("self-test: OK")
     finally:
-        # 7. Cleanup: 成否にかかわらず一時ディレクトリを削除する。
+        # 9. Cleanup: 成否にかかわらず一時ディレクトリを削除する。
         shutil.rmtree(temp, ignore_errors=True)
 
 
@@ -628,6 +792,7 @@ def main() -> int:
     skill_parser.add_argument("skill_dir", type=Path)
     query_parser = subparsers.add_parser("query")
     query_parser.add_argument("root", type=Path)
+    query_parser.add_argument("--track")
     query_parser.add_argument("keywords", nargs="*")
     subparsers.add_parser("self-test")
 
@@ -647,7 +812,11 @@ def main() -> int:
     elif args.command == "index":
         build_index(args.root)
     elif args.command == "query":
-        query(args.root, args.keywords)
+        errors = query(args.root, args.keywords, track=args.track)
+        if errors:
+            for error in errors:
+                print(f"ERROR: {error}")
+            return 1
     elif args.command == "validate-skill":
         errors = validate_skill(args.skill_dir)
         if errors:

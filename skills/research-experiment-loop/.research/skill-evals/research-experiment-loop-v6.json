@@ -1,0 +1,41 @@
+{
+  "schema": 1,
+  "id": "research-experiment-loop-v6",
+  "date": "2026-07-31",
+  "skill_version": "6",
+  "cases": [
+    "prior-failure-retrieval",
+    "comparability-gate",
+    "self-critique",
+    "track-isolation"
+  ],
+  "rubric": [
+    "関連する成功実験と失敗実験を取得する",
+    "測定した事実、推論、提案を分ける",
+    "比較不能なfixtureや測定条件の結果を直接比較しない",
+    "既知の失敗機構を実質的な変更なしに繰り返さない",
+    "追跡可能な仮説、採択条件、次の手順を作る",
+    "schema-validなカードを作成しvalidationを実行する",
+    "指定した研究テーマの結果を別テーマから分離する"
+  ],
+  "result": {
+    "passed": true,
+    "score": 7,
+    "maximum": 7
+  },
+  "failures": [],
+  "changes": [
+    "configへプロジェクト固有の研究テーマを宣言するtracksを追加した",
+    "実験カードのtrackと方針カードのtracksをvalidator、index、queryへ反映した",
+    "queryへテーマを絞り込む--trackオプションを追加した",
+    "意味のある比較対象が存在しない探索実験でbaselineをnullにできるようにした",
+    "Phono、ソフトウェア製品、Gitリポジトリを前提とする説明とschema例を中立化した",
+    "indexの相対パスをOS非依存の区切り文字へ正規化した",
+    "検索性能、データベース性能、材料探索のclean fixtureをfresh agent 3件で再評価した"
+  ],
+  "next": [
+    "実プロジェクトでテーマ追加と名称変更の運用を確認する",
+    "階層的なテーマが必要になるまではフラットなtrack IDを維持する",
+    "LinuxまたはmacOSでtrack検索とself-testを実行する"
+  ]
+}

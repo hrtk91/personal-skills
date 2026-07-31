@@ -1,6 +1,6 @@
 ---
 name: research-experiment-loop
-description: 実験・調査を継続するプロジェクトで、過去の「考えた方針・試したこと・成功・失敗・制約」を検索可能な研究ログへ蓄積し、重複実験を避けて次の仮説、比較条件、終了基準を決める。モデル評価、アルゴリズム探索、性能調査、プロトタイプ比較、原因切り分けで「過去結果を踏まえて次を考える」「研究ログを更新する」「この方針は以前試したか」「実験計画を立てる」「スキル自身を評価・改善する」ときに使う。
+description: 実験・調査を継続するプロジェクトで、複数の研究テーマごとに過去の「考えた方針・試したこと・成功・失敗・制約」を検索可能な研究ログへ蓄積し、重複実験を避けて次の仮説、比較条件、終了基準を決める。モデル評価、アルゴリズム探索、性能調査、プロトタイプ比較、原因切り分けで「過去結果を踏まえて次を考える」「研究ログを更新する」「この方針は以前試したか」「実験計画を立てる」「スキル自身を評価・改善する」ときに使う。
 ---
 
 # 研究実験ループ
@@ -10,9 +10,15 @@ description: 実験・調査を継続するプロジェクトで、過去の「�
 
 ## 保存先
 
-対象リポジトリの `.research/` を使う。既存の正式な保存先がある場合はそれを優先し、
-`.research/config.json` の `source_documents` から既存docs・issue・評価artifactを参照する。
+対象プロジェクトのrootにある `.research/` を使う。既存の正式な保存先がある場合はそれを優先し、
+`.research/config.json` の `source_documents` から既存資料・課題・評価artifactを参照する。
 原データや大きな生成物をカードへ複製せず、パスと要約だけを残す。
+
+研究テーマはconfigの`tracks`へ、安定したhyphen-case IDと表示名で宣言する。テーマ別の
+サブディレクトリは作らず、実験カードの`track`と方針カードの`tracks`で分類する。
+IDは特定製品や分野の固定enumではなく、対象プロジェクトが定義する。
+一つの実験には、主たる問いに対応する`track`を一つ指定する。複数テーマへ再利用できる知見は、
+実験を重複保存せず、複数の`tracks`を持つ方針カードへ昇格する。
 
 ## 実行環境
 
@@ -20,17 +26,17 @@ description: 実験・調査を継続するプロジェクトで、過去の「�
 Python 3を解決し、以後は同じ実体を使う。
 
 1. 実行環境がworkspace runtimeや依存ランタイムを提供する場合は、そのPython実体を使う。
-2. 対象リポジトリに既存のPython実行方法がある場合は、それを使う。
+2. 対象プロジェクトに既存のPython実行方法がある場合は、それを使う。
 3. それ以外は`python3`、`python`、Windowsの`py -3`を順に確認する。
 4. `<python> --version`でPython 3であることを確認する。
 
 このスクリプトは標準ライブラリだけを使う。実行のためにパッケージを追加したり、PATHや
-対象リポジトリの環境設定を変更したりしない。解決した実体はリポジトリへ記録しない。
+対象プロジェクトの環境設定を変更したりしない。解決した実体はプロジェクトへ記録しない。
 
 初回だけ実行する。
 
 ```text
-<python> "<skill-dir>/scripts/research_log.py" init "<repo-root>"
+<python> "<skill-dir>/scripts/research_log.py" init "<project-root>"
 ```
 
 ## 必須ループ
@@ -40,8 +46,17 @@ Python 3を解決し、以後は同じ実体を使う。
 実験開始前に必ず実行する。
 
 ```text
-<python> "<skill-dir>/scripts/research_log.py" query "<repo-root>" <keyword...>
+<python> "<skill-dir>/scripts/research_log.py" query "<project-root>" <keyword...>
 ```
+
+特定テーマだけを調べる場合は、別テーマの類似語が混ざらないよう絞り込む。
+
+```text
+<python> "<skill-dir>/scripts/research_log.py" query "<project-root>" --track <track-id> <keyword...>
+```
+
+実験の主たる問いに対応するテーマを先に決める。configに存在しない場合は、既存カードを
+テーマなしで検索して重複を確認したうえで、安定したIDと表示名を`tracks`へ追加する。
 
 関連カードを2〜5件読み、次を分けて整理する。
 
@@ -63,18 +78,19 @@ Python 3を解決し、以後は同じ実体を使う。
 
 - questionと反証可能なhypothesis
 - 過去実験との差分
-- baselineと同一fixtureで比較できる根拠
+- baselineの有無と、存在する場合は同一条件で比較できる根拠
 - precision、recall、過剰結合、分断、時間、deviceなど独立したmetrics
 - acceptanceとstop condition
 - 変更しない条件
 
-fixtureや採点器が異なる値を、同じ指標名だけで直接比較しない。比較不能なら
-`comparable: false` と理由を残す。
+ここでfixtureはデータセットに限らず、入力、workload、環境、deviceなど固定する比較条件を
+指す。fixtureや採点器が異なる値を、同じ指標名だけで直接比較しない。探索初期など意味のある
+baselineが存在しない場合は`baseline: null`、`comparable: false`と理由を残す。
 
 ### 3. 最小の識別実験を行う
 
-仮説間の差が分かる最小入力から始める。実験中は生応答、stderr、設定、commit、artifactを
-保持する。失敗を消さず、プロンプト失敗・基盤失敗・モデル限界・評価不足を分ける。
+仮説間の差が分かる最小入力から始める。実験中は観測した出力、エラー、設定、変更識別子、
+artifactを保持する。失敗を消さず、方法の失敗・実行基盤の失敗・対象の限界・評価不足を分ける。
 
 複数変更を同時に入れた場合、改善要因を一つに帰属させない。
 
@@ -106,8 +122,8 @@ confidenceを上げすぎない。反証結果は上書きせず `counterevidenc
 ### 6. 検証して索引を更新する
 
 ```text
-<python> "<skill-dir>/scripts/research_log.py" validate "<repo-root>"
-<python> "<skill-dir>/scripts/research_log.py" index "<repo-root>"
+<python> "<skill-dir>/scripts/research_log.py" validate "<project-root>"
+<python> "<skill-dir>/scripts/research_log.py" index "<project-root>"
 ```
 
 validation errorを残したまま完了扱いにしない。
@@ -117,13 +133,13 @@ validation errorを残したまま完了扱いにしない。
 候補ごとに次を比較する。
 
 1. 既存の失敗原因を本当に変えているか
-2. 成功時に製品指標へつながるか
+2. 成功時にプロジェクトの目的や対象指標へつながるか
 3. 失敗しても仮説を一つ減らせるか
 4. baselineと比較可能か
 5. 実行時間・計算資源に対して情報量が高いか
 
-「モデルを替える」「プロンプトを強くする」だけで、過去の失敗機構が変わらない案は
-優先しない。最も情報利得が高い候補を推奨し、代替案と棄却理由も短く残す。
+モデル、パラメータ、手段を替えるだけで、過去の失敗機構が変わらない案は優先しない。
+最も情報利得が高い候補を推奨し、代替案と棄却理由も短く残す。
 
 ## スキル自身の検証ループ
 
@@ -153,4 +169,5 @@ validation errorを残したまま完了扱いにしない。
 5. acceptance、必要資源、比較上の注意
 6. 更新したカードとvalidation結果
 
-スコアが改善しても、fixture一般化、製品接続、速度など未達の範囲を混ぜない。
+スコアが改善しても、比較条件の一般化、プロジェクト目的との接続、速度など未達の範囲を
+混ぜない。
