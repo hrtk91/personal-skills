@@ -1,5 +1,17 @@
 #!/usr/bin/env python3
-"""Initialize, query, index, and validate structured research logs."""
+"""構造化された研究ログを初期化・検索・検証・索引化する。
+
+読み始める場所:
+1. CLI全体の流れを知りたい場合は、末尾の ``main`` を読む。
+2. 各コマンドの実処理は、``init_log``、``query``、``validate_log``、
+   ``build_index``を読む。
+3. カードごとの制約は、``validate_experiment``、``validate_principle``、
+   ``validate_skill_eval``を読む。
+4. スキル自身の検証は、``validate_skill``と``self_test``を読む。
+
+ファイルは「定数 → スキル検証 → ログI/O → カード検証 → コマンド処理 →
+self-test → CLI入口」の順に並べる。
+"""
 
 from __future__ import annotations
 
@@ -11,6 +23,10 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+
+# =============================================================================
+# 1. スキーマ定数
+# =============================================================================
 
 EXPERIMENT_STATUSES = {"planned", "running", "accepted", "failed", "inconclusive"}
 PRINCIPLE_STATUSES = {"active", "provisional", "retired"}
@@ -59,7 +75,20 @@ SKILL_EVAL_FIELDS = {
 }
 
 
+# =============================================================================
+# 2. スキルディレクトリの検証
+# =============================================================================
+
 def validate_skill(skill_dir: Path) -> list[str]:
+    """SKILL.mdとUIメタデータが、外部依存なしで読める形式か検証する。"""
+
+    # 処理順:
+    # 1. SKILL.mdをUTF-8で読み、frontmatterの境界を確認する。
+    # 2. frontmatterのキー、name、descriptionを検証する。
+    # 3. agents/openai.yamlをUTF-8で読む。
+    # 4. 必須UIフィールドと値の制約を検証して、全エラーを返す。
+
+    # 1. SKILL.mdをUTF-8で読み、frontmatterの境界を確認する。
     errors: list[str] = []
     skill_dir = skill_dir.resolve()
     skill_md = skill_dir / "SKILL.md"
@@ -72,6 +101,7 @@ def validate_skill(skill_dir: Path) -> list[str]:
     if not frontmatter_match:
         return [f"{skill_md}: invalid YAML frontmatter boundaries"]
 
+    # 2. frontmatterのキー、name、descriptionを検証する。
     frontmatter: dict[str, str] = {}
     for line in frontmatter_match.group(1).splitlines():
         match = re.match(r"^([a-zA-Z0-9_-]+):\s*(.+?)\s*$", line)
@@ -96,6 +126,7 @@ def validate_skill(skill_dir: Path) -> list[str]:
     elif len(description) > 1024 or "<" in description or ">" in description:
         errors.append(f"{skill_md}: description has invalid length or angle brackets")
 
+    # 3. agents/openai.yamlをUTF-8で読む。
     metadata = skill_dir / "agents" / "openai.yaml"
     try:
         metadata_text = metadata.read_text(encoding="utf-8")
@@ -103,6 +134,7 @@ def validate_skill(skill_dir: Path) -> list[str]:
         errors.append(f"{metadata}: cannot read as UTF-8: {exc}")
         return errors
 
+    # 4. 必須UIフィールドと値の制約を検証して、全エラーを返す。
     if not re.search(r"(?m)^interface:\s*$", metadata_text):
         errors.append(f"{metadata}: interface mapping is required")
     interface_values: dict[str, str] = {}
@@ -125,11 +157,19 @@ def validate_skill(skill_dir: Path) -> list[str]:
     return errors
 
 
+# =============================================================================
+# 3. 研究ログの保存先とJSON I/O
+# =============================================================================
+
 def research_dir(root: Path) -> Path:
+    """対象リポジトリから研究ログの保存先を求める。"""
+
     return root.resolve() / ".research"
 
 
 def write_json(path: Path, value: Any) -> None:
+    """日本語を保持した読みやすいJSONとして保存する。"""
+
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(value, ensure_ascii=False, indent=2) + "\n",
@@ -138,13 +178,25 @@ def write_json(path: Path, value: Any) -> None:
 
 
 def load_json(path: Path) -> Any:
+    """UTF-8またはUTF-8 BOM付きのJSONを読む。"""
+
     return json.loads(path.read_text(encoding="utf-8-sig"))
 
 
 def init_log(root: Path) -> None:
+    """空の研究ログ構造を作り、最初の索引を生成する。"""
+
+    # 処理順:
+    # 1. カード種別ごとの保存ディレクトリを作る。
+    # 2. 未作成の場合だけconfig.jsonを初期化する。
+    # 3. 索引を生成し、研究ログの保存先を表示する。
+
+    # 1. カード種別ごとの保存ディレクトリを作る。
     base = research_dir(root)
     for name in ("experiments", "principles", "skill-evals"):
         (base / name).mkdir(parents=True, exist_ok=True)
+
+    # 2. 未作成の場合だけconfig.jsonを初期化する。
     config = base / "config.json"
     if not config.exists():
         write_json(
@@ -156,11 +208,15 @@ def init_log(root: Path) -> None:
                 "notes": "Add existing research docs and artifact directories.",
             },
         )
+
+    # 3. 索引を生成し、研究ログの保存先を表示する。
     build_index(root)
     print(base)
 
 
 def card_files(base: Path) -> list[tuple[str, Path]]:
+    """カード種別とJSONパスを、安定した順序で列挙する。"""
+
     result: list[tuple[str, Path]] = []
     for kind, folder in (
         ("experiment", "experiments"),
@@ -172,12 +228,25 @@ def card_files(base: Path) -> list[tuple[str, Path]]:
     return result
 
 
+# =============================================================================
+# 4. カードスキーマの検証
+# =============================================================================
+
 def validate_list(value: Any, label: str, errors: list[str]) -> None:
     if not isinstance(value, list):
         errors.append(f"{label} must be an array")
 
 
 def validate_experiment(card: dict[str, Any], label: str, errors: list[str]) -> None:
+    """実験カードの必須項目、比較可能性、結果形式を検証する。"""
+
+    # 処理順:
+    # 1. カード直下の必須項目、status、配列項目を検証する。
+    # 2. evaluationの形と必須項目を検証する。
+    # 3. baselineとfixtureの比較可能性を検証する。
+    # 4. resultのmetricsとartifactsを検証する。
+
+    # 1. カード直下の必須項目、status、配列項目を検証する。
     missing = EXPERIMENT_FIELDS - card.keys()
     if missing:
         errors.append(f"{label}: missing {sorted(missing)}")
@@ -194,6 +263,7 @@ def validate_experiment(card: dict[str, Any], label: str, errors: list[str]) -> 
     ):
         validate_list(card.get(field), f"{label}.{field}", errors)
 
+    # 2. evaluationの形と必須項目を検証する。
     evaluation = card.get("evaluation")
     if not isinstance(evaluation, dict):
         errors.append(f"{label}.evaluation must be an object")
@@ -212,6 +282,7 @@ def validate_experiment(card: dict[str, Any], label: str, errors: list[str]) -> 
     validate_list(evaluation.get("metrics"), f"{label}.evaluation.metrics", errors)
     validate_list(evaluation.get("acceptance"), f"{label}.evaluation.acceptance", errors)
 
+    # 3. baselineとfixtureの比較可能性を検証する。
     baseline = evaluation.get("baseline")
     if not isinstance(baseline, dict):
         errors.append(f"{label}.evaluation.baseline must be an object")
@@ -225,6 +296,7 @@ def validate_experiment(card: dict[str, Any], label: str, errors: list[str]) -> 
         if not evaluation.get("comparability_note"):
             errors.append(f"{label}: comparable=true requires comparability_note")
 
+    # 4. resultのmetricsとartifactsを検証する。
     result = card.get("result")
     if not isinstance(result, dict):
         errors.append(f"{label}.result must be an object")
@@ -235,6 +307,8 @@ def validate_experiment(card: dict[str, Any], label: str, errors: list[str]) -> 
 
 
 def validate_principle(card: dict[str, Any], label: str, errors: list[str]) -> None:
+    """方針カードの状態、根拠、適用範囲を検証する。"""
+
     missing = PRINCIPLE_FIELDS - card.keys()
     if missing:
         errors.append(f"{label}: missing {sorted(missing)}")
@@ -249,6 +323,8 @@ def validate_principle(card: dict[str, Any], label: str, errors: list[str]) -> N
 
 
 def validate_skill_eval(card: dict[str, Any], label: str, errors: list[str]) -> None:
+    """スキル評価カードの評価項目と結果形式を検証する。"""
+
     missing = SKILL_EVAL_FIELDS - card.keys()
     if missing:
         errors.append(f"{label}: missing {sorted(missing)}")
@@ -259,11 +335,26 @@ def validate_skill_eval(card: dict[str, Any], label: str, errors: list[str]) -> 
         errors.append(f"{label}.result must contain passed")
 
 
+# =============================================================================
+# 5. 研究ログに対するコマンド処理
+# =============================================================================
+
 def validate_log(root: Path) -> list[str]:
+    """研究ログ全体と、カード間で参照するIDの整合性を検証する。"""
+
+    # 処理順:
+    # 1. .researchの存在を確認する。
+    # 2. 全カードを読み、共通項目と重複IDを検証しながらID集合を作る。
+    # 3. カード種別ごとのschemaと、方針から実験への参照を検証する。
+    # 4. 収集した全エラーを返す。
+
+    # 1. .researchの存在を確認する。
     base = research_dir(root)
     errors: list[str] = []
     if not base.exists():
         return [f"{base} does not exist; run init"]
+
+    # 2. 全カードを読み、共通項目と重複IDを検証しながらID集合を作る。
     seen_ids: dict[str, Path] = {}
     experiment_ids: set[str] = set()
     cards: list[tuple[str, Path, dict[str, Any]]] = []
@@ -289,6 +380,7 @@ def validate_log(root: Path) -> list[str]:
         if kind == "experiment" and isinstance(card_id, str):
             experiment_ids.add(card_id)
 
+    # 3. カード種別ごとのschemaと、方針から実験への参照を検証する。
     for kind, path, card in cards:
         label = str(path.relative_to(base))
         if kind == "experiment":
@@ -300,10 +392,14 @@ def validate_log(root: Path) -> list[str]:
                     errors.append(f"{label}: unknown evidence id {evidence_id!r}")
         else:
             validate_skill_eval(card, label, errors)
+
+    # 4. 収集した全エラーを返す。
     return errors
 
 
 def build_index(root: Path) -> None:
+    """有効なカードから検索用の軽量な索引を再生成する。"""
+
     base = research_dir(root)
     cards = []
     for kind, path in card_files(base):
@@ -327,8 +423,18 @@ def build_index(root: Path) -> None:
 
 
 def query(root: Path, keywords: list[str]) -> None:
+    """カード本文を検索し、関連度が高い上位10件をJSON Linesで出力する。"""
+
+    # 処理順:
+    # 1. 検索語を大文字小文字を区別しない形式へ正規化する。
+    # 2. 各カード内の出現回数を数え、候補を収集する。
+    # 3. スコアとパスで安定ソートし、上位10件の要約を出力する。
+
+    # 1. 検索語を大文字小文字を区別しない形式へ正規化する。
     base = research_dir(root)
     needles = [value.casefold() for value in keywords if value.strip()]
+
+    # 2. 各カード内の出現回数を数え、候補を収集する。
     matches: list[tuple[int, str, Path, dict[str, Any]]] = []
     for kind, path in card_files(base):
         try:
@@ -339,6 +445,8 @@ def query(root: Path, keywords: list[str]) -> None:
         score = sum(haystack.count(needle) for needle in needles)
         if score or not needles:
             matches.append((score, kind, path, card))
+
+    # 3. スコアとパスで安定ソートし、上位10件の要約を出力する。
     for score, kind, path, card in sorted(
         matches, key=lambda item: (-item[0], str(item[2]))
     )[:10]:
@@ -361,7 +469,13 @@ def query(root: Path, keywords: list[str]) -> None:
         )
 
 
+# =============================================================================
+# 6. 自己テスト用fixture
+# =============================================================================
+
 def sample_experiment(fixture: str = "fixture-a") -> dict[str, Any]:
+    """自己テストで使う最小の正常な実験カードを返す。"""
+
     return {
         "schema": 1,
         "id": "sample-experiment",
@@ -390,6 +504,18 @@ def sample_experiment(fixture: str = "fixture-a") -> dict[str, Any]:
 
 
 def self_test() -> None:
+    """正常系と主要な失敗系を、一時ディレクトリだけで回帰テストする。"""
+
+    # テストの流れ:
+    # 1. Arrange: 一時研究ログと正常な実験カードを準備する。
+    # 2. Act/Assert: 正常な研究ログがvalidationを通ることを確認する。
+    # 3. Act/Assert: fixture不一致の直接比較が拒否されることを確認する。
+    # 4. Arrange: 正常なスキルfixtureとUIメタデータを準備する。
+    # 5. Act/Assert: 正常なスキルfixtureがvalidationを通ることを確認する。
+    # 6. Act/Assert: 不正なUTF-8メタデータが拒否されることを確認する。
+    # 7. Cleanup: 成否にかかわらず一時ディレクトリを削除する。
+
+    # 1. Arrange: 一時研究ログと正常な実験カードを準備する。
     temp = Path(tempfile.mkdtemp(prefix="research-log-self-test-"))
     try:
         init_log(temp)
@@ -397,10 +523,13 @@ def self_test() -> None:
             research_dir(temp) / "experiments" / "sample-experiment.json",
             sample_experiment(),
         )
+
+        # 2. Act/Assert: 正常な研究ログがvalidationを通ることを確認する。
         errors = validate_log(temp)
         if errors:
             raise AssertionError(f"valid fixture failed: {errors}")
 
+        # 3. Act/Assert: fixture不一致の直接比較が拒否されることを確認する。
         invalid = sample_experiment("fixture-current")
         invalid["id"] = "invalid-comparison"
         invalid["evaluation"]["baseline"]["fixture"] = "fixture-other"
@@ -412,6 +541,7 @@ def self_test() -> None:
         if not any("fixtures differ" in error for error in errors):
             raise AssertionError("incompatible fixture comparison was not rejected")
 
+        # 4. Arrange: 正常なスキルfixtureとUIメタデータを準備する。
         skill_dir = temp / "portable-skill"
         (skill_dir / "agents").mkdir(parents=True)
         (skill_dir / "SKILL.md").write_text(
@@ -431,20 +561,36 @@ def self_test() -> None:
             '  default_prompt: "Use $portable-skill to validate this fixture."\n',
             encoding="utf-8",
         )
+
+        # 5. Act/Assert: 正常なスキルfixtureがvalidationを通ることを確認する。
         errors = validate_skill(skill_dir)
         if errors:
             raise AssertionError(f"valid skill fixture failed: {errors}")
 
+        # 6. Act/Assert: 不正なUTF-8メタデータが拒否されることを確認する。
         metadata.write_bytes(b"interface:\n  display_name: \"\xff\"\n")
         errors = validate_skill(skill_dir)
         if not any("cannot read as UTF-8" in error for error in errors):
             raise AssertionError("invalid UTF-8 metadata was not rejected")
         print("self-test: OK")
     finally:
+        # 7. Cleanup: 成否にかかわらず一時ディレクトリを削除する。
         shutil.rmtree(temp, ignore_errors=True)
 
 
+# =============================================================================
+# 7. CLI入口
+# =============================================================================
+
 def main() -> int:
+    """引数を解釈し、選択された研究ログコマンドを一度だけ実行する。"""
+
+    # 処理順:
+    # 1. subcommandと引数の定義を組み立てる。
+    # 2. コマンドライン引数を解析する。
+    # 3. 選択された処理へdispatchし、成功または失敗の終了コードを返す。
+
+    # 1. subcommandと引数の定義を組み立てる。
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", required=True)
     for command in ("init", "validate", "index"):
@@ -456,8 +602,11 @@ def main() -> int:
     query_parser.add_argument("root", type=Path)
     query_parser.add_argument("keywords", nargs="*")
     subparsers.add_parser("self-test")
+
+    # 2. コマンドライン引数を解析する。
     args = parser.parse_args()
 
+    # 3. 選択された処理へdispatchし、成功または失敗の終了コードを返す。
     if args.command == "init":
         init_log(args.root)
     elif args.command == "validate":
