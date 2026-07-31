@@ -1,48 +1,48 @@
-# Self-evaluation
+# 自己評価
 
-## Cases
+## ケース
 
-Use fresh agents with only the skill path, task request, and raw fixture directory.
+fresh agentには、スキルのパス、ユーザー依頼、生のfixtureディレクトリだけを渡す。
 
-1. **Prior-failure retrieval**
-   - Fixture contains a successful experiment, a similarly named failed experiment, and an
-     unrelated experiment.
-   - Ask for the next approach.
-   - Pass when the failed mechanism is cited and the new proposal materially changes it.
+1. **prior-failure-retrieval**
+   - 成功した実験、名前が似た失敗実験、無関係な実験をfixtureへ含める。
+   - 次の方針を依頼する。
+   - 失敗した機構を参照し、新しい提案がその機構を実質的に変えていれば合格とする。
 
-2. **Comparability gate**
-   - Fixture contains two attractive scores from different datasets or scorers.
-   - Ask which method improved.
-   - Pass when direct comparison is refused or qualified and a controlled comparison is proposed.
+2. **comparability-gate**
+   - 異なるデータセットまたは採点器から得た、見栄えのよい2つのスコアをfixtureへ含める。
+   - どちらの方法が改善したかを尋ねる。
+   - 直接比較を拒否または限定し、統制した比較実験を提案できれば合格とする。
 
-3. **Self-critique**
-   - Fixture contains an incomplete experiment card and a trace that skipped retrieval.
-   - Ask to close the research cycle.
-   - Pass when missing fields are repaired, validation is run, and a skill-eval card records the
-     process failure.
+3. **self-critique**
+   - 不完全な実験カードと、事前検索を省略した実行記録をfixtureへ含める。
+   - 研究サイクルを閉じるよう依頼する。
+   - 欠けたフィールドを修復し、validationを実行し、プロセス上の失敗をスキル評価カードへ
+     記録できれば合格とする。
 
-## Rubric
+## 評価基準
 
-Score one point each:
+各項目を1点で採点する。
 
-- Retrieves relevant failed and successful experiments.
-- Separates facts, inference, and proposal.
-- Does not compare incompatible fixtures as if controlled.
-- Avoids repeating a failed mechanism without a material change.
-- Produces a traceable hypothesis, acceptance, and next step.
-- Produces schema-valid cards and runs validation.
+- 関連する失敗実験と成功実験を取得する。
+- 事実、推論、提案を分ける。
+- 比較不能なfixtureを統制済みとして比較しない。
+- 失敗した機構を実質的な変更なしに繰り返さない。
+- 追跡可能な仮説、採択条件、次の手順を作る。
+- schema-validなカードを作成し、validationを実行する。
 
-Critical items are comparability, failed-mechanism avoidance, and schema validation. Require at
-least 5/6 and no critical failure.
+比較可能性、失敗機構の回避、schema validationを必須項目とする。6点中5点以上かつ、
+必須項目の失敗がないことを合格条件とする。
 
-## Iteration
+## 改善
 
-When a case fails:
+ケースが失敗した場合は、次を行う。
 
-1. Record the observed output, not a reconstructed explanation.
-2. Identify the smallest missing instruction or validator check.
-3. Change the skill or script.
-4. Re-run all cases from clean fixtures with fresh agents.
-5. Record before/after scores in `skill-evals/`.
+1. 後から再構成した説明ではなく、観測した出力を記録する。
+2. 欠けている最小の指示またはvalidator検査を特定する。
+3. スキルまたはスクリプトを変更する。
+4. cleanなfixtureとfresh agentで全ケースを再実行する。
+5. 変更前後のスコアを`skill-evals/`へ記録する。
 
-Do not tune only to literal fixture wording. Add a second domain before raising confidence to high.
+fixtureの表面的な文言だけに合わせて調整しない。confidenceを`high`へ上げる前に、
+別ドメインのケースを追加する。

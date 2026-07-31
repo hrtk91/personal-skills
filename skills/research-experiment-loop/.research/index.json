@@ -14,6 +14,13 @@
       "status": null,
       "title": "research-experiment-loop-v2",
       "path": ".research\\skill-evals\\research-experiment-loop-v2.json"
+    },
+    {
+      "kind": "skill-eval",
+      "id": "research-experiment-loop-v3",
+      "status": null,
+      "title": "research-experiment-loop-v3",
+      "path": ".research\\skill-evals\\research-experiment-loop-v3.json"
     }
   ]
 }

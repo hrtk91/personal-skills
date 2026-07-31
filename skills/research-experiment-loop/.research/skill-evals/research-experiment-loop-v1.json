@@ -9,12 +9,12 @@
     "self-critique"
   ],
   "rubric": [
-    "retrieves relevant successful and failed experiments",
-    "separates measured facts from inference and proposal",
-    "rejects comparison across incompatible fixtures or scorers",
-    "does not repeat a known failed mechanism without a material change",
-    "creates a traceable hypothesis, acceptance criteria, and next step",
-    "produces schema-valid cards and runs validation"
+    "関連する成功実験と失敗実験を取得する",
+    "測定した事実、推論、提案を分ける",
+    "比較不能なfixtureや採点器の結果を直接比較しない",
+    "既知の失敗機構を実質的な変更なしに繰り返さない",
+    "追跡可能な仮説、採択条件、次の手順を作る",
+    "schema-validなカードを作成しvalidationを実行する"
   ],
   "result": {
     "passed": true,
@@ -23,13 +23,13 @@
   },
   "failures": [],
   "changes": [
-    "Initial version",
-    "Added mandatory retrieval before planning",
-    "Added comparability gate and three-case forward-test loop",
-    "Added dependency-free log validator and self-test"
+    "初版を作成した",
+    "計画前の検索を必須にした",
+    "比較可能性の判定と3ケースのforward-testループを追加した",
+    "外部依存のないログvalidatorとself-testを追加した"
   ],
   "next": [
-    "Forward-test on the live Phonograph research artifacts",
-    "Forward-test on a non-meeting-minutes domain before raising confidence"
+    "Phonographの実際の研究artifactでforward-testする",
+    "confidenceを上げる前に会議録以外のドメインでforward-testする"
   ]
 }

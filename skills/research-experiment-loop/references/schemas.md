@@ -1,20 +1,20 @@
-# Research log schemas
+# 研究ログのスキーマ
 
-Store UTF-8 JSON under `.research/`. Use relative artifact paths when possible.
+UTF-8のJSONを`.research/`配下へ保存する。artifactのパスは可能な限り相対パスにする。
 
-## Experiment card
+## 実験カード
 
 ```json
 {
   "schema": 1,
   "id": "minutes-atomic-topic-v10",
   "date": "2026-07-27",
-  "question": "Can atomic topics improve agenda membership?",
+  "question": "アトミックトピックで議題への所属判定を改善できるか",
   "status": "accepted",
-  "context": ["Long blocks contain multiple decision axes."],
-  "hypothesis": "Proposal anchors plus conservative grouping reduce over-merge.",
+  "context": ["長いブロックには複数の独立した判断軸が含まれる。"],
+  "hypothesis": "提案アンカーと保守的なグルーピングにより過剰結合を減らせる。",
   "prior_experiment_ids": ["minutes-one-shot-clustering"],
-  "method": ["Extract atomic claims", "Judge proposal pairs"],
+  "method": ["最小単位の主張を抽出する", "提案の組み合わせを判定する"],
   "evaluation": {
     "fixture": "qmsum-es2004a-ja",
     "baseline": {
@@ -23,22 +23,22 @@ Store UTF-8 JSON under `.research/`. Use relative artifact paths when possible.
     },
     "metrics": ["proposal_recall", "topic_f1", "over_merge"],
     "acceptance": ["proposal_recall >= 0.8", "over_merge == 0"],
-    "stop_condition": "Stop after the fixed fixture is scored.",
+    "stop_condition": "固定fixtureの採点が完了した時点で終了する。",
     "comparable": true,
-    "comparability_note": "Same fixture and scorer."
+    "comparability_note": "同じfixtureと採点器を使用する。"
   },
   "result": {
     "metrics": {"proposal_recall": 1.0, "topic_f1": 0.718},
     "artifacts": ["dist/eval/result.json"]
   },
-  "worked": ["Proposal recovery found the missing anchor."],
-  "failed": ["Free clustering over-merged decision axes."],
-  "limitations": ["One meeting", "CPU fallback"],
-  "next": ["Validate unchanged rules on another meeting."]
+  "worked": ["提案の再抽出により欠けていたアンカーを検出できた。"],
+  "failed": ["自由クラスタリングは独立した判断軸を過剰結合した。"],
+  "limitations": ["会議1件のみ", "CPUフォールバック"],
+  "next": ["ルールを変更せず、別の会議で検証する。"]
 }
 ```
 
-Allowed experiment status:
+実験の`status`には次を使う。
 
 - `planned`
 - `running`
@@ -46,26 +46,26 @@ Allowed experiment status:
 - `failed`
 - `inconclusive`
 
-## Principle card
+## 方針カード
 
 ```json
 {
   "schema": 1,
   "id": "do-not-union-whole-blocks",
-  "statement": "Do not merge complete blocks from one shared subtopic.",
+  "statement": "共通する小トピックが一つあるだけで、ブロック全体を結合しない。",
   "confidence": "high",
   "status": "active",
   "evidence_ids": ["minutes-pair-structure", "minutes-atomic-topic-v10"],
-  "rationale": "Long blocks contain multiple independent decision axes.",
+  "rationale": "長いブロックには複数の独立した判断軸が含まれる。",
   "scope": ["meeting-minutes", "long-context"],
   "counterevidence": []
 }
 ```
 
-Confidence is `low`, `medium`, or `high`. Status is `active`, `provisional`, or
-`retired`.
+`confidence`には`low`、`medium`、`high`を使う。`status`には`active`、
+`provisional`、`retired`を使う。
 
-## Skill evaluation card
+## スキル評価カード
 
 ```json
 {
@@ -74,10 +74,10 @@ Confidence is `low`, `medium`, or `high`. Status is `active`, `provisional`, or
   "date": "2026-07-27",
   "skill_version": "1",
   "cases": ["prior-failure-retrieval", "comparability-gate", "self-critique"],
-  "rubric": ["retrieval", "comparability", "traceability"],
+  "rubric": ["関連する過去実験を取得できる", "比較可能性を判定できる", "根拠を追跡できる"],
   "result": {"passed": true, "score": 6, "maximum": 6},
   "failures": [],
-  "changes": ["Initial version"],
-  "next": ["Forward-test on a different project."]
+  "changes": ["初版を作成した。"],
+  "next": ["別プロジェクトでforward-testする。"]
 }
 ```

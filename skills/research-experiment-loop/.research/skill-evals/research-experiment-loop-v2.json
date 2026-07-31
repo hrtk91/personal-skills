@@ -9,12 +9,12 @@
     "self-critique"
   ],
   "rubric": [
-    "retrieves relevant successful and failed experiments",
-    "separates measured facts from inference and proposal",
-    "rejects comparison across incompatible fixtures or scorers",
-    "does not repeat a known failed mechanism without a material change",
-    "creates a traceable hypothesis, acceptance criteria, and next step",
-    "produces schema-valid cards and runs validation"
+    "関連する成功実験と失敗実験を取得する",
+    "測定した事実、推論、提案を分ける",
+    "比較不能なfixtureや採点器の結果を直接比較しない",
+    "既知の失敗機構を実質的な変更なしに繰り返さない",
+    "追跡可能な仮説、採択条件、次の手順を作る",
+    "schema-validなカードを作成しvalidationを実行する"
   ],
   "result": {
     "passed": true,
@@ -23,14 +23,14 @@
   },
   "failures": [],
   "changes": [
-    "Replaced hard-coded python command examples with one resolved Python 3 runner placeholder.",
-    "Documented runtime resolution without modifying PATH or installing packages.",
-    "Added a dependency-free validate-skill command for frontmatter and UI metadata.",
-    "Rewrote agents/openai.yaml as valid UTF-8.",
-    "Added invalid UTF-8 metadata coverage to self-test."
+    "固定のpythonコマンド例を、解決済みPython 3ランナーのプレースホルダーへ置き換えた",
+    "PATH変更やパッケージ追加を伴わないランタイム解決手順を追加した",
+    "frontmatterとUIメタデータを検査する外部依存のないvalidate-skillコマンドを追加した",
+    "agents/openai.yamlを正しいUTF-8で書き直した",
+    "不正なUTF-8メタデータを検出するself-testを追加した"
   ],
   "next": [
-    "Run validate-skill and self-test on a Linux or macOS host.",
-    "Forward-test on live project research artifacts."
+    "LinuxまたはmacOSでvalidate-skillとself-testを実行する",
+    "実際のプロジェクト研究artifactでforward-testする"
   ]
 }

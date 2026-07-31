@@ -1,4 +1,4 @@
 interface:
-  display_name: "Research Experiment Loop"
+  display_name: "研究実験ループ"
   short_description: "過去の実験知見を検索し、比較可能な次の検証計画へつなぐ"
-  default_prompt: "Use $research-experiment-loop to review prior experiments, design the next comparable test, and update the validated research log."
+  default_prompt: "$research-experiment-loopを使い、過去の実験を確認して比較可能な次の実験を設計し、検証済みの研究ログへ更新してください。"
