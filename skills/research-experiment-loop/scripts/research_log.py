@@ -28,47 +28,75 @@ from typing import Any
 # 1. スキーマ定数
 # =============================================================================
 
+# 実験カードのライフサイクル。実行前の契約はplanned、実行中はrunning、
+# 結果を閉じるときはaccepted / failed / inconclusiveのいずれかにする。
 EXPERIMENT_STATUSES = {"planned", "running", "accepted", "failed", "inconclusive"}
+
+# 方針カードの現在の扱い。activeは採用中、provisionalは検証不足、
+# retiredは反証または前提変更により現在は使わない方針を表す。
 PRINCIPLE_STATUSES = {"active", "provisional", "retired"}
+
+# 方針カードの証拠強度。単一fixtureの結果だけでhighへ上げない。
 CONFIDENCES = {"low", "medium", "high"}
+
+# スキル名をフォルダ名とCLIで安全に扱えるhyphen-caseへ制限する。
+# この形式により、先頭・末尾のハイフンや連続ハイフンも許可しない。
 SKILL_NAME_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
+# 各集合はカード直下の必須キーだけを定義する。ドメイン固有の測定値や
+# 将来のschema拡張を妨げないため、ここにない追加キーは拒否しない。
+
+# 実験カードは「何を、どの条件で試し、何が分かったか」を再現できる形で残す。
 EXPERIMENT_FIELDS = {
+    # 識別情報
     "schema",
     "id",
     "date",
+    # 問い、前提、仮説、過去実験との関係、実行方法
     "question",
-    "status",
     "context",
     "hypothesis",
     "prior_experiment_ids",
     "method",
+    # ライフサイクルと評価契約、測定結果
+    "status",
     "evaluation",
     "result",
+    # 成功・失敗・適用限界と次の検証
     "worked",
     "failed",
     "limitations",
     "next",
 }
+
+# 方針カードは、複数の実験から再利用できる判断と反証履歴を残す。
 PRINCIPLE_FIELDS = {
+    # 識別情報と方針本文
     "schema",
     "id",
     "statement",
+    # 現在の確からしさと採用状態
     "confidence",
     "status",
+    # 根拠、適用範囲、反証
     "evidence_ids",
     "rationale",
     "scope",
     "counterevidence",
 }
+
+# スキル評価カードは、forward-testの合否と改善履歴を追跡する。
 SKILL_EVAL_FIELDS = {
+    # 識別情報
     "schema",
     "id",
     "date",
     "skill_version",
+    # 評価ケース、採点基準、結果
     "cases",
     "rubric",
     "result",
+    # 観測した失敗、加えた変更、次の検証
     "failures",
     "changes",
     "next",
