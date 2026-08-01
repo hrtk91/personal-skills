@@ -1,0 +1,4 @@
+interface:
+  display_name: "敵対的レビュー"
+  short_description: "変更目的と実装の前提を疑い、通ってしまう不具合を探す"
+  default_prompt: "変更の目的から疑い、前提、抜け道、誤検知、順序依存、未検証領域を敵対的にレビューしてください。"
