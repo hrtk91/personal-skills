@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Security"
+  short_description: "Codex Securityのセットアップから検証・再スキャンまで行う"
+  default_prompt: "Codex Securityをセットアップし、許可されたコードベースを安全にスキャンして、findingの検証と次の対応をまとめてください。"
