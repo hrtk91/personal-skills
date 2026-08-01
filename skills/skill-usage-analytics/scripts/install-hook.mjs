@@ -3,7 +3,6 @@ import { access, mkdir, open, readFile, stat, unlink } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
-import { fileURLToPath } from 'node:url'
 import { hookCommandFor, writeJsonAtomic } from './lib.mjs'
 
 async function acquireLock(path) {
@@ -27,8 +26,9 @@ async function acquireLock(path) {
   throw new Error(`timed out waiting for installer lock: ${path}`)
 }
 
-const skillDir = dirname(dirname(fileURLToPath(import.meta.url)))
 const hooksPath = process.env.CODEX_HOOKS_PATH ?? join(homedir(), '.codex', 'hooks.json')
+const skillDir = process.env.CODEX_SKILL_USAGE_DIR
+  ?? join(dirname(hooksPath), 'skills', 'skill-usage-analytics')
 const lockPath = `${hooksPath}.skill-usage-analytics.lock`
 await mkdir(dirname(hooksPath), { recursive: true, mode: 0o700 })
 const lock = await acquireLock(lockPath)
@@ -47,14 +47,16 @@ try {
   const command = hookCommandFor(skillDir)
   let installedHook = null
   for (const group of config.hooks.SessionEnd) {
-    installedHook = group?.hooks?.find((hook) => hook?.type === 'command' && hook.command === command) ?? installedHook
+    installedHook = group?.hooks?.find((hook) => hook?.type === 'command'
+      && hook.command?.includes('/skill-usage-analytics/scripts/session-end-hook.mjs')) ?? installedHook
   }
 
   if (!installedHook) {
     config.hooks.SessionEnd.push({ hooks: [{ type: 'command', command, timeout: 3 }] })
     await writeJsonAtomic(hooksPath, config)
     console.log(`installed: ${hooksPath}`)
-  } else if (installedHook.timeout !== 3) {
+  } else if (installedHook.command !== command || installedHook.timeout !== 3) {
+    installedHook.command = command
     installedHook.timeout = 3
     await writeJsonAtomic(hooksPath, config)
     console.log(`updated: ${hooksPath}`)
