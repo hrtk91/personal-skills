@@ -1,0 +1,4 @@
+interface:
+  display_name: "Skill Usage Analytics"
+  short_description: "Codexのskill起動率を自動記録して分析する"
+  default_prompt: "Codexセッションのskill利用統計を集計し、起動傾向と見逃し候補を確認してください。"
