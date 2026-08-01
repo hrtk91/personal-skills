@@ -64,6 +64,8 @@ npm install --save-dev @openai/codex-security
 
 グローバルinstallを前提にしない。package install、login、scanのいずれかでaccess deniedになった場合は、Codex Securityの利用権限とaccount verificationを確認し、同じ操作を無期限に再試行しない。
 
+`npm view`ではversionを取得できるのに`npx`が`ENOVERSIONS`や`ETARGET`になる場合は、npmの`min-release-age`や`before`で公開直後のversionが除外されていないか確認する。供給網対策の設定を永続的に弱めず、利用するversionと一時的なoverrideを明示して実行する。
+
 ### 認証
 
 ローカル対話実行ではChatGPT sign-inを優先する。
@@ -153,7 +155,11 @@ npx @openai/codex-security scan . --output-dir "$output_dir" --dry-run
 - cost cap
 - coverageと終了状態
 
+`--max-cost`は推定コストを観測してscanを停止する上限であり、厳密な請求額のhard capではない。閾値をわずかに超えてから停止することがあり、ChatGPT sign-inではAPI keyの従量課金額を示すものでもない。
+
 report-onlyの終了コード0は「findingなし」を意味しない。`--fail-on-severity`を指定した場合は、完了したscanがthreshold以上を検出した終了コード1と、coverage不完全・CLI/runtime errorの終了コード2を区別する。終了コードだけで「安全」「危険」を断定せず、保存されたreportとcoverage警告を読む。
+
+cost capなどで停止したscanはpartial artifactを残してもreportを生成しないことがある。`scans show`で`status`、`failureMessage`、`reportAvailable`、coverageを確認し、finding数0を「検出なし」と解釈しない。
 
 報告は重大度順に整理し、各findingについて次を示す。
 
@@ -189,7 +195,7 @@ npx @openai/codex-security patch /absolute/path/to/findings.json "finding descri
 
 patchをそのまま採用しない。根本原因を閉じているか、別経路の抜け道がないか、互換性や権限境界を壊していないかを確認する。
 
-修正後は同じtarget・knowledge base・modeで再スキャンする。scan IDがある場合は比較する。
+修正後は新しい空の出力先を作り、同じtarget・knowledge base・modeで再スキャンする。既存の出力先を再利用する場合は`--archive-existing`を明示する。scan IDがある場合は比較する。
 
 ```bash
 npx @openai/codex-security scans compare BEFORE_SCAN_ID AFTER_SCAN_ID
