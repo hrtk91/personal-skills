@@ -26,8 +26,9 @@ if ($LASTEXITCODE -ne 0 -or $runtimeRemoteUrl -ne $remoteUrl) {
     throw "runtime origin mismatch: expected=$remoteUrl actual=$runtimeRemoteUrl"
 }
 $updateScript = Join-Path $RuntimeRepo "skills\personal-skills-auto-update\scripts\update.ps1"
+$bootstrapUpdateScript = Join-Path $PSScriptRoot "update.ps1"
 
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $updateScript -Repo $RuntimeRepo -BaseBranch $BaseBranch -AdoptRepoRoot $SourceRepo
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $bootstrapUpdateScript -Repo $RuntimeRepo -BaseBranch $BaseBranch -AdoptRepoRoot $SourceRepo
 if ($LASTEXITCODE -ne 0) {
     throw "initial runtime update failed with exit code $LASTEXITCODE"
 }

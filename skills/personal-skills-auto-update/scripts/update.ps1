@@ -82,7 +82,7 @@ try {
 
     if (-not $SkipInstall) {
         $installer = Join-Path $Repo "scripts\install-symlinks.ps1"
-        $installerArguments = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $installer)
+        $installerArguments = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $installer, "-RepoRoot", $Repo)
         if (-not [string]::IsNullOrWhiteSpace($AdoptRepoRoot)) {
             $installerArguments += @("-AdoptRepoRoot", $AdoptRepoRoot)
         }

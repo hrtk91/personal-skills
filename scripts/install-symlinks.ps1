@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path,
+    [string]$RepoRoot = "",
     [string]$CodexRoot = (Join-Path $HOME ".codex"),
     [string]$ClaudeRoot = (Join-Path $HOME ".claude"),
     [string]$AdoptRepoRoot = ""
@@ -8,6 +8,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+$RepoRoot = if ([string]::IsNullOrWhiteSpace($RepoRoot)) { Join-Path $PSScriptRoot ".." } else { $RepoRoot }
 $repoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
 $adoptRepoRootPath = if ([string]::IsNullOrWhiteSpace($AdoptRepoRoot)) { "" } else { (Resolve-Path -LiteralPath $AdoptRepoRoot).Path }
 $script:InstallFailed = $false
