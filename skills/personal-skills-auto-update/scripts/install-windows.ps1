@@ -27,21 +27,15 @@ if ($LASTEXITCODE -ne 0 -or $runtimeRemoteUrl -ne $remoteUrl) {
 }
 $updateScript = Join-Path $RuntimeRepo "skills\personal-skills-auto-update\scripts\update.ps1"
 $bootstrapUpdateScript = Join-Path $PSScriptRoot "update.ps1"
-$launcherSource = Join-Path $PSScriptRoot "..\assets\run-hidden.vbs"
-$launcherDirectory = Join-Path $env:LOCALAPPDATA "personal-skills-auto-update"
-$launcher = Join-Path $launcherDirectory "run-hidden.vbs"
 
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $bootstrapUpdateScript -Repo $RuntimeRepo -BaseBranch $BaseBranch -AdoptRepoRoot $SourceRepo
 if ($LASTEXITCODE -ne 0) {
     throw "initial runtime update failed with exit code $LASTEXITCODE"
 }
 
-$null = New-Item -ItemType Directory -Path $launcherDirectory -Force
-Copy-Item -LiteralPath $launcherSource -Destination $launcher -Force
-
 $action = New-ScheduledTaskAction `
-    -Execute "wscript.exe" `
-    -Argument "//B //NoLogo `"$launcher`" powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$updateScript`" -Repo `"$RuntimeRepo`" -BaseBranch `"$BaseBranch`""
+    -Execute (Join-Path $env:SystemRoot "System32\conhost.exe") `
+    -Argument "--headless powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$updateScript`" -Repo `"$RuntimeRepo`" -BaseBranch `"$BaseBranch`""
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
     -RepetitionInterval (New-TimeSpan -Minutes 15)
 $settings = New-ScheduledTaskSettingsSet `
