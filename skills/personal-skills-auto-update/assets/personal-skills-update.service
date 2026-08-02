@@ -1,0 +1,9 @@
+[Unit]
+Description=Safely fast-forward and install personal-skills
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+TimeoutStartSec=5min
+ExecStart=/usr/bin/bash "@REPO@/skills/personal-skills-auto-update/scripts/update.sh" --repo "@REPO@"
