@@ -1,0 +1,102 @@
+[CmdletBinding()]
+param(
+    [string]$Repo = (Join-Path $HOME "repos\personal-skills"),
+    [string]$Remote = "origin",
+    [string]$BaseBranch = "main",
+    [string]$AdoptRepoRoot = "",
+    [switch]$SkipInstall,
+    [switch]$DryRun
+)
+
+$ErrorActionPreference = "Stop"
+Set-StrictMode -Version Latest
+$env:GIT_TERMINAL_PROMPT = "0"
+
+function Invoke-Git {
+    param([string[]]$Arguments)
+    $previousPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "SilentlyContinue"
+        $output = & git -C $Repo @Arguments 2>&1
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
+    if ($exitCode -ne 0) {
+        throw ($output -join [Environment]::NewLine)
+    }
+    return $output
+}
+
+$Repo = (Resolve-Path -LiteralPath $Repo).Path
+$commonDir = (Invoke-Git @("rev-parse", "--path-format=absolute", "--git-common-dir") | Select-Object -Last 1).Trim()
+$lockPath = Join-Path $commonDir "personal-skills-update.lock"
+$lock = $null
+
+try {
+    try {
+        $lock = [System.IO.File]::Open($lockPath, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+    } catch [System.IO.IOException] {
+        Write-Output "update_status=busy repo=$Repo"
+        exit 10
+    }
+
+    $branchOutput = @(Invoke-Git @("branch", "--show-current"))
+    $currentBranch = if ($branchOutput.Count -eq 0) { "" } else { ([string]$branchOutput[-1]).Trim() }
+    if ($currentBranch -ne $BaseBranch) {
+        $reportedBranch = if ([string]::IsNullOrWhiteSpace($currentBranch)) { "detached" } else { $currentBranch }
+        [Console]::Error.WriteLine("update_status=blocked reason=branch current=$reportedBranch expected=$BaseBranch")
+        exit 20
+    }
+
+    $statusOutput = @(Invoke-Git @("status", "--porcelain"))
+    if ($statusOutput.Count -ne 0) {
+        [Console]::Error.WriteLine("update_status=blocked reason=dirty_worktree")
+        exit 20
+    }
+
+    Invoke-Git @("fetch", $Remote, $BaseBranch) | Out-Host
+    $counts = ((Invoke-Git @("rev-list", "--left-right", "--count", "HEAD...$Remote/$BaseBranch") | Select-Object -Last 1).Trim() -split "\s+")
+    $ahead = [int]$counts[0]
+    $behind = [int]$counts[1]
+    Write-Output "update_state repo=$Repo branch=$BaseBranch ahead=$ahead behind=$behind"
+
+    if ($ahead -ne 0) {
+        [Console]::Error.WriteLine("update_status=blocked reason=local_commits ahead=$ahead")
+        exit 20
+    }
+
+    if ($DryRun) {
+        Write-Output "update_status=dry_run behind=$behind"
+        exit 0
+    }
+
+    if ($behind -ne 0) {
+        try {
+            Invoke-Git @("merge", "--ff-only", "$Remote/$BaseBranch") | Out-Host
+        } catch {
+            [Console]::Error.WriteLine("update_status=blocked reason=fast_forward_failed detail=$($_.Exception.Message)")
+            exit 21
+        }
+    }
+
+    if (-not $SkipInstall) {
+        $installer = Join-Path $Repo "scripts\install-symlinks.ps1"
+        $installerArguments = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $installer)
+        if (-not [string]::IsNullOrWhiteSpace($AdoptRepoRoot)) {
+            $installerArguments += @("-AdoptRepoRoot", $AdoptRepoRoot)
+        }
+        & powershell.exe @installerArguments
+        if ($LASTEXITCODE -ne 0) {
+            [Console]::Error.WriteLine("update_status=failed reason=install")
+            exit 22
+        }
+    }
+
+    $head = (Invoke-Git @("rev-parse", "HEAD") | Select-Object -Last 1).Trim()
+    Write-Output "update_status=ok head=$head"
+} finally {
+    if ($null -ne $lock) {
+        $lock.Dispose()
+    }
+}

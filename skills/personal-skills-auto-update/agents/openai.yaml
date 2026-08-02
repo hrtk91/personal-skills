@@ -1,0 +1,4 @@
+interface:
+  display_name: "Personal Skills Auto Update"
+  short_description: "WindowsとWSLでpersonal-skillsを安全に自動更新"
+  default_prompt: "Use $personal-skills-auto-update to configure or diagnose safe automatic updates for the personal-skills repository."

@@ -2,6 +2,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+INSTALL_STRICT="${INSTALL_STRICT:-0}"
 
 # Claude Code と Codex の両方に skill の symlink を張る。
 CLAUDE_SKILLS_DIR="${CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}"
@@ -16,6 +17,7 @@ link_one() {
 
   if ! mkdir -p "$(dirname "$target")"; then
     echo "[$label] skip: cannot create parent for $target" >&2
+    [ "$INSTALL_STRICT" = "1" ] && return 1
     return 0
   fi
 
@@ -29,6 +31,7 @@ link_one() {
     rm "$target"
   elif [ -e "$target" ]; then
     echo "[$label] skip: $target already exists and is not a symlink" >&2
+    [ "$INSTALL_STRICT" = "1" ] && return 1
     return 0
   fi
 
@@ -36,6 +39,7 @@ link_one() {
     echo "[$label] linked: $target -> $source"
   else
     echo "[$label] skip: failed to link $target -> $source" >&2
+    [ "$INSTALL_STRICT" = "1" ] && return 1
   fi
 }
 
