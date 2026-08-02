@@ -38,7 +38,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\install-windows.
 ```
 
 どちらもOSごとのユーザーデータ領域へruntime cloneを作り、Codex/Claudeのskillリンクを開発checkoutからruntime cloneへ切り替える。15分間隔でone-shot更新を呼び、二重実行はlockで防ぐ。install後はtimerまたはtaskの実在、次回実行、直近結果を確認する。
-WindowsのScheduled TaskはPowerShellを非表示で起動し、定期更新時にコンソールウィンドウを表示しない。
+WindowsのScheduled Taskはコンソールを持たない`wscript.exe`を経由してPowerShellを非表示で起動し、定期更新時にコンソールウィンドウを表示しない。launcherはPowerShellの終了を待ち、終了コードをTask Schedulerへ返す。
 
 ## 結果の扱い
 
