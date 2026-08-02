@@ -6,6 +6,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Claude Code と Codex の両方に skill の symlink を張る。
 CLAUDE_SKILLS_DIR="${CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}"
 CODEX_SKILLS_DIR="${CODEX_SKILLS_DIR:-$HOME/.codex/skills}"
+CODEX_AGENTS_DIR="${CODEX_AGENTS_DIR:-${CODEX_HOME:-$HOME/.codex}/agents}"
 HERMES_SKILLS_DIR="${HERMES_SKILLS_DIR:-$HOME/.hermes/skills}"
 
 link_one() {
@@ -54,6 +55,15 @@ link_skills() {
 
 link_skills "$CLAUDE_SKILLS_DIR" "claude"
 link_skills "$CODEX_SKILLS_DIR" "codex"
+
+# Codex custom agents のsymlink
+for agent_file in "$REPO_ROOT"/agents/*.toml; do
+  [ -f "$agent_file" ] || continue
+  link_one \
+    "$agent_file" \
+    "$CODEX_AGENTS_DIR/$(basename "$agent_file")" \
+    "codex-agent"
+done
 
 # Hermesでは現状、GitHub系skillだけをカテゴリ配下へ公開する。
 if [ -d "$REPO_ROOT/skills/create-pull-request" ]; then
