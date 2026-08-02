@@ -35,7 +35,7 @@ if ($LASTEXITCODE -ne 0) {
 
 $action = New-ScheduledTaskAction `
     -Execute "powershell.exe" `
-    -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$updateScript`" -Repo `"$RuntimeRepo`" -BaseBranch `"$BaseBranch`""
+    -Argument "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$updateScript`" -Repo `"$RuntimeRepo`" -BaseBranch `"$BaseBranch`""
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
     -RepetitionInterval (New-TimeSpan -Minutes 15)
 $settings = New-ScheduledTaskSettingsSet `
