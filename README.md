@@ -30,6 +30,7 @@ Windows PowerShell:
 | --- | --- |
 | `ai-dev-workflow` | AIによる実装を、worktree、品質確認、再試行、通知まで含む作業フローにします。 |
 | `comment-processing-order` | 複数段階の処理に、順序が分かるコメントを付けます。 |
+| `design-review` | 実装前の設計案を、目的、必須条件、変更容易性、失敗時の挙動から独立subagentにレビューさせます。 |
 | `fracta` | git worktree、Lima VM、Docker Composeを使う開発環境を操作します。 |
 | `frontend-development-principles` | 状態、UI、副作用の責務を整理してフロントエンドを設計します。 |
 | `investigating-domain` | 実装を「概要把握、詳細確認、統合」の順で調査します。 |

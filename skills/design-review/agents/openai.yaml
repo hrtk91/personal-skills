@@ -1,0 +1,4 @@
+interface:
+  display_name: "設計レビュー"
+  short_description: "実装前に目的・制約・代替案・ライフサイクルを検証する"
+  default_prompt: "Use $design-review to review this design against its original objective and constraints before implementation."
