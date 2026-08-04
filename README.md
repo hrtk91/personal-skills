@@ -34,7 +34,7 @@ Windows PowerShell:
 | `fracta` | git worktree、Lima VM、Docker Composeを使う開発環境を操作します。 |
 | `frontend-development-principles` | 状態、UI、副作用の責務を整理してフロントエンドを設計します。 |
 | `investigating-domain` | 実装を「概要把握、詳細確認、統合」の順で調査します。 |
-| `orchestrate-exploration` | 長い調査を複数のsubagentへ分け、親スレッドで進捗と判断を管理します。 |
+| `orchestrate-exploration` | 長い調査や設計から実装までをsubagentへ分け、親スレッドで契約・進捗・検証を管理します。 |
 | `research-experiment-loop` | 実験結果と仮説を記録し、過去の結果を踏まえて次の調査を決めます。 |
 | `test-design` | 仕様変更や不具合修正を守るテストを設計します。 |
 
