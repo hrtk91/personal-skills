@@ -15,7 +15,7 @@ description: 変更差分の命名一貫性をレビューする。関数・型�
    - `reduce`、`decode`、`parse`などが実際のinterfaceや契約上の役割である場合は、実装語という理由だけで避けない。対象と結果を補い、呼び出し表記全体で役割を読めるようにする
    - 一覧か単一値か、名前か値かなど、利用側の判断に必要な結果の違いが読める
    - 真偽値を返す処理は、成立条件が名前から読め、利用側で否定が重ならない
-   - 真偽値を返す処理は、現在状態の言い換えだけでなく、呼び出し側が判断したい業務能力を表している。たとえば`is_current_publication`より`can_accept_new_answers`を優先する
+   - 真偽値を返す処理は、現在状態の言い換えだけでなく、呼び出し側が判断したい業務能力を表している。判定失敗自体が業務エラーならBoolへ縮退せず、たとえば`ensure_accepts_new_answers`のようにdomainの`Result`として表している
    - `require_*`、`check_*`、`handle_*`など処理制御や実装都合だけの名前が、成功時に可能になる業務操作や、失敗時に拒否される業務条件を隠していない
    - 汎用操作へ`reason`や`type`を渡さないと業務意図が確定しない場合、`end_publication(reason)`ではなく`supersede_publication`と`retire_from_publication`のように、成立させる業務事実ごとの操作へ分けられないか確認する
    - `Ended(reason)`や`StatusChanged(reason)`のように、利用側が区別する業務事実を汎用状態と理由へ分解していない。`Superseded`や`Retired`のように型・variant・Domain Event名から事実を直接読める
