@@ -17,8 +17,8 @@ description: 変更差分の命名一貫性をレビューする。関数・型�
    - 真偽値を返す処理は、成立条件が名前から読め、利用側で否定が重ならない
    - 真偽値を返す処理は、現在状態の言い換えだけでなく、呼び出し側が判断したい業務能力を表している。判定失敗自体が業務エラーならBoolへ縮退せず、たとえば`ensure_accepts_new_answers`のようにdomainの`Result`として表している
    - `require_*`、`check_*`、`handle_*`など処理制御や実装都合だけの名前が、成功時に可能になる業務操作や、失敗時に拒否される業務条件を隠していない
-   - 汎用操作へ`reason`や`type`を渡さないと業務意図が確定しない場合、`end_publication(reason)`ではなく`supersede_publication`と`retire_from_publication`のように、成立させる業務事実ごとの操作へ分けられないか確認する
-   - `Ended(reason)`や`StatusChanged(reason)`のように、利用側が区別する業務事実を汎用状態と理由へ分解していない。`Superseded`や`Retired`のように型・variant・Domain Event名から事実を直接読める
+   - 関数名と引数名だけで、どの業務操作を行うか読める。引数の値を見ないと「新版への置換」か「教材の廃止」か分からず、両者のルールも異なるなら、`end_publication(reason)`を`supersede_publication`と`retire_from_publication`へ分ける
+   - 呼び出し側が汎用状態の`reason`を毎回調べて処理を分けるなら、その違いを型で表せないか確認する。たとえば`Ended(reason: Superseded)`ではなく`Superseded(at)`というvariantにする
    - Domain Eventは業務上すでに起きた事実を過去形で表し、技術処理の完了や命令形をイベント名にしていない
    - 同じ概念に既存と同じ用語を使う
    - レイヤー、外部インターフェース、画面、文書をまたいで同じ概念の用語が揃っている
