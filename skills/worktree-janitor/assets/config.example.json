@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "grace_seconds": 3600,
+  "delete_branch": true,
+  "protected_branches": [
+    "main",
+    "master",
+    "archive/*"
+  ],
+  "repositories": [
+    {
+      "path": "/path/to/repo",
+      "base_branch": "main"
+    }
+  ]
+}

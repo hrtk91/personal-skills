@@ -1,0 +1,4 @@
+interface:
+  display_name: "Worktree Janitor"
+  short_description: "Safely clean merged and inactive Git worktrees"
+  default_prompt: "Use $worktree-janitor to classify and safely clean merged Git worktrees."
