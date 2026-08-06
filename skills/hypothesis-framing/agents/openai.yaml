@@ -1,0 +1,4 @@
+interface:
+  display_name: "仮説フレーミング"
+  short_description: "問題設定、仮説発散、反証を一連で扱う実践的問題探索フロー"
+  default_prompt: "Use $hypothesis-framing to question this problem framing and propose the next cheapest test."
