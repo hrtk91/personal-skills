@@ -33,6 +33,7 @@ Windows PowerShell:
 | `design-review` | 実装前の設計案を、目的、必須条件、変更容易性、失敗時の挙動から独立subagentにレビューさせます。 |
 | `fracta` | git worktree、Lima VM、Docker Composeを使う開発環境を操作します。 |
 | `frontend-development-principles` | 状態、UI、副作用の責務を整理してフロントエンドを設計します。 |
+| `hypothesis-framing` | 問題設定を問い直し、独立した仮説の発散・反証・最小検証を進めます。 |
 | `investigating-domain` | 実装を「概要把握、詳細確認、統合」の順で調査します。 |
 | `orchestrate-exploration` | 長い調査や設計から実装までをsubagentへ分け、親スレッドで契約・進捗・検証を管理します。 |
 | `research-experiment-loop` | 実験結果と仮説を記録し、過去の結果を踏まえて次の調査を決めます。 |
