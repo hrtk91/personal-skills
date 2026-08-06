@@ -43,6 +43,8 @@ subagent を起動できる環境では、低い reasoning effort の leaf agent
 
 各 leaf には、採用した問題設定、確定事実、制約、担当軸、一次資料への参照だけを渡す。望ましい解決案、他 leaf の出力、親の暫定結論は渡さない。外部への書き込み、設定変更、破壊的な検証はさせない。
 
+dispatch ごとの最小コンテキスト、資料の渡し方、禁止情報、プロンプト雛形は、[subagent-context.md](references/subagent-context.md)を読んで適用する。
+
 各 leaf は最大2件の仮説を、次の固定フォーマットだけで返す。長い問題説明や解決案の羅列を返させない。
 
 ```markdown
