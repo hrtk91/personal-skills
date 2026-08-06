@@ -17,11 +17,11 @@ leaf に渡すのは、独立した因果仮説を立てて識別するための
 7. **エビデンス**: 一次資料のパス・URL・行範囲、または短い抜粋。大きな資料は source map にする。
 8. **出力契約**: `SKILL.md` の固定 Leaf フォーマット、最大2仮説、証拠不足なら不足情報を返すこと。
 
-Probe の Reframing leaf と Wildcard leaf には、主問題設定、競合フレーム、親が列挙した探索軸を渡さない。確定事実、意思決定の種類、制約、出力契約だけを渡す。Reframing は別の問題設定を、Wildcard は隠れた前提または原因カテゴリを探す。親が後から Probe の出力を Axes と照合して新規性を判定する。
+Probe の Reframing leaf と Wildcard leaf には、主問題設定、競合フレーム、親が列挙した探索軸を渡さない。確定事実、フレーム中立な意思決定の種類、制約、一次資料、出力契約だけを渡す。原因仮説や主問題設定の言い換えを意思決定の種類へ書かない。Reframing は別の問題設定を、Wildcard は隠れた前提または原因カテゴリを探す。親は Axes 確定直後に Probe の出力を Frame 時点の仮軸と採用 Axes へ照合して新規性を判定し、採否と理由を監査証跡へ残す。
 
 ## 実行環境の契約
 
-通常は read-only の `explorer` を fresh context で起動する。dispatch 前に実効 reasoning effort と sandbox を確認する。低推論・read-only・fresh context のいずれかを満たせない場合は、独立 leaf を起動しない。親逐次モードへ切り替えるか、利用者に制約を示して判断を仰ぐ。親だけが dispatch し、leaf の再委譲を禁止する。
+通常は read-only の `explorer` を fresh context で起動する。dispatch 前に、起動 API / UI / agent 定義のいずれかで (1) fresh context、(2) 低推論、(3) read-only sandbox の三つを個別に読めることを確認する。いずれかを読めない、または値が条件外なら不合格とする。独立 leaf を起動せず、利用者に制約を示して判断を仰ぐか、冒頭バナー「独立性なし・単一 agent の逐次シミュレーション」および各項目の出所「親の仮説」を付けた親逐次モードへ切り替える。親逐次モードにも Reframing と Wildcard の2役を含める。親だけが dispatch し、leaf の再委譲を禁止する。
 
 ## 渡さないもの
 
@@ -73,7 +73,7 @@ Probe の Reframing leaf と Wildcard leaf には、主問題設定、競合フ�
 仮説を識別できない場合は、不足している識別情報と、その情報で除外できる分岐を返してください。
 ```
 
-Wildcard leaf 用では、`問題設定` の主問題設定・競合フレーム・`担当軸` を省き、次を置く。
+Probe leaf（Reframing / Wildcard）用では、`問題設定` の主問題設定・競合フレーム・`担当軸` を省き、次を置く。
 
 ```markdown
 ## Probe の依頼
@@ -94,6 +94,8 @@ Wildcard leaf 用では、`問題設定` の主問題設定・競合フレーム
 ```
 
 leaf が source map だけでは因果仮説を識別できないと返した場合、親は該当一次資料の最小抜粋を追加して fresh context の leaf として再実行する。親の結論で穴を埋めない。
+
+この再実行は、新規 leaf ではなく同じ leaf の一回限りの再試行として扱い、総 leaf 数の上限に追加計上しない。再試行でも識別できなければ `I<id>` として残す。
 
 ## dispatch 前の確認
 
