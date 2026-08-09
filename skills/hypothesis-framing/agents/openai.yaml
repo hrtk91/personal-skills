@@ -1,4 +1,4 @@
 interface:
   display_name: "仮説フレーミング"
-  short_description: "問題設定、仮説発散、反証を一連で扱う実践的問題探索フロー"
-  default_prompt: "Use $hypothesis-framing to launch independent low-reasoning hypothesis branches and select the next cheapest test."
+  short_description: "原因候補を独立に出し、最小の確認と次の一手を決める"
+  default_prompt: "$hypothesis-framing を使って、原因候補を独立に出し、次に確かめる一手を決めてください。"
