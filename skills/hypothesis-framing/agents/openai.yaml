@@ -1,0 +1,4 @@
+interface:
+  display_name: "仮説フレーミング"
+  short_description: "原因候補を独立に出し、最小の確認と次の一手を決める"
+  default_prompt: "$hypothesis-framing を使って、原因候補を独立に出し、次に確かめる一手を決めてください。"
