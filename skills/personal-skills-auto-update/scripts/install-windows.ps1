@@ -28,14 +28,14 @@ if ($LASTEXITCODE -ne 0 -or $runtimeRemoteUrl -ne $remoteUrl) {
 $updateScript = Join-Path $RuntimeRepo "skills\personal-skills-auto-update\scripts\update.ps1"
 $bootstrapUpdateScript = Join-Path $PSScriptRoot "update.ps1"
 
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $bootstrapUpdateScript -Repo $RuntimeRepo -BaseBranch $BaseBranch -AdoptRepoRoot $SourceRepo
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $bootstrapUpdateScript -Repo $RuntimeRepo -BaseBranch $BaseBranch -AdoptRepoRoot $SourceRepo -TaskName $TaskName
 if ($LASTEXITCODE -ne 0) {
     throw "initial runtime update failed with exit code $LASTEXITCODE"
 }
 
 $action = New-ScheduledTaskAction `
     -Execute (Join-Path $env:SystemRoot "System32\conhost.exe") `
-    -Argument "--headless powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$updateScript`" -Repo `"$RuntimeRepo`" -BaseBranch `"$BaseBranch`""
+    -Argument "--headless powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$updateScript`" -Repo `"$RuntimeRepo`" -BaseBranch `"$BaseBranch`" -TaskName `"$TaskName`""
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
     -RepetitionInterval (New-TimeSpan -Minutes 15)
 $settings = New-ScheduledTaskSettingsSet `

@@ -4,6 +4,7 @@ param(
     [string]$Remote = "origin",
     [string]$BaseBranch = "main",
     [string]$AdoptRepoRoot = "",
+    [string]$TaskName = "PersonalSkillsAutoUpdate",
     [switch]$SkipInstall,
     [switch]$DryRun
 )
@@ -26,6 +27,54 @@ function Invoke-Git {
         throw ($output -join [Environment]::NewLine)
     }
     return $output
+}
+
+function Update-WindowsScheduledTaskAction {
+    param(
+        [string]$Repo,
+        [string]$BaseBranch,
+        [string]$TaskName
+    )
+
+    $updateScript = Join-Path $Repo "skills\personal-skills-auto-update\scripts\update.ps1"
+    try {
+        $task = Get-ScheduledTask -TaskName $TaskName -TaskPath "\" -ErrorAction Stop
+    } catch {
+        if ($_.CategoryInfo.Category -ne [System.Management.Automation.ErrorCategory]::ObjectNotFound) {
+            Write-Warning "scheduled_task_status=skipped reason=query_failed task=$TaskName detail=$($_.Exception.Message)"
+        }
+        return
+    }
+
+    $actions = @($task.Actions)
+    if ($actions.Count -ne 1) {
+        Write-Warning "scheduled_task_status=skipped reason=unexpected_action_count task=$TaskName count=$($actions.Count)"
+        return
+    }
+
+    $currentArguments = [string]$actions[0].Arguments
+    $updateScriptArgument = "-File `"$updateScript`""
+    $repoArgument = "-Repo `"$Repo`""
+    if ($currentArguments.IndexOf($updateScriptArgument, [System.StringComparison]::OrdinalIgnoreCase) -lt 0 -or
+        $currentArguments.IndexOf($repoArgument, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) {
+        Write-Warning "scheduled_task_status=skipped reason=target_mismatch task=$TaskName"
+        return
+    }
+
+    $expectedExecute = Join-Path $env:SystemRoot "System32\conhost.exe"
+    $expectedArguments = "--headless powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$updateScript`" -Repo `"$Repo`" -BaseBranch `"$BaseBranch`" -TaskName `"$TaskName`""
+    if ([string]$actions[0].Execute -ieq $expectedExecute -and $currentArguments -eq $expectedArguments) {
+        Write-Output "scheduled_task_status=ok task=$TaskName"
+        return
+    }
+
+    try {
+        $action = New-ScheduledTaskAction -Execute $expectedExecute -Argument $expectedArguments
+        Set-ScheduledTask -TaskName $TaskName -TaskPath "\" -Action $action -ErrorAction Stop | Out-Null
+        Write-Output "scheduled_task_status=updated task=$TaskName"
+    } catch {
+        Write-Warning "scheduled_task_status=skipped reason=update_failed task=$TaskName detail=$($_.Exception.Message)"
+    }
 }
 
 $Repo = (Resolve-Path -LiteralPath $Repo).Path
@@ -91,6 +140,8 @@ try {
             [Console]::Error.WriteLine("update_status=failed reason=install")
             exit 22
         }
+
+        Update-WindowsScheduledTaskAction -Repo $Repo -BaseBranch $BaseBranch -TaskName $TaskName
     }
 
     $head = (Invoke-Git @("rev-parse", "HEAD") | Select-Object -Last 1).Trim()
