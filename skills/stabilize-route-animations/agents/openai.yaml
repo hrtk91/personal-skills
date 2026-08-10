@@ -1,4 +1,0 @@
-interface:
-  display_name: "画面遷移アニメーション安定化"
-  short_description: "route切替時のちらつきと二重再生を診断して修正する"
-  default_prompt: "$stabilize-route-animationsを使って画面遷移アニメーションのちらつきを診断し、開始・停止・route commit・paintを同期する。"
