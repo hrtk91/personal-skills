@@ -32,6 +32,12 @@ node ~/.codex/skills/skill-observation-recorder/scripts/install-hook.mjs
 
 Codexのhook一覧で追加内容を確認する。
 
+最近の観測:
+
+```bash
+node ~/.codex/skills/skill-observation-recorder/scripts/list.mjs
+```
+
 ## 保存先
 
 ```text
