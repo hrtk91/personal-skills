@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process'
 import { mkdir, rename, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 async function readInput() {
   let text = ''
@@ -32,10 +33,11 @@ try {
   await writeFile(temporary, `${JSON.stringify(job, null, 2)}\n`, { mode: 0o600 })
   await rename(temporary, target)
 
-  const worker = join(dirname(new URL(import.meta.url).pathname), 'worker.mjs')
+  const worker = join(dirname(fileURLToPath(import.meta.url)), 'worker.mjs')
   const child = spawn(process.execPath, [worker], {
     detached: true,
     stdio: 'ignore',
+    windowsHide: true,
     env: { ...process.env, CODEX_SKILL_OBSERVATION_DATA_DIR: root },
   })
   child.unref()
