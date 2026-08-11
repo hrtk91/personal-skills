@@ -6,6 +6,7 @@
 - Expected:
 - Actual:
 - Why it matters:
+- Resolution:
 - Severity: low / medium / high
 - Related output or diff:
 
