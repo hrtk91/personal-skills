@@ -1,0 +1,8 @@
+[Unit]
+Description=Safely clean merged Git worktrees
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 %h/.codex/skills/worktree-janitor/scripts/worktree_janitor.py --config %h/.config/worktree-janitor/config.json --state %h/.local/state/worktree-janitor/state.json --execute
