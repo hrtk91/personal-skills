@@ -8,12 +8,14 @@
 
 ```text
 benchmarks/
-├─ observations/ # 日常利用で見つけた失敗の生ログ
+├─ observations/ # benchmark候補として残す観測
 ├─ cases/        # 固定taskと合格条件
 └─ runs/         # 実行条件と比較結果
 ```
 
-気になった出力はまず `observations/` に保存する。その場で一般則へ変換しない。同種の失敗が再発した場合、または高重要度なら固定caseへ昇格する。
+普段のCodex利用では `skill-observation-recorder` がSessionEnd後に会話を非同期解析し、AIの判断をユーザーが訂正して解決まで進んだ事例を `~/.codex/skill-observations/` に保存する。runtimeの観測をその場でskillへ一般化しない。
+
+再発した観測または高重要度の観測だけを `observations/` へ持ち込み、必要なら固定caseへ昇格する。repoを日常ログでdirtyにしないため、自動記録先とbenchmarkへ採用した記録を分ける。
 
 ケースは次の順に安い方法を選ぶ。
 
