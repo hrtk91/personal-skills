@@ -81,6 +81,7 @@ Windows PowerShell:
 | `personal-skills-ctl-daemon` | このリポジトリとローカルのスキルを同期するCLIやdaemonを設計します。 |
 | `retlaude` | Claudeセッションの振り返りを非同期で保存します。 |
 | `skill-benchmark` | skill変更前後を固定ケースで比較し、効果と回帰を検証します。 |
+| `skill-observation-recorder` | Codexで受けたユーザー訂正をセッション終了後に非同期で抽出・蓄積します。 |
 | `skill-usage-analytics` | Codexセッションで各スキルが使われた回数を集計します。 |
 
 ### UI・日々の振り返り
