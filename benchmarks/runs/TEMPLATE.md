@@ -5,6 +5,13 @@
 - Target failure:
 - Expected improvement:
 
+## Decision rule
+
+結果を見る前に、採用条件と許容しない回帰を書く。
+
+- Adopt if:
+- Reject if:
+
 ## Conditions
 
 | | Baseline | Treatment |
