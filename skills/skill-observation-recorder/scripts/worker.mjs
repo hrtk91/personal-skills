@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process'
 import { createReadStream } from 'node:fs'
-import { mkdir, open, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, open, readdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { createInterface } from 'node:readline'
@@ -14,8 +14,7 @@ const logPath = join(root, 'logs', 'worker.log')
 
 async function log(message) {
   await mkdir(join(root, 'logs'), { recursive: true, mode: 0o700 })
-  const line = `[${new Date().toISOString()}] ${message}\n`
-  await import('node:fs/promises').then(({ appendFile }) => appendFile(logPath, line, { mode: 0o600 }))
+  await appendFile(logPath, `[${new Date().toISOString()}] ${message}\n`, { mode: 0o600 })
 }
 
 function messageText(payload) {
@@ -148,18 +147,33 @@ async function processJob(name) {
   }
 }
 
+async function acquireWorkerLock() {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      return await open(lockPath, 'wx', 0o600)
+    } catch (error) {
+      if (error?.code !== 'EEXIST') throw error
+      try {
+        if (Date.now() - (await stat(lockPath)).mtimeMs > 10 * 60 * 1000) {
+          await unlink(lockPath)
+          continue
+        }
+      } catch (statError) {
+        if (statError?.code !== 'ENOENT') throw statError
+      }
+      return null
+    }
+  }
+  return null
+}
+
 await mkdir(join(queue, 'pending'), { recursive: true, mode: 0o700 })
 await mkdir(join(queue, 'processing'), { recursive: true, mode: 0o700 })
 await mkdir(join(queue, 'done'), { recursive: true, mode: 0o700 })
 await mkdir(join(queue, 'failed'), { recursive: true, mode: 0o700 })
 
-let lock
-try {
-  lock = await open(lockPath, 'wx', 0o600)
-} catch (error) {
-  if (error?.code === 'EEXIST') process.exit(0)
-  throw error
-}
+const lock = await acquireWorkerLock()
+if (!lock) process.exit(0)
 
 try {
   for (const name of (await readdir(join(queue, 'pending'))).filter((name) => name.endsWith('.json')).sort()) {
