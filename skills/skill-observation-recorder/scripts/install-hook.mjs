@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { access, mkdir, open, readFile, stat, unlink } from 'node:fs/promises'
+import { access, mkdir, open, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -27,9 +27,8 @@ async function acquireLock(path) {
 async function writeJsonAtomic(path, value) {
   await mkdir(dirname(path), { recursive: true })
   const temporary = `${path}.${process.pid}.tmp`
-  await import('node:fs/promises').then(({ writeFile, rename }) =>
-    writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 })
-      .then(() => rename(temporary, path)))
+  await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 })
+  await rename(temporary, path)
 }
 
 const hooksPath = process.env.CODEX_HOOKS_PATH ?? join(homedir(), '.codex', 'hooks.json')
