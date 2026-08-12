@@ -1,5 +1,12 @@
 # <case name>
 
+## Origin
+
+- Observation:
+- Failure hypothesis:
+
+代表的なsmoke caseなど、実運用の失敗を起点にしない場合は理由を書く。
+
 ## Purpose
 
 このケースで再現・比較したい失敗や能力を書く。
