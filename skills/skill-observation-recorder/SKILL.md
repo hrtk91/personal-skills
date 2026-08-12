@@ -9,6 +9,8 @@ description: Codexセッション中にユーザーから受けた実装・設�
 
 SessionEnd hookでは解析せずqueueへの登録だけを行う。別processがtranscriptを読み、**訂正後に設計・修正・実装まで進み、解決した事例だけ**を `~/.codex/skill-observations/observations/` に保存する。
 
+長時間sessionでは末尾だけを切り出さず、message境界で複数chunkへ分割して全体を走査する。隣接chunkは一部messageを重ね、chunk境界付近の訂正と解決を拾えるようにする。最後に候補を統合し、重複した観測を一件へまとめる。
+
 保存対象:
 
 - 実装・設計・レビュー・調査方法についてユーザーがAIの判断を訂正した
@@ -44,6 +46,8 @@ recorderが重要な訂正を取りこぼすと、後段のbenchmark corpus自�
 - severity agreement: 重要度の大きな不一致
 
 recorderの出力件数が増えたこと自体を改善とみなさない。precisionを大きく落としてrecallだけを上げる変更も採用しない。
+
+最低限の分類回帰は `benchmarks/cases/observation-recorder-smoke.md` で確認する。これは実sessionを使ったprecision / recall校正の代替にはしない。
 
 ## 導入
 
