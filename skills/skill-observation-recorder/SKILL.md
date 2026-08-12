@@ -22,7 +22,28 @@ SessionEnd hookでは解析せずqueueへの登録だけを行う。別process�
 - ユーザーの好みが途中で変わっただけのもの
 - 訂正後も結論が出ていないもの
 
-このrecorderは観測だけを行い、skill変更やbenchmarkへの昇格は行わない。
+このrecorderは**ground truthではなくbenchmark候補を作る推定器**として扱う。観測だけを行い、失敗原因の決定、skill変更、benchmarkへの自動昇格は行わない。
+
+保存された観測は、必要に応じて次の順に扱う。
+
+1. 人間が観測事実として妥当か確認する。
+2. `benchmarks/observations/` へ採用する。
+3. 再発または高重要度なら `benchmarks/hypotheses/` で複数の失敗原因を検討する。
+4. bare modelで原因を識別し、再現したものだけ固定benchmark caseへ進める。
+
+## recorder自体の校正
+
+recorderが重要な訂正を取りこぼすと、後段のbenchmark corpus自体が偏る。analyzerのmodelやpromptを変更するとき、または定期的な健全性確認では、full transcriptを人間が読んで保存対象をラベルした小さな集合と比較する。
+
+最低限、次を見る。
+
+- precision: recorderが保存した観測のうち、本当に保存対象だった割合
+- recall: 人間が保存対象とした訂正のうち、recorderが拾えた割合
+- high-severity false negative: 重要な訂正の取りこぼし
+- classification error: 追加要件、好み、未解決議論の誤保存
+- severity agreement: 重要度の大きな不一致
+
+recorderの出力件数が増えたこと自体を改善とみなさない。precisionを大きく落としてrecallだけを上げる変更も採用しない。
 
 ## 導入
 
