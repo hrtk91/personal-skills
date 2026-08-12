@@ -11,6 +11,8 @@ const root = process.env.CODEX_SKILL_OBSERVATION_DATA_DIR
 const queue = join(root, 'queue')
 const lockPath = join(root, 'worker.lock')
 const logPath = join(root, 'logs', 'worker.log')
+const MAX_CHUNK_CHARS = 90_000
+const CHUNK_OVERLAP_MESSAGES = 6
 
 async function log(message) {
   await mkdir(join(root, 'logs'), { recursive: true, mode: 0o700 })
@@ -26,7 +28,7 @@ function messageText(payload) {
     .trim()
 }
 
-async function conversationFromTranscript(path) {
+async function conversationChunksFromTranscript(path) {
   const messages = []
   const lines = createInterface({ input: createReadStream(path), crlfDelay: Infinity })
   for await (const line of lines) {
@@ -38,8 +40,26 @@ async function conversationFromTranscript(path) {
     const text = messageText(payload)
     if (text) messages.push(`${payload.role.toUpperCase()}: ${text}`)
   }
-  const joined = messages.join('\n\n')
-  return joined.length <= 120_000 ? joined : joined.slice(-120_000)
+
+  const chunks = []
+  let start = 0
+  while (start < messages.length) {
+    let end = start
+    let chars = 0
+    while (end < messages.length) {
+      const extra = messages[end].length + (end > start ? 2 : 0)
+      if (end > start && chars + extra > MAX_CHUNK_CHARS) break
+      chars += extra
+      end += 1
+      if (chars >= MAX_CHUNK_CHARS) break
+    }
+
+    if (end === start) end += 1
+    chunks.push(messages.slice(start, end).join('\n\n'))
+    if (end >= messages.length) break
+    start = Math.max(start + 1, end - CHUNK_OVERLAP_MESSAGES)
+  }
+  return chunks
 }
 
 function extractJsonArray(text) {
@@ -58,10 +78,33 @@ function extractJsonArray(text) {
   }
 }
 
-function analyze(conversation) {
-  const prompt = `以下はCodexでの開発会話です。ユーザーがAIの実装・設計・レビュー・調査方法を訂正し、その後に期待する判断が具体化され、修正や実装まで進んで解決した事例だけを抽出してください。
+function runAnalyzer(prompt, input, systemPrompt) {
+  const command = process.env.SKILL_OBSERVATION_ANALYZER ?? 'claude'
+  const model = process.env.SKILL_OBSERVATION_MODEL ?? 'haiku'
+  const result = spawnSync(command, [
+    '-p', '--model', model,
+    '--system-prompt', systemPrompt,
+    prompt,
+  ], {
+    input,
+    encoding: 'utf8',
+    timeout: 120_000,
+    maxBuffer: 4 * 1024 * 1024,
+    env: { ...process.env, CLAUDE_HOOK_RUNNING: '1' },
+  })
+
+  if (result.error) throw result.error
+  if (result.status !== 0) throw new Error(result.stderr?.trim() || `analyzer exited ${result.status}`)
+  const value = extractJsonArray(result.stdout.trim())
+  if (!value) throw new Error('analyzer returned invalid JSON')
+  return value
+}
+
+function analyze(conversation, chunkIndex, chunkCount) {
+  const prompt = `以下はCodexでの開発会話${chunkCount > 1 ? `の一部 (${chunkIndex + 1}/${chunkCount})` : ''}です。ユーザーがAIの実装・設計・レビュー・調査方法を訂正し、その後に期待する判断が具体化され、修正や実装まで進んで解決した事例だけを抽出してください。
 
 単なる追加要件、仕様変更、タイポ、好みの変更、未解決の議論は除外してください。AIのやり方の失敗として別タスクにも再発しうるものだけ対象にします。
+${chunkCount > 1 ? 'これは長いsessionを分割したchunkです。このchunk内で訂正と解決の両方を確認できない事例は推測で補わず除外してください。隣接chunkと一部のmessageが重複するため、重複候補は後段で統合されます。' : ''}
 
 JSON配列のみ返してください。該当なしは []。最大5件。
 各要素:
@@ -76,25 +119,27 @@ JSON配列のみ返してください。該当なしは []。最大5件。
   "evidence": "ユーザー訂正を短く要約"
 }`
 
-  const command = process.env.SKILL_OBSERVATION_ANALYZER ?? 'claude'
-  const model = process.env.SKILL_OBSERVATION_MODEL ?? 'haiku'
-  const result = spawnSync(command, [
-    '-p', '--model', model,
-    '--system-prompt', '会話から再利用可能なAI失敗事例だけを抽出する。JSON以外を出力しない。',
+  return runAnalyzer(
     prompt,
-  ], {
-    input: conversation,
-    encoding: 'utf8',
-    timeout: 120_000,
-    maxBuffer: 4 * 1024 * 1024,
-    env: { ...process.env, CLAUDE_HOOK_RUNNING: '1' },
-  })
+    conversation,
+    '会話から再利用可能なAI失敗事例だけを抽出する。JSON以外を出力しない。',
+  )
+}
 
-  if (result.error) throw result.error
-  if (result.status !== 0) throw new Error(result.stderr?.trim() || `analyzer exited ${result.status}`)
-  const observations = extractJsonArray(result.stdout.trim())
-  if (!observations) throw new Error('analyzer returned invalid JSON')
-  return observations
+function consolidateObservations(candidates) {
+  if (candidates.length <= 1) return candidates
+
+  const prompt = `以下は同一のCodex sessionを複数chunkに分けて抽出したAI失敗候補です。
+
+同じ訂正を指す候補だけを1件へ統合し、別の失敗は分けたまま残してください。候補にない新しい失敗を追加してはいけません。訂正後に解決したことが候補情報から確認できないもの、単なる追加要件・仕様変更・タイポ・好みの変更・未解決議論は除外してください。
+
+JSON配列のみ返してください。最大10件。各要素のschemaは入力と同じにしてください。`
+
+  return runAnalyzer(
+    prompt,
+    JSON.stringify(candidates),
+    '同一sessionのAI失敗候補を重複排除する。入力候補以外を追加せず、JSON以外を出力しない。',
+  )
 }
 
 async function saveObservations(job, observations) {
@@ -129,12 +174,17 @@ async function processJob(name) {
 
   try {
     const job = JSON.parse(await readFile(processing, 'utf8'))
-    const conversation = await conversationFromTranscript(job.transcript_path)
-    if (!conversation) throw new Error('conversation is empty')
-    const observations = analyze(conversation)
+    const chunks = await conversationChunksFromTranscript(job.transcript_path)
+    if (chunks.length === 0) throw new Error('conversation is empty')
+
+    const candidates = []
+    for (let index = 0; index < chunks.length; index += 1) {
+      candidates.push(...analyze(chunks[index], index, chunks.length))
+    }
+    const observations = consolidateObservations(candidates)
     const saved = await saveObservations(job, observations)
     await rename(processing, done)
-    await log(`${basename(name)}: ${observations.length} observation(s)${saved ? ` -> ${saved}` : ''}`)
+    await log(`${basename(name)}: ${chunks.length} chunk(s), ${candidates.length} candidate(s), ${observations.length} observation(s)${saved ? ` -> ${saved}` : ''}`)
   } catch (error) {
     const job = JSON.parse(await readFile(processing, 'utf8').catch(() => '{}'))
     await writeFile(failed, `${JSON.stringify({
