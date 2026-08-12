@@ -1,5 +1,9 @@
 # Greenfield Rust TODO CLI
 
+## Origin
+
+実運用の単一失敗ではなく、モデル更新時やskill変更時に要件達成・検証・過剰実装の大きな回帰を見る代表的なsmoke case。
+
 ## Purpose
 
 小さなアプリを一から完成させるtaskで、要件達成、検証、過剰実装の差を見るsmoke case。
