@@ -9,6 +9,8 @@ description: Codexセッション中にユーザーから受けた実装・設�
 
 SessionEnd hookでは解析せずqueueへの登録だけを行う。別processがtranscriptを読み、**訂正後に設計・修正・実装まで進み、解決した事例だけ**を `~/.codex/skill-observations/observations/` に保存する。
 
+解析には既定で `codex exec` を使う。解析用CodexのSessionEndは再帰的に記録せず、modelを固定したい場合だけ `SKILL_OBSERVATION_MODEL` を指定する。
+
 長時間sessionでは末尾だけを切り出さず、message境界で複数chunkへ分割して全体を走査する。隣接chunkは一部messageを重ね、chunk境界付近の訂正と解決を拾えるようにする。最後に候補を統合し、重複した観測を一件へまとめる。
 
 保存対象:
@@ -63,11 +65,29 @@ Codexのhook一覧で追加内容を確認する。
 node ~/.codex/skills/skill-observation-recorder/scripts/list.mjs
 ```
 
+過去のCodex transcriptを分析対象へ追加する:
+
+```bash
+node ~/.codex/skills/skill-observation-recorder/scripts/session-end-hook.mjs \
+  --transcript ~/.codex/sessions/<date>/rollout-<session>.jsonl \
+  --session-id <session-id>
+```
+
+PR番号だけから会話は復元できない。対象PRを作ったsessionのtranscriptを指定する。`--session-id` は省略できるが、同じtranscriptを再投入するときの識別と上書き防止のため指定を推奨する。
+
+実装変更後の回帰確認:
+
+```bash
+node --test ~/.codex/skills/skill-observation-recorder/scripts/test/recorder.test.mjs
+```
+
 ## 保存先
 
 ```text
 ~/.codex/skill-observations/
 ├── queue/{pending,processing,done,failed}/
-├── observations/<YYYY-MM-DD>/<session_id>.json
+├── observations/<YYYY-MM-DD>/<session_id>-<job_id>.json
 └── logs/worker.log
 ```
+
+workerが途中終了して `processing/` にjobが残った場合は、次回起動時に `pending/` へ戻して再処理する。

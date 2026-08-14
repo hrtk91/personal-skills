@@ -28,6 +28,7 @@ case作成だけを依頼された場合は、原則としてfailure hypothesis�
 
 2. **失敗原因を一つに決め打ちしない**
    - `benchmarks/hypotheses/TEMPLATE.md` を使い、競合する原因仮説を置く。
+   - 個別案件の問題設定を問い直し、原因候補を広く発散・反証する必要がある場合は `hypothesis-framing` を使う。このskillは、観測を固定evalへ育てて介入を比較する段階を担当する。
    - 少なくとも、モデル能力、context探索不足、taskの曖昧さ、project固有前提、tool/環境、既存skillの副作用を候補として検討する。
    - 各仮説について「真なら何が起きるか」「何が出れば反証されるか」を書く。
 

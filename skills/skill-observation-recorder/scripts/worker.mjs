@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { appendFile, mkdir, open, readdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, readdir, readFile, rename, stat, unlink, utimes, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { createInterface } from 'node:readline'
@@ -9,10 +10,14 @@ import { createInterface } from 'node:readline'
 const root = process.env.CODEX_SKILL_OBSERVATION_DATA_DIR
   ?? join(homedir(), '.codex', 'skill-observations')
 const queue = join(root, 'queue')
-const lockPath = join(root, 'worker.lock')
 const logPath = join(root, 'logs', 'worker.log')
 const MAX_CHUNK_CHARS = 90_000
 const CHUNK_OVERLAP_MESSAGES = 6
+const configuredAnalyzerTimeout = Number(process.env.SKILL_OBSERVATION_ANALYZER_TIMEOUT_MS ?? 120_000)
+const ANALYZER_TIMEOUT_MS = Number.isFinite(configuredAnalyzerTimeout) && configuredAnalyzerTimeout > 0
+  ? configuredAnalyzerTimeout
+  : 120_000
+const CLAIM_LEASE_MS = Math.max(3 * 60 * 1000, ANALYZER_TIMEOUT_MS + 60_000)
 
 async function log(message) {
   await mkdir(join(root, 'logs'), { recursive: true, mode: 0o700 })
@@ -28,10 +33,15 @@ function messageText(payload) {
     .trim()
 }
 
-async function conversationChunksFromTranscript(path) {
+async function conversationChunksFromTranscript(path, renewClaimLease) {
   const messages = []
+  let lastRenewedAt = Date.now()
   const lines = createInterface({ input: createReadStream(path), crlfDelay: Infinity })
   for await (const line of lines) {
+    if (Date.now() - lastRenewedAt >= 30_000) {
+      await renewClaimLease()
+      lastRenewedAt = Date.now()
+    }
     let event
     try { event = JSON.parse(line) } catch { continue }
     if (event.type !== 'response_item') continue
@@ -78,19 +88,45 @@ function extractJsonArray(text) {
   }
 }
 
+const observationFields = ['title', 'task', 'expected', 'actual', 'why_it_matters', 'resolution', 'evidence']
+
+function validateObservations(value, maximum) {
+  if (!Array.isArray(value) || value.length > maximum) throw new Error('analyzer returned invalid observations')
+  for (const observation of value) {
+    if (!observation || typeof observation !== 'object' || Array.isArray(observation)) {
+      throw new Error('analyzer returned invalid observation')
+    }
+    if (observationFields.some((field) => typeof observation[field] !== 'string' || !observation[field].trim())) {
+      throw new Error('analyzer observation is missing a required string')
+    }
+    if (!['low', 'medium', 'high'].includes(observation.severity)) {
+      throw new Error('analyzer observation has invalid severity')
+    }
+  }
+  return value
+}
+
 function runAnalyzer(prompt, input, systemPrompt) {
-  const command = process.env.SKILL_OBSERVATION_ANALYZER ?? 'claude'
-  const model = process.env.SKILL_OBSERVATION_MODEL ?? 'haiku'
-  const result = spawnSync(command, [
-    '-p', '--model', model,
-    '--system-prompt', systemPrompt,
-    prompt,
-  ], {
+  const command = process.env.SKILL_OBSERVATION_ANALYZER ?? 'codex'
+  const model = process.env.SKILL_OBSERVATION_MODEL
+  const instructions = `${systemPrompt}\n\n${prompt}`
+  const args = [
+    'exec', '--ephemeral', '--ignore-user-config', '--skip-git-repo-check', '-s', 'read-only',
+    '-c', 'web_search="disabled"',
+    '--disable', 'shell_tool', '--disable', 'unified_exec', '--disable', 'code_mode_host',
+    '--disable', 'multi_agent', '--disable', 'apps', '--disable', 'browser_use',
+    '--disable', 'browser_use_external', '--disable', 'browser_use_full_cdp_access',
+    '--disable', 'computer_use', '--disable', 'image_generation', '--disable', 'goals',
+    '--disable', 'view_image', '--disable', 'tool_suggest',
+  ]
+  if (model) args.push('-m', model)
+  args.push(instructions)
+  const result = spawnSync(command, args, {
     input,
     encoding: 'utf8',
-    timeout: 120_000,
+    timeout: ANALYZER_TIMEOUT_MS,
     maxBuffer: 4 * 1024 * 1024,
-    env: { ...process.env, CLAUDE_HOOK_RUNNING: '1' },
+    env: { ...process.env, SKILL_OBSERVATION_ANALYZER_RUNNING: '1' },
   })
 
   if (result.error) throw result.error
@@ -119,11 +155,11 @@ JSON配列のみ返してください。該当なしは []。最大5件。
   "evidence": "ユーザー訂正を短く要約"
 }`
 
-  return runAnalyzer(
+  return validateObservations(runAnalyzer(
     prompt,
     conversation,
     '会話から再利用可能なAI失敗事例だけを抽出する。JSON以外を出力しない。',
-  )
+  ), 5)
 }
 
 function consolidateObservations(candidates) {
@@ -135,11 +171,11 @@ function consolidateObservations(candidates) {
 
 JSON配列のみ返してください。最大10件。各要素のschemaは入力と同じにしてください。`
 
-  return runAnalyzer(
+  return validateObservations(runAnalyzer(
     prompt,
     JSON.stringify(candidates),
     '同一sessionのAI失敗候補を重複排除する。入力候補以外を追加せず、JSON以外を出力しない。',
-  )
+  ), 10)
 }
 
 async function saveObservations(job, observations) {
@@ -147,25 +183,31 @@ async function saveObservations(job, observations) {
   const date = (job.ended_at ?? new Date().toISOString()).slice(0, 10)
   const dir = join(root, 'observations', date)
   await mkdir(dir, { recursive: true, mode: 0o700 })
-  const safeId = String(job.session_id).replace(/[^a-zA-Z0-9._-]/g, '_')
-  const target = join(dir, `${safeId}.json`)
-  await writeFile(target, `${JSON.stringify({
+  const storageId = job.storage_id ?? Buffer.from(String(job.session_id)).toString('base64url')
+  const jobId = job.job_id ?? randomUUID()
+  const target = join(dir, `${storageId}-${jobId}.json`)
+  const temporary = `${target}.${process.pid}.tmp`
+  await writeFile(temporary, `${JSON.stringify({
     schema_version: 1,
+    job_id: jobId,
     session_id: job.session_id,
     cwd: job.cwd,
     ended_at: job.ended_at,
     generated_at: new Date().toISOString(),
     observations,
   }, null, 2)}\n`, { mode: 0o600 })
+  await rename(temporary, target)
   return target
 }
 
 async function processJob(name) {
   const pending = join(queue, 'pending', name)
-  const processing = join(queue, 'processing', name)
+  const processing = join(queue, 'processing', `${name}.${process.pid}.processing`)
   const done = join(queue, 'done', name)
   const failed = join(queue, 'failed', name)
   try {
+    const now = new Date()
+    await utimes(pending, now, now)
     await rename(pending, processing)
   } catch (error) {
     if (error?.code === 'ENOENT') return
@@ -174,19 +216,24 @@ async function processJob(name) {
 
   try {
     const job = JSON.parse(await readFile(processing, 'utf8'))
-    const chunks = await conversationChunksFromTranscript(job.transcript_path)
+    const renewClaimLease = () => utimes(processing, new Date(), new Date())
+    await renewClaimLease()
+    const chunks = await conversationChunksFromTranscript(job.transcript_path, renewClaimLease)
     if (chunks.length === 0) throw new Error('conversation is empty')
 
     const candidates = []
     for (let index = 0; index < chunks.length; index += 1) {
+      await utimes(processing, new Date(), new Date())
       candidates.push(...analyze(chunks[index], index, chunks.length))
     }
+    await utimes(processing, new Date(), new Date())
     const observations = consolidateObservations(candidates)
     const saved = await saveObservations(job, observations)
     await rename(processing, done)
     await log(`${basename(name)}: ${chunks.length} chunk(s), ${candidates.length} candidate(s), ${observations.length} observation(s)${saved ? ` -> ${saved}` : ''}`)
   } catch (error) {
-    const job = JSON.parse(await readFile(processing, 'utf8').catch(() => '{}'))
+    let job = {}
+    try { job = JSON.parse(await readFile(processing, 'utf8')) } catch {}
     await writeFile(failed, `${JSON.stringify({
       ...job,
       failed_at: new Date().toISOString(),
@@ -197,24 +244,42 @@ async function processJob(name) {
   }
 }
 
-async function acquireWorkerLock() {
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+function claimOwnerPid(name) {
+  const match = name.match(/\.json\.(\d+)\.processing$/)
+  return match ? Number(match[1]) : null
+}
+
+function processIsAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return error?.code === 'EPERM'
+  }
+}
+
+async function recoverInterruptedJobs() {
+  for (const claimName of (await readdir(join(queue, 'processing'))).filter((name) => name.endsWith('.processing')).sort()) {
+    const claim = join(queue, 'processing', claimName)
+    let claimStat
     try {
-      return await open(lockPath, 'wx', 0o600)
+      claimStat = await stat(claim)
     } catch (error) {
-      if (error?.code !== 'EEXIST') throw error
-      try {
-        if (Date.now() - (await stat(lockPath)).mtimeMs > 10 * 60 * 1000) {
-          await unlink(lockPath)
-          continue
-        }
-      } catch (statError) {
-        if (statError?.code !== 'ENOENT') throw statError
-      }
-      return null
+      if (error?.code === 'ENOENT') continue
+      throw error
+    }
+    const leaseIsFresh = Date.now() - claimStat.mtimeMs <= CLAIM_LEASE_MS
+    if (processIsAlive(claimOwnerPid(claimName)) && leaseIsFresh) continue
+    const marker = claimName.lastIndexOf('.json.')
+    if (marker < 0) continue
+    const pendingName = claimName.slice(0, marker + 5)
+    try {
+      await rename(claim, join(queue, 'pending', pendingName))
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error
     }
   }
-  return null
 }
 
 await mkdir(join(queue, 'pending'), { recursive: true, mode: 0o700 })
@@ -222,14 +287,7 @@ await mkdir(join(queue, 'processing'), { recursive: true, mode: 0o700 })
 await mkdir(join(queue, 'done'), { recursive: true, mode: 0o700 })
 await mkdir(join(queue, 'failed'), { recursive: true, mode: 0o700 })
 
-const lock = await acquireWorkerLock()
-if (!lock) process.exit(0)
-
-try {
-  for (const name of (await readdir(join(queue, 'pending'))).filter((name) => name.endsWith('.json')).sort()) {
-    await processJob(name)
-  }
-} finally {
-  await lock.close()
-  await unlink(lockPath).catch(() => {})
+await recoverInterruptedJobs()
+for (const name of (await readdir(join(queue, 'pending'))).filter((name) => name.endsWith('.json')).sort()) {
+  await processJob(name)
 }
