@@ -1,10 +1,38 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process'
-import { mkdir, rename, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
+import { setTimeout as sleep } from 'node:timers/promises'
+
+const configuredForegroundTimeout = Number(process.env.SKILL_OBSERVATION_FOREGROUND_TIMEOUT_MS ?? 15 * 60 * 1000)
+const FOREGROUND_TIMEOUT_MS = Number.isFinite(configuredForegroundTimeout) && configuredForegroundTimeout > 0
+  ? configuredForegroundTimeout
+  : 15 * 60 * 1000
+
+async function waitForForegroundJob(root, name, deadline, workerError) {
+  const done = join(root, 'queue', 'done', name)
+  const failed = join(root, 'queue', 'failed', name)
+  while (Date.now() < deadline) {
+    if (workerError()) throw workerError()
+    try {
+      const failure = JSON.parse(await readFile(failed, 'utf8'))
+      throw new Error(`worker failed: ${failure.error ?? 'unknown error'}`)
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error
+    }
+    try {
+      await stat(done)
+      return
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error
+    }
+    await sleep(100)
+  }
+  throw new Error(`worker timed out waiting for ${name}`)
+}
 
 async function readInput() {
   let text = ''
@@ -14,27 +42,32 @@ async function readInput() {
 
 function manualInput(args) {
   if (args.length === 0) return null
-  const transcriptIndex = args.indexOf('--transcript')
-  const sessionIndex = args.indexOf('--session-id')
-  const knownIndexes = new Set([transcriptIndex, transcriptIndex + 1])
-  if (sessionIndex >= 0) {
-    knownIndexes.add(sessionIndex)
-    knownIndexes.add(sessionIndex + 1)
+  const values = new Map()
+  let foreground = false
+  for (let index = 0; index < args.length; index += 1) {
+    const name = args[index]
+    if (name === '--foreground') {
+      foreground = true
+      continue
+    }
+    if (!['--transcript', '--session-id', '--cwd'].includes(name)) throw new Error(`unknown argument: ${name}`)
+    const value = args[index + 1]
+    if (!value || value.startsWith('--')) {
+      throw new Error(name === '--transcript' ? '--transcript requires a file path' : `${name} requires a value`)
+    }
+    if (values.has(name)) throw new Error(`duplicate argument: ${name}`)
+    values.set(name, value)
+    index += 1
   }
-  if (transcriptIndex < 0 || !args[transcriptIndex + 1] || args[transcriptIndex + 1].startsWith('--')) {
-    throw new Error('--transcript requires a file path')
-  }
-  if (sessionIndex >= 0 && (!args[sessionIndex + 1] || args[sessionIndex + 1].startsWith('--'))) {
-    throw new Error('--session-id requires a value')
-  }
-  if (args.some((_, index) => !knownIndexes.has(index))) throw new Error('unknown argument')
+  if (!values.has('--transcript')) throw new Error('--transcript requires a file path')
   return {
     hook_event_name: 'SessionEnd',
-    transcript_path: args[transcriptIndex + 1],
-    session_id: sessionIndex >= 0 && args[sessionIndex + 1]
-      ? args[sessionIndex + 1]
+    transcript_path: values.get('--transcript'),
+    session_id: values.has('--session-id')
+      ? values.get('--session-id')
       : `backfill-${Date.now()}`,
-    cwd: process.cwd(),
+    cwd: values.get('--cwd') ?? process.cwd(),
+    foreground,
   }
 }
 
@@ -69,6 +102,20 @@ try {
   await rename(temporary, target)
 
   const worker = join(dirname(fileURLToPath(import.meta.url)), 'worker.mjs')
+  if (manual && input.foreground) {
+    const deadline = Date.now() + FOREGROUND_TIMEOUT_MS
+    let startError = null
+    const child = spawn(process.execPath, [worker], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+      env: { ...process.env, CODEX_SKILL_OBSERVATION_DATA_DIR: root },
+    })
+    child.once('error', (error) => { startError = error })
+    child.unref()
+    await waitForForegroundJob(root, basename(target), deadline, () => startError)
+    process.exit(0)
+  }
   const child = spawn(process.execPath, [worker], {
     detached: true,
     stdio: 'ignore',

@@ -70,10 +70,14 @@ node ~/.codex/skills/skill-observation-recorder/scripts/list.mjs
 ```bash
 node ~/.codex/skills/skill-observation-recorder/scripts/session-end-hook.mjs \
   --transcript ~/.codex/sessions/<date>/rollout-<session>.jsonl \
-  --session-id <session-id>
+  --session-id <session-id> \
+  --cwd <original-working-directory> \
+  --foreground
 ```
 
 PR番号だけから会話は復元できない。対象PRを作ったsessionのtranscriptを指定する。`--session-id` は省略できるが、同じtranscriptを再投入するときの識別と上書き防止のため指定を推奨する。
+`--cwd` は元sessionの作業ディレクトリを記録する。`--foreground` はworkerの完了を待ち、Codexの初期化・認証・sandbox errorをその場で確認できるため、手動backfillでは指定を推奨する。通常のSessionEnd hookは引き続き非同期で動作する。
+foregroundの待機上限は既定15分で、必要な場合だけ `SKILL_OBSERVATION_FOREGROUND_TIMEOUT_MS` で変更する。待機上限を超えても解析workerは中断せず、後からqueueの`done`または`failed`へ結果を残す。
 
 実装変更後の回帰確認:
 

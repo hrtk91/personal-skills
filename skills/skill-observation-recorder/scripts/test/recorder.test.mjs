@@ -85,7 +85,7 @@ test('manual backfill queues a transcript and the Codex analyzer saves its resol
     SKILL_OBSERVATION_ANALYZER: fakeCodex,
   }
 
-  const result = run(hook, ['--transcript', transcript, '--session-id', 'enqu-pr-test'], env)
+  const result = run(hook, ['--transcript', transcript, '--session-id', 'resolved-review-test'], env)
   assert.equal(result.status, 0, result.stderr)
 
   const observationsDir = join(root, 'observations', new Date().toISOString().slice(0, 10))
@@ -101,6 +101,82 @@ test('manual backfill queues a transcript and the Codex analyzer saves its resol
   }
   assert.equal(record?.observations?.[0]?.actual, '保存件数だけを確認した')
   assert.equal(record?.observations?.[0]?.expected, '種類、対象ID、実行者、payloadを確認する')
+})
+
+test('手動foreground backfillは元のcwdを記録して解析完了まで待機する', async () => {
+  const root = await fixtureRoot('foreground')
+  const transcript = await writeTranscript(root)
+  const originalCwd = join(root, 'original-project')
+  await mkdir(originalCwd)
+  await chmod(fakeCodex, 0o700)
+  const result = run(hook, [
+    '--transcript', transcript,
+    '--session-id', 'foreground-test',
+    '--cwd', originalCwd,
+    '--foreground',
+  ], {
+    CODEX_SKILL_OBSERVATION_DATA_DIR: root,
+    SKILL_OBSERVATION_ANALYZER: fakeCodex,
+  })
+  assert.equal(result.status, 0, result.stderr)
+
+  const date = new Date().toISOString().slice(0, 10)
+  const [name] = await readdir(join(root, 'observations', date))
+  const record = JSON.parse(await readFile(join(root, 'observations', date, name), 'utf8'))
+  assert.equal(record.cwd, originalCwd)
+  assert.equal(record.observations.length, 1)
+  assert.equal(await readdir(join(root, 'queue', 'done')).then((names) => names.length), 1)
+})
+
+test('手動foreground backfillはanalyzerの失敗を呼び出し元へ返す', async () => {
+  const root = await fixtureRoot('foreground-failure')
+  const transcript = await writeTranscript(root)
+  await chmod(fakeCodex, 0o700)
+  const result = run(hook, ['--transcript', transcript, '--foreground'], {
+    CODEX_SKILL_OBSERVATION_DATA_DIR: root,
+    SKILL_OBSERVATION_ANALYZER: fakeCodex,
+    FAKE_CODEX_EXIT_CODE: '7',
+  })
+  assert.notEqual(result.status, 0)
+  assert.match(result.stderr, /worker failed:/)
+})
+
+test('手動foreground backfillはworker実行時間を含む待機上限を守る', async () => {
+  const root = await fixtureRoot('foreground-timeout')
+  const transcript = await writeTranscript(root)
+  await chmod(fakeCodex, 0o700)
+  const startedAt = Date.now()
+  const result = run(hook, ['--transcript', transcript, '--foreground'], {
+    CODEX_SKILL_OBSERVATION_DATA_DIR: root,
+    SKILL_OBSERVATION_ANALYZER: fakeCodex,
+    FAKE_CODEX_DELAY_MS: '2000',
+    SKILL_OBSERVATION_FOREGROUND_TIMEOUT_MS: '10',
+  })
+  const elapsed = Date.now() - startedAt
+  assert.notEqual(result.status, 0)
+  assert.match(result.stderr, /worker timed out waiting for/)
+  assert.ok(elapsed < 1000, `foreground timeout took ${elapsed}ms`)
+})
+
+test('通常のSessionEnd hookはanalyzer完了を待たずに返る', async () => {
+  const root = await fixtureRoot('async-hook')
+  const transcript = await writeTranscript(root)
+  await chmod(fakeCodex, 0o700)
+  const input = JSON.stringify({
+    hook_event_name: 'SessionEnd',
+    session_id: 'async-hook',
+    transcript_path: transcript,
+  })
+  const startedAt = Date.now()
+  const result = run(hook, [], {
+    CODEX_SKILL_OBSERVATION_DATA_DIR: root,
+    SKILL_OBSERVATION_ANALYZER: fakeCodex,
+    FAKE_CODEX_DELAY_MS: '2000',
+  }, input)
+  const elapsed = Date.now() - startedAt
+  assert.equal(result.status, 0, result.stderr)
+  assert.ok(elapsed < 1000, `SessionEnd hook took ${elapsed}ms`)
+  assert.deepEqual(await readdir(join(root, 'queue', 'done')).catch(() => []), [])
 })
 
 test('analyzer child SessionEnd does not enqueue another job', async () => {
@@ -294,6 +370,16 @@ test('manual backfill rejects missing transcript values', async () => {
   })
   assert.notEqual(result.status, 0)
   assert.match(result.stderr, /--transcript requires a file path/)
+})
+
+test('手動backfillはcwdの重複指定を拒否する', async () => {
+  const root = await fixtureRoot('duplicate-cli')
+  const transcript = await writeTranscript(root)
+  const result = run(hook, ['--transcript', transcript, '--cwd', root, '--cwd', root], {
+    CODEX_SKILL_OBSERVATION_DATA_DIR: root,
+  })
+  assert.notEqual(result.status, 0)
+  assert.match(result.stderr, /duplicate argument: --cwd/)
 })
 
 test('analyzer nonzero exit moves the job to failed', async () => {
