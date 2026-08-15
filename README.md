@@ -80,6 +80,8 @@ Windows PowerShell:
 | `personal-skills-auto-update` | 更新条件を確認しながら、WindowsとWSLの実行環境へスキルを自動反映します。 |
 | `personal-skills-ctl-daemon` | このリポジトリとローカルのスキルを同期するCLIやdaemonを設計します。 |
 | `retlaude` | Claudeセッションの振り返りを非同期で保存します。 |
+| `skill-benchmark` | 実運用の失敗や観測から原因仮説とeval caseを作り、介入前後の効果と回帰を比較します。 |
+| `skill-observation-recorder` | Codexで受けたユーザー訂正をセッション終了後に非同期で抽出・蓄積します。 |
 | `skill-usage-analytics` | Codexセッションで各スキルが使われた回数を集計します。 |
 
 ### UI・日々の振り返り
@@ -92,6 +94,7 @@ Windows PowerShell:
 ## そのほかの内容
 
 - `agents/`: Codexのカスタムagent設定
+- `benchmarks/`: observation、失敗原因の仮説、固定eval case、介入比較の結果
 - `commands/`: Claude Codeのカスタムコマンド
 - `hooks/`: セッション記録やコマンド実行前の確認などのhook
 - `scripts/`: スキルと設定を各ツールへ反映するスクリプト

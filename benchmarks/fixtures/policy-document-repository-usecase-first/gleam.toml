@@ -1,0 +1,6 @@
+name = "policy_document_repository_usecase_first"
+version = "1.0.0"
+target = "erlang"
+
+[dev-dependencies]
+gleeunit = ">= 1.0.0 and < 2.0.0"
