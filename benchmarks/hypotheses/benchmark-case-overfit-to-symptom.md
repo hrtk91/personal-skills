@@ -34,11 +34,11 @@
 
 ## Discriminating eval
 
-- Start state: 一つの設計原則に反する異なる二症状と、同じ表面症状だが違反理由が異なる対照観測を含む匿名packet。
+- Start state: 一つの設計原則に反する異なる二症状と、同じ表面症状だが違反理由が異なる対照観測を含む匿名packet。packetは比較前に固定する。
 - Task: 観測からfailure hypothesisとbenchmark caseを作る。
 - Keep fixed: packet、model、reasoning、tool権限、case template。
-- Change only: 最初に`hypothesis-framing`なし／あり。その後、会話履歴の具体案なし／あり、template変更なし／あり、model差を別比較にする。
-- Expected result by hypothesis: H1はskill、H2は具体案を含む履歴、H3はtemplate、H4はmodel変更で主に改善する。
+- Change only: 最初に問題整理手順なし／ありを比較する。手順あり条件でsubagent構成も変わる場合は、手順全体の効果として扱い、構成だけの効果は別比較にする。その後、会話履歴の具体案なし／あり、template変更なし／あり、model差を別々に比較する。
+- Expected result by hypothesis: H1は問題整理手順、H2は具体案を含む履歴、H3はtemplate、H4はmodel変更で主に結果が変わる。
 
 ## Bare-model result
 
@@ -52,4 +52,4 @@
 - Supported hypothesis: 現観測はH1とH2に整合する。
 - Rejected hypotheses: なし。
 - Remaining uncertainty: 独立したpacketでも再現するか、template自体の影響、model差。
-- Next action: candidate caseとして固定し、まずskillなし／ありだけを各3run比較する。再現しなければskill変更へ進まない。
+- Next action: 匿名packet、採点基準、問題整理手順を先に固定する。skillの自動起動やsubagent構成を含む実行条件を記録し、再現可能な開始状態が完成した後にcandidate caseへ進む。再現しなければskill変更へ進まない。

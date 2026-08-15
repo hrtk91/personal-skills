@@ -45,10 +45,12 @@
 - Keep fixed: task、fixture、model、reasoning、tool権限、開始状態。
 - Change only:
   1. AGENTSなし／あり。
-  2. AGENTSありのまま原則照合skillなし／あり。
-  3. 同条件で単一agent／delegated workflow。
-  4. 最後に同条件でmodelだけを変更する。
-- Expected result by hypothesis: H1は規則の直接提示、H2は照合工程、H3は具体案の除去、H4はtopology、H5はmodel変更で主に改善する。
+  2. AGENTSあり／AGENTSありかつ判断直前に該当規則を再掲。
+  3. AGENTS、model、task目的を固定し、具体案の先行提示なし／あり。
+  4. AGENTSありのまま、原則照合手順なし／あり。比較前に手順の文面を固定する。
+  5. 同条件で単一agent／delegated workflow。
+  6. 最後に同条件でmodelだけを変更する。
+- Expected result by hypothesis: H1は規則の直前再掲、H2は固定した照合手順、H3は具体案の先行提示、H4はtopology、H5はmodel変更で主に結果が変わる。
 
 ## Bare-model result
 
@@ -62,4 +64,4 @@
 - Supported hypothesis: 現観測はH2、H3、H4に整合する。
 - Rejected hypotheses: H1のうち「AGENTSがsubagentへ渡らなかった」は監査で棄却した。想起不足は未棄却。
 - Remaining uncertainty: 各条件の再現率、単一agentとの差、model差。
-- Next action: candidate caseを固定し、一度に一変数だけ変えるrun matrixを実行する。skillやAGENTSの変更は結果後に判断する。
+- Next action: 匿名fixture、条件ごとの採点基準、実行手順を作る。AGENTSなし条件ではproject固有規則の遵守を採点せず、全条件共通の保証とAGENTSあり条件だけの保証を分ける。再現可能な開始状態が完成した後にcandidate caseへ進む。

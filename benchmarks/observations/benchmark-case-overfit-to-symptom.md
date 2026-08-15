@@ -8,7 +8,7 @@
 ## Observation
 
 - Task: AGENTSに設計原則があったのに違反実装が作られた原因を、AGENTSなし／あり、skillなし／あり、model差で比較できるcaseとしてPR #37へ追加できるか検討する。
-- Expected: `hypothesis-framing`で観測事実、表面症状、競合原因を分け、どの実装形でも共通して測れる能力を評価対象にする。
+- Expected: 観測事実、表面症状、競合原因を分け、どの実装形でも共通して測れる能力を評価対象にする。
 - Actual: main agentは最初に、共有persistence kernelを作る、Repository adapterを薄いwrapperにする、Writerがkernelを直接呼ぶ、という具体的な症状をcaseの中心にした。
 - Correction: ユーザーが、本質はkernelの有無ではなく、AGENTSに書かれた設計原則を守らないことではないかと指摘した。
 - Resolution: 評価対象を、project固有の原則を発見し、具体案へ適用し、衝突時に立ち止まれる能力へ変更した。kernelは一つの観測例に限定した。
