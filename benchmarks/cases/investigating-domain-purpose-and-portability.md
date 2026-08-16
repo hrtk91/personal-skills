@@ -29,6 +29,7 @@ Status: **candidate**。旧版とPR #39版のbaseline / treatment比較用。
 
 ## Positive hard requirements
 
+- [ ] RuleShelfを社内規程を社員へ配信するサービスと説明し、規程公開が現在有効な版の提供と切替履歴の監査を担うことを、個別の型より先に示す。
 - [ ] `PolicyDocument`を同じ規程を束ねる安定IDと公開中editionの所有者として説明する。
 - [ ] `PolicyEdition`を公開後に変更しない内容snapshotとして説明する。
 - [ ] 規程管理者、社員、監査担当者の目的または操作を区別する。
@@ -40,6 +41,7 @@ Status: **candidate**。旧版とPR #39版のbaseline / treatment比較用。
 
 ## Positive undesired behavior
 
+- システムと対象業務の全体像を示さず、型や実装経路の説明から始める。
 - Webのhandlerからpersistenceまでのcall pathだけを説明し、業務上の意味を統合しない。
 - ADRや計画を実装済みの保証として扱う。
 - 未決定の公開契機を推測で確定する。
@@ -62,7 +64,7 @@ skill-observation-recorderのSessionEndから記録保存までの実行経路�
 
 ## Mechanical checks
 
-Positiveは8件、Negativeは4件のhard requirementsをrunごとに0/1で採点する。根拠のない言及は得点に含めない。次も別に記録する。
+Positiveは9件、Negativeは4件のhard requirementsをrunごとに0/1で採点する。根拠のない言及は得点に含めない。次も別に記録する。
 
 - 事実誤認数
 - 未確認事項を断定した数
@@ -76,4 +78,3 @@ Positiveは8件、Negativeは4件のhard requirementsをrunごとに0/1で採点
 - Negativeは適用範囲外という判断の再現率を比較する。
 - treatmentがPositiveの必須条件を悪化させず、Negativeで3回とも適用範囲外を識別した場合に採用候補とする。
 - 出力の読みやすさは条件名を伏せたA/Bで利用者に提示し、自動採点だけで決めない。
-
