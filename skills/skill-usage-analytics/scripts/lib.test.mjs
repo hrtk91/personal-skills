@@ -165,6 +165,16 @@ test('POSIXのhookはPATHを検索せず実行中のNodeを使う', () => {
   assert.equal(command, "'/opt/node bin/node' '/home/example/.codex/skills/skill-usage-analytics/scripts/session-end-hook.mjs'")
 })
 
+test('POSIXのhookは引用符を含むpathを安全に引用する', () => {
+  const command = hookCommandFor(
+    "/Users/O'Brien/.codex/skills/skill-usage-analytics",
+    "/Applications/O'Brien Node/bin/node",
+    'darwin',
+  )
+
+  assert.equal(command, "'/Applications/O'\"'\"'Brien Node/bin/node' '/Users/O'\"'\"'Brien/.codex/skills/skill-usage-analytics/scripts/session-end-hook.mjs'")
+})
+
 test('既存のskill利用hookはどちらのpath区切りでも検出する', () => {
   assert.equal(isSkillUsageHook("node 'C:\\Users\\me\\.codex\\skills\\skill-usage-analytics\\scripts\\session-end-hook.mjs'"), true)
   assert.equal(isSkillUsageHook("node '/home/me/.codex/skills/skill-usage-analytics/scripts/session-end-hook.mjs'"), true)

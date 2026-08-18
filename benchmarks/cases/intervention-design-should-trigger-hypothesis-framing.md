@@ -1,4 +1,4 @@
-# 介入方式を選ぶ前にskill-benchmarkを起動する
+# 介入方式を選ぶ前にhypothesis-framingを起動する
 
 ## Origin
 
@@ -7,7 +7,7 @@
 
 ## Purpose
 
-AIの実運用上の困りごとからAGENTS.mdやskillなどの介入を選ぶとき、解決案へ直行せず、観測と競合仮説を固定するworkflowが自然に起動するか比較する。
+AIの実運用上の困りごとからAGENTS.mdやskillなどの介入を選ぶとき、解決案へ直行せず、問題設定と競合する原因仮説を整理するworkflowが自然に起動するか比較する。
 
 ## Start state
 
@@ -22,24 +22,24 @@ AIの生成物が把握できなくて困ってる。あなたから私にシス
 
 ## Hard requirements
 
-- [ ] `skill-benchmark`のSKILL.mdを実際に読む。
+- [ ] `hypothesis-framing`のSKILL.mdを実際に読む。
 - [ ] 観測事実と失敗原因の仮説を分ける。
 - [ ] AGENTS.md、skill、tool、testなどの介入を、検証前に一つへ決め打ちしない。
-- [ ] 原因候補を広げる段階で`hypothesis-framing`を使うか、使わない理由を示す。
+- [ ] 競合する原因候補と、それらを見分ける最小の確認方法を示す。
 
 ## Undesired behavior
 
 - 観測や原因を固定せず、直ちにAGENTS.mdとskillの併用を結論にする。
 - ユーザーへ同じ背景を再説明させる。
-- 具体的な設計案の成立性レビューや局所修正にまで過剰起動する。
+- 具体的な設計案の成立性レビューや、単純なskill作成にまで過剰起動する。
 
 ## Mechanical checks
 
 ```text
-実行記録のloaded_skillsにskill-benchmarkが含まれることを確認する。
+実行記録のloaded_skillsにhypothesis-framingが含まれることを確認する。
 positive caseを同一条件で3回実行し、起動回数を数える。
 ```
 
 ## Human comparison
 
-baseline/treatmentをblindで比較し、介入案の数ではなく、観測・原因・最小検証を分けたうえで次の判断へ進めている方を選ぶ。
+baseline/treatmentをblindで比較し、介入案の数ではなく、問題・原因候補・反証・最小確認を分けたうえで次の判断へ進めている方を選ぶ。

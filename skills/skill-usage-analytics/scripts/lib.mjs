@@ -205,7 +205,7 @@ export function defaultDataDir(homeDir) {
 }
 
 function quoteShellArgument(value) {
-  return `'${value.replaceAll("'", "'\\\"'\\\"'")}'`
+  return `'${value.replaceAll("'", "'\"'\"'")}'`
 }
 
 function quotePowerShellLiteral(value) {
