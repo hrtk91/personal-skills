@@ -35,7 +35,7 @@ if ($LASTEXITCODE -ne 0) {
 
 $action = New-ScheduledTaskAction `
     -Execute (Join-Path $env:SystemRoot "System32\conhost.exe") `
-    -Argument "--headless powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$updateScript`" -Repo `"$RuntimeRepo`" -BaseBranch `"$BaseBranch`" -TaskName `"$TaskName`""
+    -Argument "--headless powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$updateScript`" -Repo `"$RuntimeRepo`" -BaseBranch `"$BaseBranch`" -TaskName `"$TaskName`" -AdoptRepoRoot `"$SourceRepo`""
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
     -RepetitionInterval (New-TimeSpan -Minutes 15)
 $settings = New-ScheduledTaskSettingsSet `

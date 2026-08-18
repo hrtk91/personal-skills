@@ -33,7 +33,8 @@ function Update-WindowsScheduledTaskAction {
     param(
         [string]$Repo,
         [string]$BaseBranch,
-        [string]$TaskName
+        [string]$TaskName,
+        [string]$AdoptRepoRoot
     )
 
     $updateScript = Join-Path $Repo "skills\personal-skills-auto-update\scripts\update.ps1"
@@ -62,7 +63,8 @@ function Update-WindowsScheduledTaskAction {
     }
 
     $expectedExecute = Join-Path $env:SystemRoot "System32\conhost.exe"
-    $expectedArguments = "--headless powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$updateScript`" -Repo `"$Repo`" -BaseBranch `"$BaseBranch`" -TaskName `"$TaskName`""
+    $adoptArgument = if ([string]::IsNullOrWhiteSpace($AdoptRepoRoot)) { "" } else { " -AdoptRepoRoot `"$AdoptRepoRoot`"" }
+    $expectedArguments = "--headless powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$updateScript`" -Repo `"$Repo`" -BaseBranch `"$BaseBranch`" -TaskName `"$TaskName`"$adoptArgument"
     if ([string]$actions[0].Execute -ieq $expectedExecute -and $currentArguments -eq $expectedArguments) {
         Write-Output "scheduled_task_status=ok task=$TaskName"
         return
@@ -141,7 +143,7 @@ try {
             exit 22
         }
 
-        Update-WindowsScheduledTaskAction -Repo $Repo -BaseBranch $BaseBranch -TaskName $TaskName
+        Update-WindowsScheduledTaskAction -Repo $Repo -BaseBranch $BaseBranch -TaskName $TaskName -AdoptRepoRoot $AdoptRepoRoot
     }
 
     $head = (Invoke-Git @("rev-parse", "HEAD") | Select-Object -Last 1).Trim()

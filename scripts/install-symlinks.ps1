@@ -22,6 +22,75 @@ function Remove-LinkOnly {
     }
 }
 
+function Ensure-CodexAgentDirectory {
+    param(
+        [string]$Target,
+        [string]$RepoRoot,
+        [string]$AdoptRepoRoot
+    )
+
+    $parent = Split-Path -Parent $Target
+    New-Item -ItemType Directory -Path $parent -Force | Out-Null
+
+    if (-not (Test-Path -LiteralPath $Target)) {
+        New-Item -ItemType Directory -Path $Target -Force | Out-Null
+        return
+    }
+
+    $item = Get-Item -LiteralPath $Target -Force
+    if ($null -eq $item.LinkType) {
+        if (-not $item.PSIsContainer -or ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+            throw "Codex agent target is not a normal directory: $Target"
+        }
+        return
+    }
+
+    if ($item.LinkType -ne "Junction") {
+        throw "Codex agent target uses an unsupported link: $Target -> $(@($item.Target) -join '')"
+    }
+
+    $resolvedTarget = @($item.Target) -join ""
+    $knownTargets = @((Join-Path $RepoRoot "agents"))
+    if (-not [string]::IsNullOrWhiteSpace($AdoptRepoRoot)) {
+        $knownTargets += Join-Path $AdoptRepoRoot "agents"
+    }
+    $isKnownTarget = $knownTargets | Where-Object { $_ -ieq $resolvedTarget }
+    if ($null -eq $isKnownTarget) {
+        throw "Refusing to write through an unmanaged Codex agent junction: $Target -> $resolvedTarget"
+    }
+
+    try {
+        Remove-LinkOnly -Item $item
+        New-Item -ItemType Directory -Path $Target -Force | Out-Null
+    } catch {
+        if (-not (Test-Path -LiteralPath $Target)) {
+            New-Item -ItemType Junction -Path $Target -Target $resolvedTarget | Out-Null
+        }
+        throw
+    }
+
+    return [pscustomobject]@{
+        Target = $Target
+        LinkTarget = $resolvedTarget
+    }
+}
+
+function Restore-CodexAgentDirectory {
+    param([pscustomobject]$Migration)
+
+    if (Test-Path -LiteralPath $Migration.Target) {
+        $item = Get-Item -LiteralPath $Migration.Target -Force
+        if ($item.LinkType -eq "Junction") {
+            Remove-LinkOnly -Item $item
+        } elseif ($null -eq $item.LinkType -and $item.PSIsContainer) {
+            [System.IO.Directory]::Delete($item.FullName, $true)
+        } else {
+            throw "Cannot restore Codex agent junction because target changed: $($Migration.Target)"
+        }
+    }
+    New-Item -ItemType Junction -Path $Migration.Target -Target $Migration.LinkTarget | Out-Null
+}
+
 function Get-ExpectedAdoptTarget {
     param([string]$Source)
     if ([string]::IsNullOrWhiteSpace($adoptRepoRootPath)) {
@@ -129,16 +198,31 @@ $skillTargets = @(
     @{ Path = (Join-Path $ClaudeRoot "skills"); Label = "claude" }
 )
 
-foreach ($target in $skillTargets) {
-    Get-ChildItem (Join-Path $repoRoot "skills") -Directory | ForEach-Object {
-        Set-ManagedDirectoryLink -Source $_.FullName -Target (Join-Path $target.Path $_.Name) -Label $target.Label
+$codexAgentsTarget = Join-Path $CodexRoot "agents"
+$migration = $null
+try {
+    $migration = Ensure-CodexAgentDirectory -Target $codexAgentsTarget -RepoRoot $repoRoot -AdoptRepoRoot $adoptRepoRootPath
+    if ($null -ne $migration) {
+        Write-Output "[codex-agent] migrated: $codexAgentsTarget -> normal directory"
     }
-}
 
-Get-ChildItem (Join-Path $repoRoot "agents") -Filter "*.toml" -File | ForEach-Object {
-    Set-ManagedFileLink -Source $_.FullName -Target (Join-Path $CodexRoot "agents\$($_.Name)") -Label "codex-agent"
-}
+    foreach ($target in $skillTargets) {
+        Get-ChildItem (Join-Path $repoRoot "skills") -Directory | ForEach-Object {
+            Set-ManagedDirectoryLink -Source $_.FullName -Target (Join-Path $target.Path $_.Name) -Label $target.Label
+        }
+    }
 
-if ($script:InstallFailed) {
-    exit 1
+    Get-ChildItem (Join-Path $repoRoot "agents") -Filter "*.toml" -File | ForEach-Object {
+        Set-ManagedFileLink -Source $_.FullName -Target (Join-Path $codexAgentsTarget $_.Name) -Label "codex-agent"
+    }
+
+    if ($script:InstallFailed) {
+        throw "one or more managed links could not be installed"
+    }
+} catch {
+    if ($null -ne $migration) {
+        Restore-CodexAgentDirectory -Migration $migration
+        Write-Warning "[codex-agent] restored: $codexAgentsTarget -> $($migration.LinkTarget)"
+    }
+    throw
 }

@@ -78,4 +78,55 @@ try {
     $lock.Dispose()
 }
 
+Write-Output "test: scheduled task keeps AdoptRepoRoot"
+$parseTokens = $null
+$parseErrors = $null
+$updateAst = [System.Management.Automation.Language.Parser]::ParseFile($scriptPath, [ref]$parseTokens, [ref]$parseErrors)
+$actionFunction = $updateAst.Find({
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq "Update-WindowsScheduledTaskAction"
+    }, $true)
+if ($null -eq $actionFunction) {
+    throw "scheduled-task action function was not found"
+}
+. ([scriptblock]::Create($actionFunction.Extent.Text))
+
+$taskName = "TestPersonalSkillsAutoUpdate"
+$updateScript = Join-Path $client "skills\personal-skills-auto-update\scripts\update.ps1"
+$oldArguments = "--headless powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$updateScript`" -Repo `"$client`" -BaseBranch `"main`" -TaskName `"$taskName`""
+$script:fakeTask = [pscustomobject]@{
+    Actions = @([pscustomobject]@{ Execute = "old-executable"; Arguments = $oldArguments })
+}
+$script:capturedAction = $null
+
+function global:Get-ScheduledTask {
+    [CmdletBinding()]
+    param([string]$TaskName, [string]$TaskPath)
+    return $script:fakeTask
+}
+
+function global:New-ScheduledTaskAction {
+    param([string]$Execute, [string]$Argument)
+    $script:capturedAction = [pscustomobject]@{ Execute = $Execute; Arguments = $Argument }
+    return $script:capturedAction
+}
+
+function global:Set-ScheduledTask {
+    [CmdletBinding()]
+    param([string]$TaskName, [string]$TaskPath, [object]$Action)
+    $script:fakeTask = [pscustomobject]@{ Actions = @($Action) }
+}
+
+Update-WindowsScheduledTaskAction -Repo $client -BaseBranch "main" -TaskName $taskName -AdoptRepoRoot $seed
+if ($null -eq $script:capturedAction) {
+    throw "scheduled-task action was not updated"
+}
+if ($script:capturedAction.Arguments -notlike "*-AdoptRepoRoot `"$seed`"") {
+    throw "scheduled-task action did not retain AdoptRepoRoot"
+}
+$installWindowsSource = Get-Content -LiteralPath (Join-Path $PSScriptRoot "install-windows.ps1") -Raw
+if (-not $installWindowsSource.Contains("-AdoptRepoRoot")) {
+    throw "install-windows.ps1 does not retain AdoptRepoRoot in the registered action"
+}
+
 Write-Output "test_status=passed platform=windows temp=$testRoot"
