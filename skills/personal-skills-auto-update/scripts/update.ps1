@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$Repo = (Join-Path $HOME "repos\personal-skills"),
     [string]$Remote = "origin",
@@ -37,6 +37,20 @@ function Update-WindowsScheduledTaskAction {
         [string]$AdoptRepoRoot
     )
 
+    # 保証:
+    # - このruntime repoのupdate.ps1を実行する既存Taskだけを更新する。
+    # - 同名でも別repoを指すTaskや、複数Actionを持つTaskには触らない。
+    # - AdoptRepoRootを次回以降にも渡し、旧agent Junctionの所有元を判定できる状態を保つ。
+    # ここでTaskはWindowsの定期実行設定、ActionはそのTaskが実行するコマンドを指す。
+    #
+    # 処理順:
+    # 1. 対象Taskを取得する。存在しない場合は初回install側の登録に任せる。
+    # 2. Actionが1件だけであることを確認する。
+    # 3. 既存Actionがこのruntime repoを指していることを確認する。
+    # 4. 現在必要な引数を含むActionを組み立て、同じなら変更しない。
+    # 5. このTaskのActionだけを更新する。
+
+    # 1. 対象Taskを取得する。存在しない場合は初回install側の登録に任せる。
     $updateScript = Join-Path $Repo "skills\personal-skills-auto-update\scripts\update.ps1"
     try {
         $task = Get-ScheduledTask -TaskName $TaskName -TaskPath "\" -ErrorAction Stop
@@ -47,12 +61,14 @@ function Update-WindowsScheduledTaskAction {
         return
     }
 
+    # 2. Actionが1件だけであることを確認する。
     $actions = @($task.Actions)
     if ($actions.Count -ne 1) {
         Write-Warning "scheduled_task_status=skipped reason=unexpected_action_count task=$TaskName count=$($actions.Count)"
         return
     }
 
+    # 3. 既存Actionがこのruntime repoを指していることを確認する。
     $currentArguments = [string]$actions[0].Arguments
     $updateScriptArgument = "-File `"$updateScript`""
     $repoArgument = "-Repo `"$Repo`""
@@ -62,6 +78,8 @@ function Update-WindowsScheduledTaskAction {
         return
     }
 
+    # 4. 現在必要な引数を含むActionを組み立て、同じなら変更しない。
+    # AdoptRepoRootは「どの開発checkoutなら旧Junctionとして移行してよいか」をinstallerへ伝える。
     $expectedExecute = Join-Path $env:SystemRoot "System32\conhost.exe"
     $adoptArgument = if ([string]::IsNullOrWhiteSpace($AdoptRepoRoot)) { "" } else { " -AdoptRepoRoot `"$AdoptRepoRoot`"" }
     $expectedArguments = "--headless powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$updateScript`" -Repo `"$Repo`" -BaseBranch `"$BaseBranch`" -TaskName `"$TaskName`"$adoptArgument"
@@ -70,6 +88,7 @@ function Update-WindowsScheduledTaskAction {
         return
     }
 
+    # 5. このTaskのActionだけを更新する。
     try {
         $action = New-ScheduledTaskAction -Execute $expectedExecute -Argument $expectedArguments
         Set-ScheduledTask -TaskName $TaskName -TaskPath "\" -Action $action -ErrorAction Stop | Out-Null
@@ -132,6 +151,8 @@ try {
     }
 
     if (-not $SkipInstall) {
+        # 更新済みruntime repoからskill/agentを公開する。
+        # AdoptRepoRootを渡すことで、開発checkoutを指す旧agent Junctionだけを安全に移行できる。
         $installer = Join-Path $Repo "scripts\install-symlinks.ps1"
         $installerArguments = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $installer, "-RepoRoot", $Repo)
         if (-not [string]::IsNullOrWhiteSpace($AdoptRepoRoot)) {
@@ -143,6 +164,7 @@ try {
             exit 22
         }
 
+        # 次回の定期更新でも同じ所有元判定を行えるよう、TaskのActionにもAdoptRepoRootを残す。
         Update-WindowsScheduledTaskAction -Repo $Repo -BaseBranch $BaseBranch -TaskName $TaskName -AdoptRepoRoot $AdoptRepoRoot
     }
 
