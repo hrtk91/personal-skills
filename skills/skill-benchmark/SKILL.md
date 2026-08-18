@@ -1,6 +1,6 @@
 ---
 name: skill-benchmark
-description: skillやAGENTS.mdなどの介入前後を固定ケースで比較し、効果と回帰を検証する。実運用の失敗やskill-observation-recorderの観測を整理してfailure hypothesisを作る、過去の指摘をeval化する、benchmark case候補を作る・固定caseへ昇格する、bare modelで再現性を確かめてbaseline/treatmentを比較するときに使う。「最近の失敗からケースを作る」「この指摘をevalにする」「observationを検証ケース化する」といった依頼にも使う。
+description: skillやAGENTS.mdなどの介入前後を固定ケースで比較し、効果と回帰を検証する。AIの出力や進め方で実際に困った事例から、どう仕組み化するか、AGENTS.md・skill・tool・testのどれで担保するかを考えるときに使う。実運用の失敗やskill-observation-recorderの観測からfailure hypothesisを作る、過去の指摘をeval化する、benchmark caseへ固定する、bare modelで再現性を確かめてbaseline/treatmentを比較する依頼も対象にする。
 ---
 
 # Skill benchmark
@@ -12,6 +12,7 @@ skillは「良さそうな指示」を増やすのではなく、観測された
 次のような依頼では、いきなりskillを変更せず、この手順でobservationの選別から始める。
 
 - 最近の失敗やユーザー訂正からbenchmark caseを作る
+- AIの失敗をAGENTS.md・skill・tool・testのどれで防ぐか決める
 - `skill-observations` の未整理分を見てeval候補を選ぶ
 - 過去のPRや指摘を固定ケースへ変換する
 - ある指摘が現行モデルでも再現するか確かめる
