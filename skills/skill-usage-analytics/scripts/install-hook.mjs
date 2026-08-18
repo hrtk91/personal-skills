@@ -3,7 +3,7 @@ import { access, mkdir, open, readFile, stat, unlink } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
-import { hookCommandFor, writeJsonAtomic } from './lib.mjs'
+import { hookCommandFor, isSkillUsageHook, writeJsonAtomic } from './lib.mjs'
 
 async function acquireLock(path) {
   for (let attempt = 0; attempt < 40; attempt += 1) {
@@ -48,7 +48,7 @@ try {
   let installedHook = null
   for (const group of config.hooks.SessionEnd) {
     installedHook = group?.hooks?.find((hook) => hook?.type === 'command'
-      && hook.command?.includes('/skill-usage-analytics/scripts/session-end-hook.mjs')) ?? installedHook
+      && isSkillUsageHook(hook.command)) ?? installedHook
   }
 
   if (!installedHook) {

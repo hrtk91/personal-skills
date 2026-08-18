@@ -3,7 +3,12 @@ import assert from 'node:assert/strict'
 import { mkdtemp, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { analyzeTranscriptLines, saveSessionRecord } from './lib.mjs'
+import {
+  analyzeTranscriptLines,
+  hookCommandFor,
+  isSkillUsageHook,
+  saveSessionRecord,
+} from './lib.mjs'
 
 function line(timestamp, type, payload) {
   return JSON.stringify({ timestamp, type, payload })
@@ -142,4 +147,36 @@ test('session ids cannot escape the records directory', async () => {
   const target = await saveSessionRecord({ session_id: '../../outside' }, dataDir)
   assert.equal(target, join(dataDir, 'sessions', '.._.._outside.json'))
   assert.equal(JSON.parse(await readFile(target, 'utf8')).session_id, '../../outside')
+})
+
+test('WindowsのhookはPATHを検索せず実行中のNodeを使う', () => {
+  const command = hookCommandFor(
+    'C:\\Users\\Example User\\.codex\\skills\\skill-usage-analytics',
+    'C:\\Bundled Node\\node.exe',
+    'win32',
+  )
+
+  assert.equal(command, 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "& \'C:\\Bundled Node\\node.exe\' \'C:\\Users\\Example User\\.codex\\skills\\skill-usage-analytics\\scripts\\session-end-hook.mjs\'"')
+})
+
+test('POSIXのhookはPATHを検索せず実行中のNodeを使う', () => {
+  const command = hookCommandFor('/home/example/.codex/skills/skill-usage-analytics', '/opt/node bin/node', 'linux')
+
+  assert.equal(command, "'/opt/node bin/node' '/home/example/.codex/skills/skill-usage-analytics/scripts/session-end-hook.mjs'")
+})
+
+test('POSIXのhookは引用符を含むpathを安全に引用する', () => {
+  const command = hookCommandFor(
+    "/Users/O'Brien/.codex/skills/skill-usage-analytics",
+    "/Applications/O'Brien Node/bin/node",
+    'darwin',
+  )
+
+  assert.equal(command, "'/Applications/O'\"'\"'Brien Node/bin/node' '/Users/O'\"'\"'Brien/.codex/skills/skill-usage-analytics/scripts/session-end-hook.mjs'")
+})
+
+test('既存のskill利用hookはどちらのpath区切りでも検出する', () => {
+  assert.equal(isSkillUsageHook("node 'C:\\Users\\me\\.codex\\skills\\skill-usage-analytics\\scripts\\session-end-hook.mjs'"), true)
+  assert.equal(isSkillUsageHook("node '/home/me/.codex/skills/skill-usage-analytics/scripts/session-end-hook.mjs'"), true)
+  assert.equal(isSkillUsageHook("node '/home/me/.codex/skills/another-skill/scripts/session-end-hook.mjs'"), false)
 })
