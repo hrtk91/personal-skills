@@ -1,6 +1,6 @@
 import { createReadStream } from 'node:fs'
 import { chmod, mkdir, rename, stat, writeFile } from 'node:fs/promises'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, join, posix, win32 } from 'node:path'
 import { createInterface } from 'node:readline'
 
 const SKILL_PATH_PATTERN = /(?:^|[\\/])([a-z0-9][a-z0-9:-]*(?:-[a-z0-9:-]+)*)[\\/]SKILL\.md\b/gi
@@ -204,9 +204,26 @@ export function defaultDataDir(homeDir) {
   return join(homeDir, '.codex', 'skill-usage')
 }
 
-export function hookCommandFor(skillDir) {
-  const scriptPath = join(skillDir, 'scripts', 'session-end-hook.mjs')
-  return `node '${scriptPath.replaceAll("'", "'\\\"'\\\"'")}'`
+function quoteShellArgument(value) {
+  return `'${value.replaceAll("'", "'\\\"'\\\"'")}'`
+}
+
+function quotePowerShellLiteral(value) {
+  return `'${value.replaceAll("'", "''")}'`
+}
+
+export function hookCommandFor(skillDir, nodePath = process.execPath, platform = process.platform) {
+  const pathApi = platform === 'win32' ? win32 : posix
+  const scriptPath = pathApi.join(skillDir, 'scripts', 'session-end-hook.mjs')
+  if (platform === 'win32') {
+    return `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "& ${quotePowerShellLiteral(nodePath)} ${quotePowerShellLiteral(scriptPath)}"`
+  }
+  return `${quoteShellArgument(nodePath)} ${quoteShellArgument(scriptPath)}`
+}
+
+export function isSkillUsageHook(command) {
+  return typeof command === 'string'
+    && command.replaceAll('\\', '/').includes('/skill-usage-analytics/scripts/session-end-hook.mjs')
 }
 
 export async function writeJsonAtomic(path, value) {

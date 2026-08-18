@@ -26,6 +26,7 @@ node ~/.codex/skills/skill-usage-analytics/scripts/report.mjs --days 30 --json
 ## Hookを設定する
 
 `scripts/install-hook.mjs`を実行すると、`~/.codex/hooks.json`の`SessionEnd`へ計測hookを追加する。既存hookは保持する。
+installerを実行したNode.jsの絶対pathをcommandへ保存するため、hook実行時の`PATH`にNode.jsがなくても動作する。
 
 ```bash
 node ~/.codex/skills/skill-usage-analytics/scripts/install-hook.mjs
