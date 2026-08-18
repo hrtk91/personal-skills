@@ -1,0 +1,6 @@
+interface:
+  display_name: "変更の理解と影響説明"
+  short_description: "実装前に動作・影響範囲・不変条件を整理して合意する"
+  default_prompt: "Use $explain-change-impact to explain the current behavior, affected scope, and invariants before implementing this change."
+policy:
+  allow_implicit_invocation: true
