@@ -24,28 +24,33 @@
 
 | Run | Baseline | Treatment |
 | --- | --- | --- |
-| 1 | fail: `ai-dev-workflow`のみ | pending |
-| 2 | fail: skill読込なし | pending |
-| 3 | fail: skill読込なし | pending |
+| 1 | fail: `ai-dev-workflow`のみ | fail: skill読込なし |
+| 2 | fail: skill読込なし | fail: skill読込なし |
+| 3 | fail: skill読込なし | fail: skill読込なし |
+
+agentへ初期catalogのdescriptionを引用させ、3回とも変更後descriptionを見ていたことを確認した。catalog cacheによる偽陰性ではない。
 
 ## Blind pairwise
 
 | Pair | Choice | Reason |
 | --- | --- | --- |
-| 1 | pending | treatment実行後に判定する |
-| 2 | pending | treatment実行後に判定する |
-| 3 | pending | treatment実行後に判定する |
+| 1 | 未実施 | treatmentで対象skillが起動せず、機械的な採用条件を満たさなかった |
+| 2 | 未実施 | 同上 |
+| 3 | 未実施 | 同上 |
 
-A/Bの対応は判定後に記録する。
+出力品質を比較する前にtriggerの機械判定でrejectとなったため、blind pairwiseは採否に使用しなかった。
 
 ## Regressions
 
-- 重大な要件・既存ケースの悪化: 具体的な設計案のレビューは`design-review`、局所修正は通常処理のままにする。
+- 具体的な設計案のレビュー: `design-review`のみ起動し、`skill-benchmark`は起動しなかった。
+- 局所的な誤字修正: skillは起動せず、`skill-benchmark`は起動しなかった。
 
 ## Decision
 
 - [ ] adopt
-- [ ] reject
-- [x] inconclusive
+- [x] reject
+- [ ] inconclusive
 
-理由: baselineは0/3で失敗を再現した。treatmentはskill catalog更新後のfresh sessionで実行する。
+理由: treatmentでも`skill-benchmark`は0/3で、事前に定めた2/3以上の採用条件を満たさなかった。negative controlへの過剰起動はなかったが、対象ケースを改善しないdescription変更は残さない。
+
+この結果は「AIの困りごと」「AGENTS.md・skill・tool・testの選択」をdescriptionへ足すだけではselectorの判断を変えないことを示す。次の介入は文言をさらに広げる前に、既存の説明skillからbenchmarkへ委譲する方法か、AGENTS.mdで介入設計前の比較を必須にする方法を別条件として検証する。

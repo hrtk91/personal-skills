@@ -49,7 +49,7 @@
 
 ## Conclusion
 
-- Supported hypothesis: H1を暫定支持。
-- Rejected hypotheses: H4は棄却。H3単独原因は弱い。
-- Remaining uncertainty: description変更後に実際のfresh sessionで起動するか。既知の設計レビューや局所修正へ過剰起動しないか。
-- Next action: `skill-benchmark`のdescriptionだけを狭く変更し、positive 3回とnegative controlを実行する。
+- Supported hypothesis: H2を暫定支持。変更後descriptionを見ても3回とも直接回答を選んだ。
+- Rejected hypotheses: 提案した文言で改善するというH1の予測は反証された。H4は棄却。H3単独原因も、treatmentの3回すべてで競合skillを読まなかったため弱い。
+- Remaining uncertainty: selectorが介入設計をbenchmark taskとして扱わないのか、既存の説明skillからの明示的な委譲が必要なのか。
+- Next action: descriptionをさらに広げず、既存skillからの委譲とAGENTS.mdの必須規則を別々のtreatmentとして設計する。
