@@ -1,0 +1,25 @@
+{
+  "name": "personal-skills",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "skillsctl": "./tools/skills-ctl.ts",
+    "skills-ctl": "./tools/skills-ctl.ts"
+  },
+  "files": [
+    "skills",
+    "harnesses",
+    "hooks",
+    "tools",
+    "package.json"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "skillsctl": "node tools/skills-ctl.ts",
+    "skills-ctl": "npm run skillsctl --",
+    "test:skills-ctl": "node --test tools/skills-ctl.test.ts"
+  }
+}

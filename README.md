@@ -2,7 +2,7 @@
 
 AIエージェントに、作業の進め方や判断基準を追加するための個人用スキル集です。
 
-コードレビュー、調査、文章作成、開発環境の運用など、繰り返し使う手順を `skills/` にまとめています。Codex、Claude Code、一部のスキルはHermesから利用できます。
+コードレビュー、調査、文章作成、開発環境の運用など、繰り返し使う手順を `skills/` にまとめています。Codex、Claude Code、一部のスキルはHermesから利用できます。`skillsctl` のprofileでは、選択skillに加えて常時ハーネスとCodex hookも管理できます。
 
 ## 使い方
 
@@ -97,4 +97,6 @@ Windows PowerShell:
 - `benchmarks/`: observation、失敗原因の仮説、固定eval case、介入比較の結果
 - `commands/`: Claude Codeのカスタムコマンド
 - `hooks/`: セッション記録やコマンド実行前の確認などのhook
+- `harnesses/`: profileから常時導入するCodexの`AGENTS.md`
 - `scripts/`: スキルと設定を各ツールへ反映するスクリプト
+- `tools/`: skill・常時ハーネス・hookをprofile単位で導入する`skillsctl`
