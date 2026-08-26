@@ -1,0 +1,18 @@
+{
+  "description": "ghで作成・更新するPR本文に、レビュワーへ求める判断を1つ明記させる。",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node {{HOOK_ROOT}}/guard.mjs",
+            "timeout": 5,
+            "statusMessage": "レビュワーに求める判断を確認中"
+          }
+        ]
+      }
+    ]
+  }
+}

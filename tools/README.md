@@ -86,3 +86,9 @@ bare名の`review`は`personal:review`として扱います。version 1または
 - `.system`は選択・削除しません。
 
 通常のfilesystem errorまたはstate書き込み失敗では、直前のsymlink集合を復元します。ただし、link更新とstate確定の間にprocessを強制終了した場合の完全復旧、apply/rollbackの同時実行制御、crash journalは未対応です。driftは`skillsctl status`で確認します。
+
+## 同梱する常時ルール
+
+`personal:single-review-decision`は、1つのPull Requestでレビュワーに求める判断を1つに保ちます。同名のhookは、対応している`gh pr create`と本文を変更する`gh pr edit`で、`## レビュワーに求める判断`が1つの段落になっているか確認します。
+
+意味上の判断は常時ルールが担当します。hookの対象外は、GitHub UI/API経由の変更と、段落内容の意味判定です。

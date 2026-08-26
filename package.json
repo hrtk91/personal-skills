@@ -23,6 +23,6 @@
   "scripts": {
     "skillsctl": "node tools/skills-ctl.ts",
     "skills-ctl": "npm run skillsctl --",
-    "test:skills-ctl": "node --test tools/skills-ctl.test.ts tools/skills-ctl/*.test.ts"
+    "test:skills-ctl": "node --test tools/skills-ctl.test.ts tools/skills-ctl/*.test.ts hooks/single-review-decision/*.test.mjs"
   }
 }
