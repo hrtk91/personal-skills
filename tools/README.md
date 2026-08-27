@@ -2,7 +2,7 @@
 
 `skillsctl`は、このリポジトリにあるresourceをprofile単位で導入するローカルCLIです。選択画面にはnpm packageの`@clack/prompts`を使い、profile設定と導入状態はリポジトリの外へ保存します。
 
-Node.js 24以降が必要です。dependencyは`npm ci`で導入します。外部CLIは必要ありません。
+Node.js 24以降が必要です。外部CLIは必要ありません。
 
 ## profileが管理するもの
 
@@ -36,20 +36,22 @@ sourceのpathやskillの説明も表示する場合は`--verbose`を付けます
 skillsctl skills --verbose
 ```
 
-GitHubからグローバルコマンドとして導入する場合は、review済みのtagを指定し、install時scriptを無効にします。
+GitHubからグローバルコマンドとして導入する場合は、`vX.Y.Z`をreview済みのtagへ置き換え、install時scriptを無効にします。
 
 ```bash
-npm install --global --ignore-scripts github:hrtk91/personal-skills#v0.1.0
+npm install --global --ignore-scripts github:hrtk91/personal-skills#vX.Y.Z
 ```
 
-`@clack/prompts`は通常のruntime dependencyとして利用します。`tools/dist/skills-ctl.mjs`は、このリポジトリのTypeScriptだけをbundleしたcommit対象の実行fileです。install時にbuildは行いません。
+## 開発
 
-開発時に実行fileを更新する場合は、dependencyを導入してbuildします。
+CLIを変更した場合は実行fileを更新します。
 
 ```bash
 npm ci
 npm run build:cli
 ```
+
+生成した`tools/dist/skills-ctl.mjs`はcommit対象です。
 
 `sources add`には、リポジトリrootまたはskill directoryを直接指定できます。リポジトリsourceからは次のresourceを検出します。
 
