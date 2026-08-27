@@ -2,7 +2,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import {
   type Config,
-  type HarnessInfo,
+  type RuleInfo,
   type HookInfo,
   type Options,
   type SkillInfo,
@@ -54,8 +54,8 @@ export function discoverSkillsFromSource(sourceId: string, configuredPath: strin
     .sort((left, right) => left.name.localeCompare(right.name));
 }
 
-export function discoverHarnessesFromSource(sourceId: string, configuredPath: string): HarnessInfo[] {
-  const root = join(sourceRootPath(configuredPath), "harnesses");
+export function discoverRulesFromSource(sourceId: string, configuredPath: string): RuleInfo[] {
+  const root = join(sourceRootPath(configuredPath), "rules");
   if (!existsSync(root)) return [];
   return readdirSync(root, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
@@ -67,9 +67,9 @@ export function discoverHarnessesFromSource(sourceId: string, configuredPath: st
         sourceId,
         name: entry.name,
         source,
-      } satisfies HarnessInfo;
+      } satisfies RuleInfo;
     })
-    .filter((entry): entry is HarnessInfo => entry !== null)
+    .filter((entry): entry is RuleInfo => entry !== null)
     .sort((left, right) => left.ref.localeCompare(right.ref));
 }
 
@@ -111,12 +111,12 @@ export function skillMap(config: Config): Map<string, SkillInfo> {
   return map;
 }
 
-export function harnessMap(config: Config): Map<string, HarnessInfo> {
-  const map = new Map<string, HarnessInfo>();
+export function ruleMap(config: Config): Map<string, RuleInfo> {
+  const map = new Map<string, RuleInfo>();
   for (const [sourceId, source] of Object.entries(config.sources)) {
-    for (const harness of discoverHarnessesFromSource(sourceId, source.path)) {
-      if (map.has(harness.ref)) throw new Error(`harness参照が重複しています: ${harness.ref}`);
-      map.set(harness.ref, harness);
+    for (const rules of discoverRulesFromSource(sourceId, source.path)) {
+      if (map.has(rules.ref)) throw new Error(`rules参照が重複しています: ${rules.ref}`);
+      map.set(rules.ref, rules);
     }
   }
   return map;
@@ -176,8 +176,8 @@ export function printSourceList(config: Config): void {
   for (const [sourceId, source] of Object.entries(config.sources).sort(([left], [right]) => left.localeCompare(right))) {
     const root = sourceRootPath(source.path);
     const skills = discoverSkillsFromSource(sourceId, source.path).length;
-    const harnesses = discoverHarnessesFromSource(sourceId, source.path).length;
+    const rules = discoverRulesFromSource(sourceId, source.path).length;
     const hooks = discoverHooksFromSource(sourceId, source.path).length;
-    console.log(`${sourceId}\t${root}\tskill ${skills}件, harness ${harnesses}件, hook ${hooks}件`);
+    console.log(`${sourceId}\t${root}\tskill ${skills}件, rules ${rules}件, hook ${hooks}件`);
   }
 }

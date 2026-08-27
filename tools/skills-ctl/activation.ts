@@ -59,10 +59,10 @@ export function validatePlan(
     targetOwners.set(entry.target, entry);
   }
 
-  if (desired.some((entry) => entry.kind === "harness")) {
+  if (desired.some((entry) => entry.kind === "rules")) {
     const override = join(state.codexHome, "AGENTS.override.md");
     if (safeLstat(override)) {
-      throw new Error(`AGENTS.override.mdが常時ハーネスを無効にします: ${override}`);
+      throw new Error(`AGENTS.override.mdが常時ルールを無効にします: ${override}`);
     }
   }
 
@@ -92,7 +92,7 @@ export function validateManagedTarget(entry: ManagedEntry, state: State, targetD
   const target = resolve(entry.target);
   const codexHome = resolve(state.codexHome);
   if (entry.kind === "skill" && dirname(target) === resolve(targetDir)) return;
-  if (entry.kind === "harness" && target === join(codexHome, "AGENTS.md")) return;
+  if (entry.kind === "rules" && target === join(codexHome, "AGENTS.md")) return;
   if (entry.kind === "hook-config" && target === join(codexHome, "hooks.json")) return;
   const hookRoot = join(codexHome, "managed-hooks");
   if (entry.kind === "hook-package" && target.startsWith(`${hookRoot}/`)) return;
@@ -238,7 +238,7 @@ export async function applyProfile(
     throw error;
   }
   console.log(`profileを適用しました: ${profileName}`);
-  if (profile.harness) console.log("常時ハーネスは次のCodex runから有効です");
+  if (profile.rules) console.log("常時ルールは次のCodex runから有効です");
 }
 
 export function writeJsonArtifact(artifact: GeneratedArtifact): void {

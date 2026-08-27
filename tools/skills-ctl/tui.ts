@@ -10,7 +10,7 @@ import {
 } from "./model.ts";
 import {
   discoverSkills,
-  harnessMap,
+  ruleMap,
   hookMap,
 } from "./catalog.ts";
 
@@ -169,13 +169,13 @@ export function profileTui(profileName: string, options: Options): void {
     return;
   }
 
-  const harnesses = [...harnessMap(config).values()];
-  const selectedHarness = runSingleFzf(harnesses.map((harness) => ({
-    ref: harness.ref,
+  const rules = [...ruleMap(config).values()];
+  const selectedRules = runSingleFzf(rules.map((rule) => ({
+    ref: rule.ref,
     description: "常時読み込むAGENTS.md",
-    source: harness.source,
-  })), "harness");
-  if (selectedHarness === undefined) {
+    source: rule.source,
+  })), "rules");
+  if (selectedRules === undefined) {
     console.log("中止しました");
     return;
   }
@@ -194,7 +194,7 @@ export function profileTui(profileName: string, options: Options): void {
   config.profiles[profileName] = {
     description: config.profiles[profileName]?.description ?? "skillsctlで作成",
     skills: selectedSkills,
-    harness: selectedHarness,
+    rules: selectedRules,
     hooks: selectedHooks,
   };
   writeJson(options.configPath, config);
@@ -230,7 +230,7 @@ export function printProfileList(config: Config): void {
   }
   for (const name of names) {
     const profile = getProfile(config, name);
-    console.log(`${name}\tskill ${profile.skills.length}件, harness ${profile.harness ? "1" : "0"}件, hook ${profile.hooks.length}件`);
+    console.log(`${name}\tskill ${profile.skills.length}件, rules ${profile.rules ? "1" : "0"}件, hook ${profile.hooks.length}件`);
   }
 }
 

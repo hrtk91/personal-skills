@@ -8,7 +8,7 @@ import {
   type Profile,
   normalizeSkillRef,
 } from "./model.ts";
-import { harnessMap, hookMap, skillMap } from "./catalog.ts";
+import { hookMap, ruleMap, skillMap } from "./catalog.ts";
 
 export interface GeneratedArtifact {
   path: string;
@@ -100,16 +100,16 @@ export function desiredPlan(
     };
   });
 
-  if (profile.harness) {
-    const harness = harnessMap(config).get(profile.harness);
-    if (!harness) throw new Error(`harnessが見つかりません: ${profile.harness}`);
+  if (profile.rules) {
+    const rules = ruleMap(config).get(profile.rules);
+    if (!rules) throw new Error(`rulesが見つかりません: ${profile.rules}`);
     entries.push({
-      kind: "harness",
+      kind: "rules",
       linkType: "file",
-      ref: harness.ref,
-      sourceId: harness.sourceId,
-      name: harness.name,
-      source: harness.source,
+      ref: rules.ref,
+      sourceId: rules.sourceId,
+      name: rules.name,
+      source: rules.source,
       target: join(codexHome, "AGENTS.md"),
     });
   }

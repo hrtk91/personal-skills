@@ -18,7 +18,7 @@ export interface SkillInfo {
   source: string;
 }
 
-export interface HarnessInfo {
+export interface RuleInfo {
   ref: string;
   sourceId: string;
   name: string;
@@ -36,7 +36,7 @@ export interface HookInfo {
 export interface Profile {
   description?: string;
   skills: string[];
-  harness: string | null;
+  rules: string | null;
   hooks: string[];
 }
 
@@ -51,7 +51,7 @@ export interface SourceConfig {
 }
 
 export interface ManagedEntry {
-  kind: "skill" | "harness" | "hook-package" | "hook-config";
+  kind: "skill" | "rules" | "hook-package" | "hook-config";
   linkType: "dir" | "file";
   ref: string;
   sourceId: string;
@@ -296,7 +296,7 @@ export function normalizeProfile(profile: Partial<Profile>, name: string): Profi
   return {
     description: profile.description,
     skills: [...new Set(profile.skills.map(normalizeSkillRef))],
-    harness: profile.harness ? normalizeSkillRef(profile.harness) : null,
+    rules: profile.rules ? normalizeSkillRef(profile.rules) : null,
     hooks: [...new Set((profile.hooks ?? []).map(normalizeSkillRef))],
   };
 }

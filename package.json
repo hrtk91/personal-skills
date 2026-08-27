@@ -9,7 +9,7 @@
   },
   "files": [
     "skills",
-    "harnesses",
+    "rules",
     "hooks",
     "tools",
     "package.json"

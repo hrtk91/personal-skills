@@ -38,11 +38,11 @@ function runCli(args: string[], root: string): string {
 
 function createManagedResourceSource(root: string): string {
   const source = join(root, "managed-resource-source");
-  mkdirSync(join(source, "harnesses", "review-policy"), { recursive: true });
+  mkdirSync(join(source, "rules", "review-policy"), { recursive: true });
   mkdirSync(join(source, "hooks", "review-policy"), { recursive: true });
   writeFileSync(
-    join(source, "harnesses", "review-policy", "AGENTS.md"),
-    "# テスト用常時ハーネス\n",
+    join(source, "rules", "review-policy", "AGENTS.md"),
+    "# テスト用常時ルール\n",
   );
   writeFileSync(join(source, "hooks", "review-policy", "noop.mjs"), "process.exit(0);\n");
   writeFileSync(join(source, "hooks", "review-policy", "hooks.json"), JSON.stringify({
@@ -160,7 +160,7 @@ test("registers a source and applies namespaced skills", () => {
   }
 });
 
-test("profile applies and rolls back skills, harness, and merged hooks together", () => {
+test("profile applies and rolls back skills, rules, and merged hooks together", () => {
   const root = mkdtempSync(join(tmpdir(), "personal-skills-ctl-resources-test-"));
   try {
     const resourceSource = createManagedResourceSource(root);
@@ -170,7 +170,7 @@ test("profile applies and rolls back skills, harness, and merged hooks together"
       profiles: {
         guarded: {
           skills: ["review"],
-          harness: "fixture:review-policy",
+          rules: "fixture:review-policy",
           hooks: ["fixture:review-policy"],
         },
         empty: { skills: [] },
@@ -178,7 +178,7 @@ test("profile applies and rolls back skills, harness, and merged hooks together"
     }));
 
     const plan = runCli(["plan", "guarded"], root);
-    assert.match(plan, /link追加 harness fixture:review-policy/);
+    assert.match(plan, /link追加 rules fixture:review-policy/);
     assert.match(plan, /link追加 hook-package fixture:review-policy/);
     assert.match(plan, /link追加 hook-config generated:/);
     assert.throws(() => realpathSync(join(root, "artifacts")));
@@ -187,7 +187,7 @@ test("profile applies and rolls back skills, harness, and merged hooks together"
     const codexHome = join(root, "codex");
     assert.equal(
       realpathSync(join(codexHome, "AGENTS.md")),
-      join(resourceSource, "harnesses", "review-policy", "AGENTS.md"),
+      join(resourceSource, "rules", "review-policy", "AGENTS.md"),
     );
     assert.equal(
       realpathSync(join(codexHome, "managed-hooks", "fixture", "review-policy")),
@@ -205,7 +205,7 @@ test("profile applies and rolls back skills, harness, and merged hooks together"
       input: JSON.stringify({ tool_name: "Bash", cwd: root, tool_input: { command: "git status" } }),
       encoding: "utf8",
     }), "");
-    assert.match(runCli(["status"], root), /ok\tharness\tfixture:review-policy/);
+    assert.match(runCli(["status"], root), /ok\trules\tfixture:review-policy/);
 
     runCli(["apply", "empty", "--yes"], root);
     assert.throws(() => realpathSync(join(codexHome, "AGENTS.md")));
@@ -214,7 +214,7 @@ test("profile applies and rolls back skills, harness, and merged hooks together"
     runCli(["rollback", "--yes"], root);
     assert.equal(
       realpathSync(join(codexHome, "AGENTS.md")),
-      join(resourceSource, "harnesses", "review-policy", "AGENTS.md"),
+      join(resourceSource, "rules", "review-policy", "AGENTS.md"),
     );
     assert.match(runCli(["status"], root), /有効なprofile: guarded/);
   } finally {
@@ -232,7 +232,7 @@ test("refuses unmanaged global files and an overriding AGENTS file before apply"
       profiles: {
         guarded: {
           skills: [],
-          harness: "fixture:review-policy",
+          rules: "fixture:review-policy",
           hooks: ["fixture:review-policy"],
         },
       },
@@ -244,7 +244,7 @@ test("refuses unmanaged global files and an overriding AGENTS file before apply"
     rmSync(join(codexHome, "AGENTS.md"));
 
     writeFileSync(join(codexHome, "AGENTS.override.md"), "override\n");
-    assert.throws(() => runCli(["plan", "guarded"], root), /AGENTS\.override\.mdが常時ハーネスを無効にします/);
+    assert.throws(() => runCli(["plan", "guarded"], root), /AGENTS\.override\.mdが常時ルールを無効にします/);
     rmSync(join(codexHome, "AGENTS.override.md"));
 
     writeFileSync(join(codexHome, "hooks.json"), "{}\n");
@@ -300,7 +300,7 @@ test("automatically persists v1 config and v2 state as normalized v3", () => {
     assert.deepEqual(config.profiles.legacy, {
       description: "legacy profile",
       skills: ["personal:review"],
-      harness: null,
+      rules: null,
       hooks: [],
     });
 

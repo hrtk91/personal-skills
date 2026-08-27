@@ -9,10 +9,10 @@ Node.js組み込みのTypeScript型除去を使うため、実行時のnpm依存
 1つのprofileで、次の3種類を独立して選択します。
 
 - `~/.codex/skills`へ導入するskill
-- `~/.codex/AGENTS.md`へ導入する常時ハーネス
+- `~/.codex/AGENTS.md`へ導入する常時ルール
 - `~/.codex/hooks.json`へ統合するCodex hook package
 
-skillからharnessやhookを暗黙に導入することはありません。複数のsourceを登録し、`source-id:resource-name`形式でresourceを選択します。
+skillからrulesやhookを暗黙に導入することはありません。複数のsourceを登録し、`source-id:resource-name`形式でresourceを選択します。
 
 ## 使い方
 
@@ -45,7 +45,7 @@ npm install --global /home/h-taminato/repos/personal-skills
 `sources add`には、リポジトリrootまたはskill directoryを直接指定できます。リポジトリsourceからは次のresourceを検出します。
 
 - `skills/*/SKILL.md`
-- `harnesses/*/AGENTS.md`
+- `rules/*/AGENTS.md`
 - `hooks/*/hooks.json`
 
 ## profile設定
@@ -60,7 +60,7 @@ npm install --global /home/h-taminato/repos/personal-skills
   "profiles": {
     "safe": {
       "skills": ["personal:review", "work:company-review"],
-      "harness": "work:team-policy",
+      "rules": "work:team-policy",
       "hooks": ["work:team-policy"]
     }
   }
@@ -78,7 +78,7 @@ bare名の`review`は`personal:review`として扱います。version 1または
 - 既存の通常fileやdirectoryは上書きしません。
 - 管理外symlinkは削除せず、衝突として停止します。
 - 管理外の`~/.codex/AGENTS.md`と`~/.codex/hooks.json`は統合も上書きもしません。
-- `~/.codex/AGENTS.override.md`がある場合、常時ハーネスが無効になるため停止します。
+- `~/.codex/AGENTS.override.md`がある場合、常時ルールが無効になるため停止します。
 - 同名skillが同じ導入先を要求した場合、暗黙に一方を選ばず停止します。
 - `.system`は選択・削除しません。
 
