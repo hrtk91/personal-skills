@@ -32,6 +32,8 @@ interface PromptOption {
 interface AutocompleteOptions {
   message: string;
   options: PromptOption[];
+  initialValue?: string;
+  initialValues?: string[];
   placeholder?: string;
   required?: boolean;
 }
@@ -75,21 +77,36 @@ export function pickerOptions(items: PickerItem[]): PromptOption[] {
 export async function runMultiPicker(
   items: PickerItem[],
   message: string,
+  initialValues: string[] = [],
   prompts: PromptFunctions = defaultPromptFunctions,
 ): Promise<string[] | null> {
   if (items.length === 0) return [];
+  const available = new Set(items.map((item) => item.ref));
+  const existingValues = initialValues.filter((value) => available.has(value));
+  const promptInitialValues = existingValues.length <= 1
+    ? existingValues
+    : [...existingValues.slice(1), existingValues[0]];
   const result = await prompts.autocompleteMultiselect({
     message,
     options: pickerOptions(items),
+    initialValues: promptInitialValues,
     placeholder: "入力して絞り込み",
     required: false,
   });
-  return prompts.isCancel(result) ? null : result as string[];
+  if (prompts.isCancel(result)) return null;
+  const selectedValues = result as string[];
+  const selected = new Set(selectedValues);
+  const existing = new Set(existingValues);
+  return [
+    ...existingValues.filter((value) => selected.has(value)),
+    ...selectedValues.filter((value) => !existing.has(value)),
+  ];
 }
 
 export async function runSinglePicker(
   items: PickerItem[],
   message: string,
+  initialValue: string | null = null,
   prompts: PromptFunctions = defaultPromptFunctions,
 ): Promise<string | null | undefined> {
   if (items.length === 0) return null;
@@ -99,6 +116,7 @@ export async function runSinglePicker(
       { value: "", label: "(なし)", hint: "選択を解除" },
       ...pickerOptions(items),
     ],
+    initialValue: initialValue ?? "",
     placeholder: "入力して絞り込み",
   });
   if (prompts.isCancel(result)) return undefined;
@@ -181,13 +199,14 @@ export async function profileTui(
 ): Promise<void> {
   validateProfileName(profileName);
   const config = readConfig(options.configPath);
+  const currentProfile = config.profiles[profileName];
   const skills = discoverSkills(config);
   if (skills.length === 0) throw new Error("skillが見つかりません");
   const selectedSkills = await runMultiPicker(skills.map((skill) => ({
     ref: skill.ref,
     description: skill.description,
     source: skill.source,
-  })), "導入するskill", prompts);
+  })), "導入するskill", currentProfile?.skills ?? [], prompts);
   if (selectedSkills === null) {
     console.log("中止しました");
     return;
@@ -198,7 +217,7 @@ export async function profileTui(
     ref: rule.ref,
     description: "常時読み込むAGENTS.md",
     source: rule.source,
-  })), "常時ルール", prompts);
+  })), "常時ルール", currentProfile?.rules ?? null, prompts);
   if (selectedRules === undefined) {
     console.log("中止しました");
     return;
@@ -209,7 +228,7 @@ export async function profileTui(
     ref: hook.ref,
     description: "Codex hook package",
     source: hook.source,
-  })), "導入するhook", prompts);
+  })), "導入するhook", currentProfile?.hooks ?? [], prompts);
   if (selectedHooks === null) {
     console.log("中止しました");
     return;

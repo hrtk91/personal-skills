@@ -809,17 +809,28 @@ function pickerOptions(items) {
     };
   });
 }
-async function runMultiPicker(items, message, prompts = defaultPromptFunctions) {
+async function runMultiPicker(items, message, initialValues = [], prompts = defaultPromptFunctions) {
   if (items.length === 0) return [];
+  const available = new Set(items.map((item) => item.ref));
+  const existingValues = initialValues.filter((value) => available.has(value));
+  const promptInitialValues = existingValues.length <= 1 ? existingValues : [...existingValues.slice(1), existingValues[0]];
   const result = await prompts.autocompleteMultiselect({
     message,
     options: pickerOptions(items),
+    initialValues: promptInitialValues,
     placeholder: "\u5165\u529B\u3057\u3066\u7D5E\u308A\u8FBC\u307F",
     required: false
   });
-  return prompts.isCancel(result) ? null : result;
+  if (prompts.isCancel(result)) return null;
+  const selectedValues = result;
+  const selected = new Set(selectedValues);
+  const existing = new Set(existingValues);
+  return [
+    ...existingValues.filter((value) => selected.has(value)),
+    ...selectedValues.filter((value) => !existing.has(value))
+  ];
 }
-async function runSinglePicker(items, message, prompts = defaultPromptFunctions) {
+async function runSinglePicker(items, message, initialValue = null, prompts = defaultPromptFunctions) {
   if (items.length === 0) return null;
   const result = await prompts.autocomplete({
     message,
@@ -827,6 +838,7 @@ async function runSinglePicker(items, message, prompts = defaultPromptFunctions)
       { value: "", label: "(\u306A\u3057)", hint: "\u9078\u629E\u3092\u89E3\u9664" },
       ...pickerOptions(items)
     ],
+    initialValue: initialValue ?? "",
     placeholder: "\u5165\u529B\u3057\u3066\u7D5E\u308A\u8FBC\u307F"
   });
   if (prompts.isCancel(result)) return void 0;
@@ -888,13 +900,14 @@ async function profilePickerTui(options, prompts = defaultPromptFunctions) {
 async function profileTui(profileName, options, prompts = defaultPromptFunctions) {
   validateProfileName(profileName);
   const config = readConfig(options.configPath);
+  const currentProfile = config.profiles[profileName];
   const skills = discoverSkills(config);
   if (skills.length === 0) throw new Error("skill\u304C\u898B\u3064\u304B\u308A\u307E\u305B\u3093");
   const selectedSkills = await runMultiPicker(skills.map((skill) => ({
     ref: skill.ref,
     description: skill.description,
     source: skill.source
-  })), "\u5C0E\u5165\u3059\u308Bskill", prompts);
+  })), "\u5C0E\u5165\u3059\u308Bskill", currentProfile?.skills ?? [], prompts);
   if (selectedSkills === null) {
     console.log("\u4E2D\u6B62\u3057\u307E\u3057\u305F");
     return;
@@ -904,7 +917,7 @@ async function profileTui(profileName, options, prompts = defaultPromptFunctions
     ref: rule.ref,
     description: "\u5E38\u6642\u8AAD\u307F\u8FBC\u3080AGENTS.md",
     source: rule.source
-  })), "\u5E38\u6642\u30EB\u30FC\u30EB", prompts);
+  })), "\u5E38\u6642\u30EB\u30FC\u30EB", currentProfile?.rules ?? null, prompts);
   if (selectedRules === void 0) {
     console.log("\u4E2D\u6B62\u3057\u307E\u3057\u305F");
     return;
@@ -914,7 +927,7 @@ async function profileTui(profileName, options, prompts = defaultPromptFunctions
     ref: hook.ref,
     description: "Codex hook package",
     source: hook.source
-  })), "\u5C0E\u5165\u3059\u308Bhook", prompts);
+  })), "\u5C0E\u5165\u3059\u308Bhook", currentProfile?.hooks ?? [], prompts);
   if (selectedHooks === null) {
     console.log("\u4E2D\u6B62\u3057\u307E\u3057\u305F");
     return;
