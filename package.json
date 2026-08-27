@@ -4,14 +4,14 @@
   "private": true,
   "type": "module",
   "bin": {
-    "skillsctl": "./tools/skills-ctl.ts",
-    "skills-ctl": "./tools/skills-ctl.ts"
+    "skillsctl": "./tools/dist/skills-ctl.mjs",
+    "skills-ctl": "./tools/dist/skills-ctl.mjs"
   },
   "files": [
     "skills",
     "rules",
     "hooks",
-    "tools",
+    "tools/dist",
     "package.json"
   ],
   "engines": {
@@ -20,7 +20,11 @@
   "dependencies": {
     "@clack/prompts": "1.7.0"
   },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  },
   "scripts": {
+    "build:cli": "esbuild tools/skills-ctl.ts --bundle --packages=external --platform=node --format=esm --target=node24 --outfile=tools/dist/skills-ctl.mjs",
     "skillsctl": "node tools/skills-ctl.ts",
     "skills-ctl": "npm run skillsctl --",
     "test:skills-ctl": "node --test tools/skills-ctl.test.ts tools/skills-ctl/*.test.ts"

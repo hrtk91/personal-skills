@@ -36,14 +36,20 @@ sourceのpathやskillの説明も表示する場合は`--verbose`を付けます
 skillsctl skills --verbose
 ```
 
-グローバルコマンドとして使う場合は、dependencyを導入してからローカルpackageをlinkします。
+GitHubからグローバルコマンドとして導入する場合は、review済みのtagを指定し、install時scriptを無効にします。
+
+```bash
+npm install --global --ignore-scripts github:hrtk91/personal-skills#v0.1.0
+```
+
+`@clack/prompts`は通常のruntime dependencyとして利用します。`tools/dist/skills-ctl.mjs`は、このリポジトリのTypeScriptだけをbundleしたcommit対象の実行fileです。install時にbuildは行いません。
+
+開発時に実行fileを更新する場合は、dependencyを導入してbuildします。
 
 ```bash
 npm ci
-npm link
+npm run build:cli
 ```
-
-`@clack/prompts`は通常のruntime dependencyとして利用します。生成bundleは管理しません。
 
 `sources add`には、リポジトリrootまたはskill directoryを直接指定できます。リポジトリsourceからは次のresourceを検出します。
 
