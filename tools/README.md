@@ -1,8 +1,8 @@
 # skillsctl
 
-`skillsctl`は、このリポジトリにあるresourceをprofile単位で導入するローカルCLIです。`fzf`は選択画面にだけ使い、profile設定と導入状態はリポジトリの外へ保存します。
+`skillsctl`は、このリポジトリにあるresourceをprofile単位で導入するローカルCLIです。選択画面にはnpm packageの`@clack/prompts`を使い、profile設定と導入状態はリポジトリの外へ保存します。
 
-Node.js組み込みのTypeScript型除去を使うため、実行時のnpm依存はありません。Node.js 24以降が必要です。
+Node.js 24以降が必要です。dependencyは`npm ci`で導入します。外部CLIは必要ありません。
 
 ## profileが管理するもの
 
@@ -28,7 +28,7 @@ npm run skillsctl -- status
 npm run skillsctl -- rollback
 ```
 
-引数なしで実行するとprofile選択画面を開きます。`TAB`で複数選択、`ESC`で変更せず終了します。`apply`を実行するまで導入状態は変わりません。
+引数なしで実行するとprofile選択画面を開きます。文字入力で候補を絞り込み、`Space`または`TAB`で複数選択、`Enter`で確定、`Ctrl+C`で変更せず終了します。`apply`を実行するまで導入状態は変わりません。
 
 sourceのpathやskillの説明も表示する場合は`--verbose`を付けます。
 
@@ -36,11 +36,14 @@ sourceのpathやskillの説明も表示する場合は`--verbose`を付けます
 skillsctl skills --verbose
 ```
 
-グローバルコマンドとして使う場合は、ローカルpackageを一度導入します。
+グローバルコマンドとして使う場合は、dependencyを導入してからローカルpackageをlinkします。
 
 ```bash
-npm install --global /home/h-taminato/repos/personal-skills
+npm ci
+npm link
 ```
+
+`@clack/prompts`は通常のruntime dependencyとして利用します。生成bundleは管理しません。
 
 `sources add`には、リポジトリrootまたはskill directoryを直接指定できます。リポジトリsourceからは次のresourceを検出します。
 
