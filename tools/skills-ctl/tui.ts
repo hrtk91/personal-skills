@@ -1,6 +1,9 @@
-import { spawnSync } from "node:child_process";
-import { createInterface } from "node:readline/promises";
-import { stdin as input, stdout as output } from "node:process";
+import {
+  autocomplete,
+  autocompleteMultiselect,
+  isCancel,
+  text,
+} from "@clack/prompts";
 import {
   type Config,
   type Options,
@@ -14,111 +17,114 @@ import {
   hookMap,
 } from "./catalog.ts";
 
-export function commandExists(command: string): boolean {
-  const result = spawnSync("bash", ["-lc", `command -v ${command}`], {
-    stdio: "ignore",
-  });
-  return result.status === 0;
-}
-
 export interface PickerItem {
   ref: string;
   description: string;
   source: string;
 }
 
-export function runMultiFzf(items: PickerItem[], prompt: string): string[] | null {
-  if (!commandExists("fzf")) {
-    throw new Error("fzfが必要です。先に導入してください");
-  }
+interface PromptOption {
+  value: string;
+  label: string;
+  hint?: string;
+}
 
+interface AutocompleteOptions {
+  message: string;
+  options: PromptOption[];
+  placeholder?: string;
+  required?: boolean;
+}
+
+interface TextOptions {
+  message: string;
+  validate?: (value: string) => string | undefined;
+}
+
+export interface PromptFunctions {
+  autocomplete: (options: AutocompleteOptions) => Promise<unknown>;
+  autocompleteMultiselect: (options: AutocompleteOptions) => Promise<unknown>;
+  text: (options: TextOptions) => Promise<unknown>;
+  isCancel: (value: unknown) => boolean;
+}
+
+const defaultPromptFunctions: PromptFunctions = {
+  autocomplete: (options) => autocomplete(options),
+  autocompleteMultiselect: (options) => autocompleteMultiselect(options),
+  text: (options) => text(options),
+  isCancel,
+};
+
+export function pickerOptions(items: PickerItem[]): PromptOption[] {
   const duplicateNames = new Map<string, number>();
   for (const item of items) {
     const name = item.ref.slice(item.ref.indexOf(":") + 1);
     duplicateNames.set(name, (duplicateNames.get(name) ?? 0) + 1);
   }
-  const refWidth = Math.max("(none)".length, ...items.map((item) => item.ref.length));
-  const candidates = [
-    `${"(なし)".padEnd(refWidth + 2)}\t選択を解除\t`,
-    ...items.map((item) => {
-      const name = item.ref.slice(item.ref.indexOf(":") + 1);
-      const location = duplicateNames.get(name)! > 1 ? item.source : "";
-      return `${item.ref.padEnd(refWidth + 2)}\t${item.description}\t${location}`;
-    })
-  ].join("\n");
-  const result = spawnSync("fzf", [
-    "--multi",
-    "--height=80%",
-    "--layout=reverse",
-    "--border",
-    "--delimiter=\t",
-    "--with-nth=1,2,3",
-    `--prompt=${prompt}> `,
-    "--header=TAB: 複数選択 / ENTER: 続行 / ESC: 中止 / (なし): 選択解除",
-  ], {
-    input: candidates,
-    encoding: "utf8",
-    stdio: ["pipe", "pipe", "inherit"],
+  return items.map((item) => {
+    const name = item.ref.slice(item.ref.indexOf(":") + 1);
+    const location = duplicateNames.get(name)! > 1 ? item.source : "";
+    return {
+      value: item.ref,
+      label: item.ref,
+      hint: [item.description, location].filter(Boolean).join(" · "),
+    };
   });
-
-  if (result.status !== 0) return null;
-  const selected = result.stdout
-    .split("\n")
-    .map((line) => line.split("\t", 1)[0].trim())
-    .filter(Boolean);
-  return selected.includes("(なし)") ? [] : selected;
 }
 
-export function runSingleFzf(items: PickerItem[], prompt: string): string | null | undefined {
-  if (!commandExists("fzf")) throw new Error("fzfが必要です。先に導入してください");
-  const candidates = [
-    "(なし)\t選択を解除",
-    ...items.map((item) => `${item.ref}\t${item.description}\t${item.source}`),
-  ].join("\n");
-  const result = spawnSync("fzf", [
-    "--height=60%",
-    "--layout=reverse",
-    "--border",
-    "--delimiter=\t",
-    "--with-nth=1,2,3",
-    `--prompt=${prompt}> `,
-    "--header=ENTER: 続行 / ESC: 中止 / (なし): 選択解除",
-  ], {
-    input: candidates,
-    encoding: "utf8",
-    stdio: ["pipe", "pipe", "inherit"],
+export async function runMultiPicker(
+  items: PickerItem[],
+  message: string,
+  prompts: PromptFunctions = defaultPromptFunctions,
+): Promise<string[] | null> {
+  if (items.length === 0) return [];
+  const result = await prompts.autocompleteMultiselect({
+    message,
+    options: pickerOptions(items),
+    placeholder: "入力して絞り込み",
+    required: false,
   });
-  if (result.status !== 0) return undefined;
-  const selected = result.stdout.split("\n")[0]?.split("\t", 1)[0].trim();
-  return selected === "(なし)" ? null : selected;
+  return prompts.isCancel(result) ? null : result as string[];
 }
 
-export function runProfileFzf(config: Config): string | null {
-  if (!commandExists("fzf")) {
-    throw new Error("fzfが必要です。先に導入してください");
-  }
-
-  const profileNames = Object.keys(config.profiles).sort();
-  const candidates = [
-    ...profileNames.map((name) => `${name}\t${config.profiles[name].skills.length} skills`),
-    "+ profileを作成\t新しいprofile",
-  ].join("\n");
-  const result = spawnSync("fzf", [
-    "--height=50%",
-    "--layout=reverse",
-    "--border",
-    "--delimiter=\t",
-    "--with-nth=1,2",
-    "--prompt=profiles> ",
-    "--header=ENTER: 編集 / ESC: 中止",
-  ], {
-    input: candidates,
-    encoding: "utf8",
-    stdio: ["pipe", "pipe", "inherit"],
+export async function runSinglePicker(
+  items: PickerItem[],
+  message: string,
+  prompts: PromptFunctions = defaultPromptFunctions,
+): Promise<string | null | undefined> {
+  if (items.length === 0) return null;
+  const result = await prompts.autocomplete({
+    message,
+    options: [
+      { value: "", label: "(なし)", hint: "選択を解除" },
+      ...pickerOptions(items),
+    ],
+    placeholder: "入力して絞り込み",
   });
+  if (prompts.isCancel(result)) return undefined;
+  return result === "" ? null : result as string;
+}
 
-  if (result.status !== 0) return null;
-  return result.stdout.split("\n")[0]?.split("\t", 1)[0].trim() || null;
+const createProfileValue = "\0create-profile";
+
+export async function runProfilePicker(
+  config: Config,
+  prompts: PromptFunctions = defaultPromptFunctions,
+): Promise<string | null> {
+  const result = await prompts.autocomplete({
+    message: "編集するprofile",
+    options: [
+      ...Object.keys(config.profiles).sort().map((name) => ({
+        value: name,
+        label: name,
+        hint: `${config.profiles[name].skills.length} skills`,
+      })),
+      { value: createProfileValue, label: "+ profileを作成", hint: "新しいprofile" },
+    ],
+    placeholder: "入力して絞り込み",
+  });
+  if (prompts.isCancel(result)) return null;
+  return result === createProfileValue ? "+ profileを作成" : result as string;
 }
 
 export function validateProfileName(name: string): void {
@@ -127,65 +133,83 @@ export function validateProfileName(name: string): void {
   }
 }
 
-export async function createProfileFromPicker(config: Config): Promise<string | null> {
-  const rl = createInterface({ input, output });
-  const name = (await rl.question("新しいprofile名: ")).trim();
-  rl.close();
+export async function createProfileFromPicker(
+  config: Config,
+  prompts: PromptFunctions = defaultPromptFunctions,
+): Promise<string | null> {
+  const result = await prompts.text({
+    message: "新しいprofile名",
+    validate: (value) => {
+      try {
+        validateProfileName(value.trim());
+        if (config.profiles[value.trim()]) return "profileは作成済みです";
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    },
+  });
+  if (prompts.isCancel(result)) return null;
+  const name = (result as string).trim();
   if (!name) {
     console.log("中止しました");
     return null;
   }
-  validateProfileName(name);
-  if (config.profiles[name]) throw new Error(`profileは作成済みです: ${name}`);
   return name;
 }
 
-export async function profilePickerTui(options: Options): Promise<void> {
+export async function profilePickerTui(
+  options: Options,
+  prompts: PromptFunctions = defaultPromptFunctions,
+): Promise<void> {
   const config = readConfig(options.configPath);
-  const selected = runProfileFzf(config);
+  const selected = await runProfilePicker(config, prompts);
   if (!selected) {
     console.log("中止しました");
     return;
   }
   const profileName = selected === "+ profileを作成"
-    ? await createProfileFromPicker(config)
+    ? await createProfileFromPicker(config, prompts)
     : selected;
   if (!profileName) return;
-  await profileTui(profileName, options);
+  await profileTui(profileName, options, prompts);
 }
 
-export function profileTui(profileName: string, options: Options): void {
+export async function profileTui(
+  profileName: string,
+  options: Options,
+  prompts: PromptFunctions = defaultPromptFunctions,
+): Promise<void> {
   validateProfileName(profileName);
   const config = readConfig(options.configPath);
   const skills = discoverSkills(config);
   if (skills.length === 0) throw new Error("skillが見つかりません");
-  const selectedSkills = runMultiFzf(skills.map((skill) => ({
+  const selectedSkills = await runMultiPicker(skills.map((skill) => ({
     ref: skill.ref,
     description: skill.description,
     source: skill.source,
-  })), "skills");
+  })), "導入するskill", prompts);
   if (selectedSkills === null) {
     console.log("中止しました");
     return;
   }
 
   const rules = [...ruleMap(config).values()];
-  const selectedRules = runSingleFzf(rules.map((rule) => ({
+  const selectedRules = await runSinglePicker(rules.map((rule) => ({
     ref: rule.ref,
     description: "常時読み込むAGENTS.md",
     source: rule.source,
-  })), "rules");
+  })), "常時ルール", prompts);
   if (selectedRules === undefined) {
     console.log("中止しました");
     return;
   }
 
   const hooks = [...hookMap(config).values()];
-  const selectedHooks = runMultiFzf(hooks.map((hook) => ({
+  const selectedHooks = await runMultiPicker(hooks.map((hook) => ({
     ref: hook.ref,
     description: "Codex hook package",
     source: hook.source,
-  })), "hooks");
+  })), "導入するhook", prompts);
   if (selectedHooks === null) {
     console.log("中止しました");
     return;

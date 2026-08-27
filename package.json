@@ -17,9 +17,12 @@
   "engines": {
     "node": ">=24"
   },
+  "dependencies": {
+    "@clack/prompts": "1.7.0"
+  },
   "scripts": {
     "skillsctl": "node tools/skills-ctl.ts",
     "skills-ctl": "npm run skillsctl --",
-    "test:skills-ctl": "node --test tools/skills-ctl.test.ts"
+    "test:skills-ctl": "node --test tools/skills-ctl.test.ts tools/skills-ctl/*.test.ts"
   }
 }
