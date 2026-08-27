@@ -167,6 +167,27 @@ test("初期focusを調整しても既存選択と追加項目の保存順を維
   assert.deepEqual(selected, ["fixture:first", "fixture:third", "fixture:second"]);
 });
 
+test("skill候補は長い説明文を行へ表示せず8件以内で検索できる", async () => {
+  const receivedOptions: unknown[] = [];
+  await runMultiPicker([{
+    ref: "fixture:sample-skill",
+    description: "needleを含む長い説明文".repeat(20),
+    source: "/fixture/source",
+  }], "profileに含めるskill", [], scriptedPrompts([
+    [],
+  ], undefined, receivedOptions));
+
+  const promptOptions = receivedOptions[0] as {
+    maxItems?: number;
+    options: Array<{ hint?: string; searchText?: string }>;
+    filter?: (search: string, option: { hint?: string; searchText?: string }) => boolean;
+  };
+  const option = promptOptions.options[0];
+  assert.equal(promptOptions.maxItems, 8);
+  assert.equal(option.hint, undefined);
+  assert.equal(promptOptions.filter?.("needle", option), true);
+});
+
 test("promptを途中で中止するとprofile設定を変更しない", async () => {
   const root = mkdtempSync(join(tmpdir(), "skillsctl-tui-cancel-test-"));
   try {
