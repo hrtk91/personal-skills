@@ -27,6 +27,6 @@
     "build:cli": "esbuild tools/skills-ctl.ts --bundle --packages=external --platform=node --format=esm --target=node24 --outfile=tools/dist/skills-ctl.mjs",
     "skillsctl": "node tools/skills-ctl.ts",
     "skills-ctl": "npm run skillsctl --",
-    "test:skills-ctl": "node --test tools/skills-ctl.test.ts tools/skills-ctl/*.test.ts"
+    "test:skills-ctl": "node --test tools/skills-ctl.test.ts tools/skills-ctl/*.test.ts hooks/single-review-decision/*.test.mjs"
   }
 }
