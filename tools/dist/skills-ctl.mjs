@@ -805,9 +805,48 @@ function pickerOptions(items) {
     return {
       value: item.ref,
       label: item.ref,
+      hint: descriptionHint(item.description, item.ref),
       searchText: [item.ref, item.description, location].filter(Boolean).join("\n")
     };
   });
+}
+function displayWidth(value) {
+  let width = 0;
+  for (const character of value) width += character.codePointAt(0) <= 127 ? 1 : 2;
+  return width;
+}
+function truncateToWidth(value, maxWidth) {
+  if (displayWidth(value) <= maxWidth) return value;
+  const contentWidth = Math.max(0, maxWidth - 3);
+  let result = "";
+  let width = 0;
+  for (const character of value) {
+    const characterWidth = character.codePointAt(0) <= 127 ? 1 : 2;
+    if (width + characterWidth > contentWidth) break;
+    result += character;
+    width += characterWidth;
+  }
+  return `${result}...`;
+}
+function descriptionHint(description, label) {
+  const normalized = description.replaceAll(/\s+/g, " ").trim();
+  const availableWidth = Math.min(48, (process.stdout.columns ?? 80) - displayWidth(label) - 10);
+  return normalized && availableWidth >= 8 ? truncateToWidth(normalized, availableWidth) : void 0;
+}
+function dynamicMultiPickerOptions(items, existingValues) {
+  const options = pickerOptions(items);
+  const itemByRef = new Map(items.map((item) => [item.ref, item]));
+  const existing = new Set(existingValues);
+  return function() {
+    const selected = new Set(this.selectedValues);
+    for (const option of options) {
+      const item = itemByRef.get(option.value);
+      const isNew = selected.has(option.value) && !existing.has(option.value);
+      option.label = `${option.value}${isNew ? " [\u65B0\u898F]" : ""}`;
+      option.hint = descriptionHint(item.description, option.label);
+    }
+    return options;
+  };
 }
 function filterPickerOption(search, option) {
   const query = search.toLowerCase();
@@ -820,7 +859,7 @@ async function runMultiPicker(items, message, initialValues = [], prompts = defa
   const promptInitialValues = existingValues.length <= 1 ? existingValues : [...existingValues.slice(1), existingValues[0]];
   const result = await prompts.autocompleteMultiselect({
     message,
-    options: pickerOptions(items),
+    options: dynamicMultiPickerOptions(items, existingValues),
     initialValues: promptInitialValues,
     maxItems: 8,
     placeholder: "\u5165\u529B\u3057\u3066\u7D5E\u308A\u8FBC\u307F",

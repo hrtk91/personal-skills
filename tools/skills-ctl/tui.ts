@@ -30,9 +30,15 @@ interface PromptOption {
   searchText?: string;
 }
 
+interface AutocompleteContext {
+  selectedValues: string[];
+}
+
+type PromptOptions = PromptOption[] | ((this: AutocompleteContext) => PromptOption[]);
+
 interface AutocompleteOptions {
   message: string;
-  options: PromptOption[];
+  options: PromptOptions;
   initialValue?: string;
   initialValues?: string[];
   maxItems?: number;
@@ -72,9 +78,57 @@ export function pickerOptions(items: PickerItem[]): PromptOption[] {
     return {
       value: item.ref,
       label: item.ref,
+      hint: descriptionHint(item.description, item.ref),
       searchText: [item.ref, item.description, location].filter(Boolean).join("\n"),
     };
   });
+}
+
+function displayWidth(value: string): number {
+  let width = 0;
+  for (const character of value) width += character.codePointAt(0)! <= 0x7f ? 1 : 2;
+  return width;
+}
+
+function truncateToWidth(value: string, maxWidth: number): string {
+  if (displayWidth(value) <= maxWidth) return value;
+  const contentWidth = Math.max(0, maxWidth - 3);
+  let result = "";
+  let width = 0;
+  for (const character of value) {
+    const characterWidth = character.codePointAt(0)! <= 0x7f ? 1 : 2;
+    if (width + characterWidth > contentWidth) break;
+    result += character;
+    width += characterWidth;
+  }
+  return `${result}...`;
+}
+
+function descriptionHint(description: string, label: string): string | undefined {
+  const normalized = description.replaceAll(/\s+/g, " ").trim();
+  const availableWidth = Math.min(48, (process.stdout.columns ?? 80) - displayWidth(label) - 10);
+  return normalized && availableWidth >= 8
+    ? truncateToWidth(normalized, availableWidth)
+    : undefined;
+}
+
+function dynamicMultiPickerOptions(
+  items: PickerItem[],
+  existingValues: string[],
+): (this: AutocompleteContext) => PromptOption[] {
+  const options = pickerOptions(items);
+  const itemByRef = new Map(items.map((item) => [item.ref, item]));
+  const existing = new Set(existingValues);
+  return function () {
+    const selected = new Set(this.selectedValues);
+    for (const option of options) {
+      const item = itemByRef.get(option.value)!;
+      const isNew = selected.has(option.value) && !existing.has(option.value);
+      option.label = `${option.value}${isNew ? " [新規]" : ""}`;
+      option.hint = descriptionHint(item.description, option.label);
+    }
+    return options;
+  };
 }
 
 function filterPickerOption(search: string, option: PromptOption): boolean {
@@ -97,7 +151,7 @@ export async function runMultiPicker(
     : [...existingValues.slice(1), existingValues[0]];
   const result = await prompts.autocompleteMultiselect({
     message,
-    options: pickerOptions(items),
+    options: dynamicMultiPickerOptions(items, existingValues),
     initialValues: promptInitialValues,
     maxItems: 8,
     placeholder: "入力して絞り込み",
