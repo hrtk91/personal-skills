@@ -167,11 +167,40 @@ test("初期focusを調整しても既存選択と追加項目の保存順を維
   assert.deepEqual(selected, ["fixture:first", "fixture:third", "fixture:second"]);
 });
 
-test("skill候補は長い説明文を行へ表示せず8件以内で検索できる", async () => {
+test("新しく選択した候補だけに新規markerを表示する", async () => {
+  const receivedOptions: unknown[] = [];
+  await runMultiPicker([{
+    ref: "fixture:existing-skill",
+    description: "existing skill",
+    source: "/fixture/existing",
+  }, {
+    ref: "fixture:new-skill",
+    description: "new skill",
+    source: "/fixture/new",
+  }], "profileに含めるskill", ["fixture:existing-skill"], scriptedPrompts([
+    ["fixture:existing-skill", "fixture:new-skill"],
+  ], undefined, receivedOptions));
+
+  const promptOptions = receivedOptions[0] as {
+    options: (this: { selectedValues: string[] }) => Array<{ label: string }>;
+  };
+  const selectedOptions = promptOptions.options.call({
+    selectedValues: ["fixture:existing-skill", "fixture:new-skill"],
+  });
+  assert.equal(selectedOptions[0].label, "fixture:existing-skill");
+  assert.equal(selectedOptions[1].label, "fixture:new-skill [新規]");
+
+  const deselectedOptions = promptOptions.options.call({
+    selectedValues: ["fixture:existing-skill"],
+  });
+  assert.equal(deselectedOptions[1].label, "fixture:new-skill");
+});
+
+test("focus中の候補は検索可能なdescriptionを1行へ短縮して表示する", async () => {
   const receivedOptions: unknown[] = [];
   await runMultiPicker([{
     ref: "fixture:sample-skill",
-    description: "needleを含む長い説明文".repeat(20),
+    description: `needleを含む\n長い説明文${"です".repeat(40)}`,
     source: "/fixture/source",
   }], "profileに含めるskill", [], scriptedPrompts([
     [],
@@ -179,12 +208,17 @@ test("skill候補は長い説明文を行へ表示せず8件以内で検索で�
 
   const promptOptions = receivedOptions[0] as {
     maxItems?: number;
-    options: Array<{ hint?: string; searchText?: string }>;
+    options: (this: { selectedValues: string[] }) => Array<{
+      hint?: string;
+      searchText?: string;
+    }>;
     filter?: (search: string, option: { hint?: string; searchText?: string }) => boolean;
   };
-  const option = promptOptions.options[0];
+  const option = promptOptions.options.call({ selectedValues: [] })[0];
   assert.equal(promptOptions.maxItems, 8);
-  assert.equal(option.hint, undefined);
+  assert.ok(option.hint);
+  assert.equal(option.hint.includes("\n"), false);
+  assert.ok(option.hint.endsWith("..."));
   assert.equal(promptOptions.filter?.("needle", option), true);
 });
 
