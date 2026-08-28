@@ -805,9 +805,13 @@ function pickerOptions(items) {
     return {
       value: item.ref,
       label: item.ref,
-      hint: [item.description, location].filter(Boolean).join(" \xB7 ")
+      searchText: [item.ref, item.description, location].filter(Boolean).join("\n")
     };
   });
+}
+function filterPickerOption(search, option) {
+  const query = search.toLowerCase();
+  return [option.label, option.value, option.hint, option.searchText].some((value) => value?.toLowerCase().includes(query));
 }
 async function runMultiPicker(items, message, initialValues = [], prompts = defaultPromptFunctions) {
   if (items.length === 0) return [];
@@ -818,8 +822,10 @@ async function runMultiPicker(items, message, initialValues = [], prompts = defa
     message,
     options: pickerOptions(items),
     initialValues: promptInitialValues,
+    maxItems: 8,
     placeholder: "\u5165\u529B\u3057\u3066\u7D5E\u308A\u8FBC\u307F",
-    required: false
+    required: false,
+    filter: filterPickerOption
   });
   if (prompts.isCancel(result)) return null;
   const selectedValues = result;
@@ -839,7 +845,9 @@ async function runSinglePicker(items, message, initialValue = null, prompts = de
       ...pickerOptions(items)
     ],
     initialValue: initialValue ?? "",
-    placeholder: "\u5165\u529B\u3057\u3066\u7D5E\u308A\u8FBC\u307F"
+    maxItems: 8,
+    placeholder: "\u5165\u529B\u3057\u3066\u7D5E\u308A\u8FBC\u307F",
+    filter: filterPickerOption
   });
   if (prompts.isCancel(result)) return void 0;
   return result === "" ? null : result;
@@ -907,7 +915,7 @@ async function profileTui(profileName, options, prompts = defaultPromptFunctions
     ref: skill.ref,
     description: skill.description,
     source: skill.source
-  })), "\u5C0E\u5165\u3059\u308Bskill", currentProfile?.skills ?? [], prompts);
+  })), "profile\u306B\u542B\u3081\u308Bskill", currentProfile?.skills ?? [], prompts);
   if (selectedSkills === null) {
     console.log("\u4E2D\u6B62\u3057\u307E\u3057\u305F");
     return;
@@ -917,7 +925,7 @@ async function profileTui(profileName, options, prompts = defaultPromptFunctions
     ref: rule.ref,
     description: "\u5E38\u6642\u8AAD\u307F\u8FBC\u3080AGENTS.md",
     source: rule.source
-  })), "\u5E38\u6642\u30EB\u30FC\u30EB", currentProfile?.rules ?? null, prompts);
+  })), "profile\u3067\u4F7F\u3046\u5E38\u6642\u30EB\u30FC\u30EB", currentProfile?.rules ?? null, prompts);
   if (selectedRules === void 0) {
     console.log("\u4E2D\u6B62\u3057\u307E\u3057\u305F");
     return;
@@ -927,7 +935,7 @@ async function profileTui(profileName, options, prompts = defaultPromptFunctions
     ref: hook.ref,
     description: "Codex hook package",
     source: hook.source
-  })), "\u5C0E\u5165\u3059\u308Bhook", currentProfile?.hooks ?? [], prompts);
+  })), "profile\u306B\u542B\u3081\u308Bhook", currentProfile?.hooks ?? [], prompts);
   if (selectedHooks === null) {
     console.log("\u4E2D\u6B62\u3057\u307E\u3057\u305F");
     return;

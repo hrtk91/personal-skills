@@ -27,6 +27,7 @@ interface PromptOption {
   value: string;
   label: string;
   hint?: string;
+  searchText?: string;
 }
 
 interface AutocompleteOptions {
@@ -34,8 +35,10 @@ interface AutocompleteOptions {
   options: PromptOption[];
   initialValue?: string;
   initialValues?: string[];
+  maxItems?: number;
   placeholder?: string;
   required?: boolean;
+  filter?: (search: string, option: PromptOption) => boolean;
 }
 
 interface TextOptions {
@@ -69,9 +72,15 @@ export function pickerOptions(items: PickerItem[]): PromptOption[] {
     return {
       value: item.ref,
       label: item.ref,
-      hint: [item.description, location].filter(Boolean).join(" · "),
+      searchText: [item.ref, item.description, location].filter(Boolean).join("\n"),
     };
   });
+}
+
+function filterPickerOption(search: string, option: PromptOption): boolean {
+  const query = search.toLowerCase();
+  return [option.label, option.value, option.hint, option.searchText]
+    .some((value) => value?.toLowerCase().includes(query));
 }
 
 export async function runMultiPicker(
@@ -90,8 +99,10 @@ export async function runMultiPicker(
     message,
     options: pickerOptions(items),
     initialValues: promptInitialValues,
+    maxItems: 8,
     placeholder: "入力して絞り込み",
     required: false,
+    filter: filterPickerOption,
   });
   if (prompts.isCancel(result)) return null;
   const selectedValues = result as string[];
@@ -117,7 +128,9 @@ export async function runSinglePicker(
       ...pickerOptions(items),
     ],
     initialValue: initialValue ?? "",
+    maxItems: 8,
     placeholder: "入力して絞り込み",
+    filter: filterPickerOption,
   });
   if (prompts.isCancel(result)) return undefined;
   return result === "" ? null : result as string;
@@ -206,7 +219,7 @@ export async function profileTui(
     ref: skill.ref,
     description: skill.description,
     source: skill.source,
-  })), "導入するskill", currentProfile?.skills ?? [], prompts);
+  })), "profileに含めるskill", currentProfile?.skills ?? [], prompts);
   if (selectedSkills === null) {
     console.log("中止しました");
     return;
@@ -217,7 +230,7 @@ export async function profileTui(
     ref: rule.ref,
     description: "常時読み込むAGENTS.md",
     source: rule.source,
-  })), "常時ルール", currentProfile?.rules ?? null, prompts);
+  })), "profileで使う常時ルール", currentProfile?.rules ?? null, prompts);
   if (selectedRules === undefined) {
     console.log("中止しました");
     return;
@@ -228,7 +241,7 @@ export async function profileTui(
     ref: hook.ref,
     description: "Codex hook package",
     source: hook.source,
-  })), "導入するhook", currentProfile?.hooks ?? [], prompts);
+  })), "profileに含めるhook", currentProfile?.hooks ?? [], prompts);
   if (selectedHooks === null) {
     console.log("中止しました");
     return;
