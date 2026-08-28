@@ -313,7 +313,7 @@ export async function profileTui(
   }
 
   config.profiles[profileName] = {
-    description: config.profiles[profileName]?.description ?? "skillsctlで作成",
+    description: config.profiles[profileName]?.description ?? "harnessctlで作成",
     skills: selectedSkills,
     rules: selectedRules,
     hooks: selectedHooks,
@@ -328,7 +328,7 @@ export async function profileTui(
     initialValue: false,
   });
   if (prompts.isCancel(shouldApply) || shouldApply !== true) {
-    console.log(`後で適用: skillsctl apply ${profileName}`);
+    console.log(`後で適用: harnessctl apply ${profileName}`);
     return;
   }
 

@@ -25,7 +25,7 @@ import {
 } from "./skills-ctl/tui.ts";
 
 function usage(): void {
-  console.log(`personal-skills profile管理\n\n使い方:\n  skillsctl                         profileを選択・作成してresourceを編集\n  skillsctl tui [name]              指定profileを編集\n  npm run skillsctl -- skills\n  npm run skillsctl -- sources list\n  npm run skillsctl -- sources add <path> [--id <id>]\n  npm run skillsctl -- profile list\n  npm run skillsctl -- profile show <name>\n  npm run skillsctl -- profile tui [name]\n  npm run skillsctl -- plan <name>\n  npm run skillsctl -- apply <name> [--dry-run] [--yes]\n  npm run skillsctl -- status\n  npm run skillsctl -- rollback [--yes]\n\n`);
+  console.log(`personal-skills harness管理\n\n使い方:\n  harnessctl                         profileを選択・作成してresourceを編集\n  harnessctl tui [name]              指定profileを編集\n  harnessctl skills\n  harnessctl sources list\n  harnessctl sources add <path> [--id <id>]\n  harnessctl profile list\n  harnessctl profile show <name>\n  harnessctl profile tui [name]\n  harnessctl plan <name>\n  harnessctl apply <name> [--dry-run] [--yes]\n  harnessctl status\n  harnessctl rollback [--yes]\n\n`);
   console.log("  --verbose, -v        skillのpathと説明を表示");
 }
 

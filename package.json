@@ -4,8 +4,7 @@
   "private": true,
   "type": "module",
   "bin": {
-    "skillsctl": "./tools/dist/skills-ctl.mjs",
-    "skills-ctl": "./tools/dist/skills-ctl.mjs"
+    "harnessctl": "./tools/dist/skills-ctl.mjs"
   },
   "files": [
     "skills",
@@ -25,8 +24,7 @@
   },
   "scripts": {
     "build:cli": "esbuild tools/skills-ctl.ts --bundle --packages=external --platform=node --format=esm --target=node24 --outfile=tools/dist/skills-ctl.mjs",
-    "skillsctl": "node tools/skills-ctl.ts",
-    "skills-ctl": "npm run skillsctl --",
-    "test:skills-ctl": "node --test tools/skills-ctl.test.ts tools/skills-ctl/*.test.ts hooks/single-review-decision/*.test.mjs"
+    "harnessctl": "node tools/skills-ctl.ts",
+    "test:harnessctl": "node --test tools/skills-ctl.test.ts tools/skills-ctl/*.test.ts hooks/single-review-decision/*.test.mjs"
   }
 }
