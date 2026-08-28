@@ -784,12 +784,14 @@ async function rollback(options) {
 import {
   autocomplete,
   autocompleteMultiselect,
+  confirm,
   isCancel,
   text
 } from "@clack/prompts";
 var defaultPromptFunctions = {
   autocomplete: (options) => autocomplete(options),
   autocompleteMultiselect: (options) => autocompleteMultiselect(options),
+  confirm: (options) => confirm(options),
   text: (options) => text(options),
   isCancel
 };
@@ -987,7 +989,22 @@ async function profileTui(profileName, options, prompts = defaultPromptFunctions
   };
   writeJson(options.configPath, config);
   console.log(`profile\u3092\u4FDD\u5B58\u3057\u307E\u3057\u305F: ${profileName}`);
-  console.log(`\u6B21\u306E\u64CD\u4F5C: npm run skillsctl -- plan ${profileName}`);
+  const shouldApply = await prompts.confirm({
+    message: "\u4FDD\u5B58\u3057\u305Fprofile\u3092\u4ECA\u3059\u3050\u9069\u7528\u3057\u307E\u3059\u304B\uFF1F",
+    active: "\u9069\u7528\u3059\u308B",
+    inactive: "\u4FDD\u5B58\u306E\u307F",
+    initialValue: false
+  });
+  if (prompts.isCancel(shouldApply) || shouldApply !== true) {
+    console.log(`\u5F8C\u3067\u9069\u7528: skillsctl apply ${profileName}`);
+    return;
+  }
+  await applyProfile(
+    profileName,
+    getProfile(config, profileName),
+    config,
+    { ...options, yes: true }
+  );
 }
 function printSkillList(config, verbose) {
   const skills = discoverSkills(config);

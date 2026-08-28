@@ -28,7 +28,9 @@ npm run skillsctl -- status
 npm run skillsctl -- rollback
 ```
 
-引数なしで実行するとprofile選択画面を開きます。文字入力で候補を絞り込み、`Space`または`TAB`で複数選択、`Enter`で確定、`Ctrl+C`で変更せず終了します。`apply`を実行するまで導入状態は変わりません。
+引数なしで実行するとprofile選択画面を開きます。文字入力で候補を絞り込み、`Space`または`TAB`で複数選択、`Enter`で確定します。resourceの選択中に`Ctrl+C`を押すとprofileを変更せず終了します。
+
+選択を確定するとprofileを保存し、そのまま適用するか確認します。初期値は`保存のみ`です。`保存のみ`を選ぶか確認画面で`Ctrl+C`を押した場合、導入状態は変更しません。
 
 sourceのpathやskillの説明も表示する場合は`--verbose`を付けます。
 

@@ -1,5 +1,7 @@
 import { strict as assert } from "node:assert";
 import {
+  existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -55,13 +57,52 @@ function scriptedPrompts(
   return {
     autocomplete: next,
     autocompleteMultiselect: next,
+    confirm: next,
     text: next,
     isCancel: (value) => value === cancelValue,
   };
 }
 
-test("npm dependencyのpromptで選んだskill・rules・hookをprofileへ保存する", async () => {
+test("選んだresourceをprofileへ保存し、保存のみでは導入状態を変更しない", async () => {
   const root = mkdtempSync(join(tmpdir(), "skillsctl-tui-test-"));
+  try {
+    const source = createResourceSource(root);
+    const cliOptions = options(root);
+    const receivedOptions: unknown[] = [];
+    writeFileSync(cliOptions.configPath, JSON.stringify({
+      version: 3,
+      sources: { fixture: { path: source } },
+      profiles: {},
+    }));
+
+    await profileTui("safe", cliOptions, scriptedPrompts([
+      ["fixture:sample-skill"],
+      "fixture:sample-policy",
+      ["fixture:sample-policy"],
+      false,
+    ], undefined, receivedOptions));
+
+    const config = JSON.parse(readFileSync(cliOptions.configPath, "utf8"));
+    assert.deepEqual(config.profiles.safe, {
+      description: "skillsctlで作成",
+      skills: ["fixture:sample-skill"],
+      rules: "fixture:sample-policy",
+      hooks: ["fixture:sample-policy"],
+    });
+    assert.equal(existsSync(cliOptions.statePath), false);
+    assert.deepEqual(receivedOptions[3], {
+      message: "保存したprofileを今すぐ適用しますか？",
+      active: "適用する",
+      inactive: "保存のみ",
+      initialValue: false,
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("適用するを選ぶと保存したprofileをそのまま適用する", async () => {
+  const root = mkdtempSync(join(tmpdir(), "skillsctl-tui-apply-test-"));
   try {
     const source = createResourceSource(root);
     const cliOptions = options(root);
@@ -75,15 +116,25 @@ test("npm dependencyのpromptで選んだskill・rules・hookをprofileへ保存
       ["fixture:sample-skill"],
       "fixture:sample-policy",
       ["fixture:sample-policy"],
+      true,
     ]));
 
-    const config = JSON.parse(readFileSync(cliOptions.configPath, "utf8"));
-    assert.deepEqual(config.profiles.safe, {
-      description: "skillsctlで作成",
-      skills: ["fixture:sample-skill"],
-      rules: "fixture:sample-policy",
-      hooks: ["fixture:sample-policy"],
-    });
+    const state = JSON.parse(readFileSync(cliOptions.statePath, "utf8"));
+    assert.equal(state.activeProfile, "safe");
+    const managed = state.managed as Array<{ kind: string; ref: string }>;
+    assert.deepEqual(
+      managed.slice(0, 3).map((entry) => [entry.kind, entry.ref]),
+      [
+        ["skill", "fixture:sample-skill"],
+        ["rules", "fixture:sample-policy"],
+        ["hook-package", "fixture:sample-policy"],
+      ],
+    );
+    assert.equal(managed[3].kind, "hook-config");
+    assert.match(managed[3].ref, /^generated:[a-f0-9]{64}$/);
+    assert.equal(lstatSync(join(cliOptions.targetDir, "sample-skill")).isSymbolicLink(), true);
+    assert.equal(lstatSync(join(cliOptions.codexHome, "AGENTS.md")).isSymbolicLink(), true);
+    assert.equal(lstatSync(join(cliOptions.codexHome, "hooks.json")).isSymbolicLink(), true);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -111,6 +162,7 @@ test("既存profileを編集すると現在のskill・rules・hookが選択済�
       ["fixture:sample-skill"],
       "fixture:sample-policy",
       ["fixture:sample-policy"],
+      false,
     ], undefined, receivedOptions));
 
     assert.deepEqual(
@@ -267,6 +319,7 @@ test("なしを選ぶと既存のrulesを解除できる", async () => {
       ["fixture:sample-skill"],
       "",
       [],
+      false,
     ]));
 
     const config = JSON.parse(readFileSync(cliOptions.configPath, "utf8"));
