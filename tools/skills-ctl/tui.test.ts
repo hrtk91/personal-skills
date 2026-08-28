@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import type { Options } from "./model.ts";
-import { profileTui, type PromptFunctions } from "./tui.ts";
+import { profileTui, runMultiPicker, type PromptFunctions } from "./tui.ts";
 
 function createResourceSource(root: string): string {
   const source = join(root, "resources");
@@ -43,8 +43,15 @@ function options(root: string): Options {
   };
 }
 
-function scriptedPrompts(results: unknown[], cancelValue = Symbol("cancel")): PromptFunctions {
-  const next = async () => results.shift();
+function scriptedPrompts(
+  results: unknown[],
+  cancelValue = Symbol("cancel"),
+  receivedOptions: unknown[] = [],
+): PromptFunctions {
+  const next = async (promptOptions: unknown) => {
+    receivedOptions.push(promptOptions);
+    return results.shift();
+  };
   return {
     autocomplete: next,
     autocompleteMultiselect: next,
@@ -80,6 +87,84 @@ test("npm dependencyのpromptで選んだskill・rules・hookをprofileへ保存
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("既存profileを編集すると現在のskill・rules・hookが選択済みで表示される", async () => {
+  const root = mkdtempSync(join(tmpdir(), "skillsctl-tui-existing-test-"));
+  try {
+    const source = createResourceSource(root);
+    const cliOptions = options(root);
+    writeFileSync(cliOptions.configPath, JSON.stringify({
+      version: 3,
+      sources: { fixture: { path: source } },
+      profiles: {
+        safe: {
+          skills: ["fixture:sample-skill"],
+          rules: "fixture:sample-policy",
+          hooks: ["fixture:sample-policy"],
+        },
+      },
+    }));
+    const receivedOptions: unknown[] = [];
+
+    await profileTui("safe", cliOptions, scriptedPrompts([
+      ["fixture:sample-skill"],
+      "fixture:sample-policy",
+      ["fixture:sample-policy"],
+    ], undefined, receivedOptions));
+
+    assert.deepEqual(
+      (receivedOptions[0] as { initialValues?: string[] }).initialValues,
+      ["fixture:sample-skill"],
+    );
+    assert.equal(
+      (receivedOptions[1] as { initialValue?: string }).initialValue,
+      "fixture:sample-policy",
+    );
+    assert.deepEqual(
+      (receivedOptions[2] as { initialValues?: string[] }).initialValues,
+      ["fixture:sample-policy"],
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+const multiplePickerItems = [
+  { ref: "fixture:first", description: "first", source: "/fixture/first" },
+  { ref: "fixture:second", description: "second", source: "/fixture/second" },
+  { ref: "fixture:third", description: "third", source: "/fixture/third" },
+];
+
+test("既存の複数選択は先頭の選択項目から移動を開始する", async () => {
+  const receivedOptions: unknown[] = [];
+
+  await runMultiPicker(
+    multiplePickerItems,
+    "fixture",
+    ["fixture:first", "fixture:third"],
+    scriptedPrompts([
+      ["fixture:third", "fixture:first"],
+    ], undefined, receivedOptions),
+  );
+
+  assert.deepEqual(
+    (receivedOptions[0] as { initialValues?: string[] }).initialValues,
+    ["fixture:third", "fixture:first"],
+  );
+});
+
+test("初期focusを調整しても既存選択と追加項目の保存順を維持する", async () => {
+  const selected = await runMultiPicker(
+    multiplePickerItems,
+    "fixture",
+    ["fixture:first", "fixture:third"],
+    scriptedPrompts([
+      ["fixture:third", "fixture:first", "fixture:second"],
+    ]),
+  );
+
+  assert.deepEqual(selected, ["fixture:first", "fixture:third", "fixture:second"]);
 });
 
 test("promptを途中で中止するとprofile設定を変更しない", async () => {
