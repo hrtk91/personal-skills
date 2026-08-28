@@ -84,7 +84,7 @@ test("選んだresourceをprofileへ保存し、保存のみでは導入状態�
 
     const config = JSON.parse(readFileSync(cliOptions.configPath, "utf8"));
     assert.deepEqual(config.profiles.safe, {
-      description: "skillsctlで作成",
+      description: "harnessctlで作成",
       skills: ["fixture:sample-skill"],
       rules: "fixture:sample-policy",
       hooks: ["fixture:sample-policy"],

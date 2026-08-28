@@ -1,6 +1,6 @@
-# skillsctl
+# harnessctl
 
-`skillsctl`は、このリポジトリにあるresourceをprofile単位で導入するローカルCLIです。選択画面にはnpm packageの`@clack/prompts`を使い、profile設定と導入状態はリポジトリの外へ保存します。
+`harnessctl`は、このリポジトリにあるresourceをprofile単位で導入するローカルCLIです。選択画面にはnpm packageの`@clack/prompts`を使い、profile設定と導入状態はリポジトリの外へ保存します。
 
 Node.js 24以降が必要です。外部CLIは必要ありません。
 
@@ -17,15 +17,15 @@ skillからrulesやhookを暗黙に導入することはありません。複数
 ## 使い方
 
 ```bash
-npm run skillsctl -- skills
-npm run skillsctl -- sources list
-npm run skillsctl -- sources add /path/to/another-skill-repo --id work
-npm run skillsctl -- profile tui safe
-npm run skillsctl -- profile list
-npm run skillsctl -- plan safe
-npm run skillsctl -- apply safe
-npm run skillsctl -- status
-npm run skillsctl -- rollback
+npm run harnessctl -- skills
+npm run harnessctl -- sources list
+npm run harnessctl -- sources add /path/to/another-skill-repo --id work
+npm run harnessctl -- profile tui safe
+npm run harnessctl -- profile list
+npm run harnessctl -- plan safe
+npm run harnessctl -- apply safe
+npm run harnessctl -- status
+npm run harnessctl -- rollback
 ```
 
 引数なしで実行するとprofile選択画面を開きます。文字入力で候補を絞り込み、`Space`または`TAB`で複数選択、`Enter`で確定します。resourceの選択中に`Ctrl+C`を押すとprofileを変更せず終了します。
@@ -35,7 +35,7 @@ npm run skillsctl -- rollback
 sourceのpathやskillの説明も表示する場合は`--verbose`を付けます。
 
 ```bash
-skillsctl skills --verbose
+harnessctl skills --verbose
 ```
 
 GitHubからグローバルコマンドとして導入する場合は、`vX.Y.Z`をreview済みのtagへ置き換え、install時scriptを無効にします。
@@ -43,6 +43,8 @@ GitHubからグローバルコマンドとして導入する場合は、`vX.Y.Z`
 ```bash
 npm install --global --ignore-scripts github:hrtk91/personal-skills#vX.Y.Z
 ```
+
+導入後は`harnessctl`コマンドを使用します。
 
 ## 開発
 
@@ -95,7 +97,7 @@ bare名の`review`は`personal:review`として扱います。version 1または
 - 同名skillが同じ導入先を要求した場合、暗黙に一方を選ばず停止します。
 - `.system`は選択・削除しません。
 
-通常のfilesystem errorまたはstate書き込み失敗では、直前のsymlink集合を復元します。ただし、link更新とstate確定の間にprocessを強制終了した場合の完全復旧、apply/rollbackの同時実行制御、crash journalは未対応です。driftは`skillsctl status`で確認します。
+通常のfilesystem errorまたはstate書き込み失敗では、直前のsymlink集合を復元します。ただし、link更新とstate確定の間にprocessを強制終了した場合の完全復旧、apply/rollbackの同時実行制御、crash journalは未対応です。driftは`harnessctl status`で確認します。
 
 ## 同梱する常時ルール
 

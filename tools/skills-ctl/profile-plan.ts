@@ -72,7 +72,7 @@ export function mergedHooks(
     }
   }
   return `${JSON.stringify({
-    description: "skillsctlが生成しました。このfileではなく有効なprofileを編集してください。",
+    description: "harnessctlが生成しました。このfileではなく有効なprofileを編集してください。",
     hooks,
   }, null, 2)}\n`;
 }

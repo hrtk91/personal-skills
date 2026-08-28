@@ -455,7 +455,7 @@ function mergedHooks(selected, packageTargets) {
     }
   }
   return `${JSON.stringify({
-    description: "skillsctl\u304C\u751F\u6210\u3057\u307E\u3057\u305F\u3002\u3053\u306Efile\u3067\u306F\u306A\u304F\u6709\u52B9\u306Aprofile\u3092\u7DE8\u96C6\u3057\u3066\u304F\u3060\u3055\u3044\u3002",
+    description: "harnessctl\u304C\u751F\u6210\u3057\u307E\u3057\u305F\u3002\u3053\u306Efile\u3067\u306F\u306A\u304F\u6709\u52B9\u306Aprofile\u3092\u7DE8\u96C6\u3057\u3066\u304F\u3060\u3055\u3044\u3002",
     hooks
   }, null, 2)}
 `;
@@ -982,7 +982,7 @@ async function profileTui(profileName, options, prompts = defaultPromptFunctions
     return;
   }
   config.profiles[profileName] = {
-    description: config.profiles[profileName]?.description ?? "skillsctl\u3067\u4F5C\u6210",
+    description: config.profiles[profileName]?.description ?? "harnessctl\u3067\u4F5C\u6210",
     skills: selectedSkills,
     rules: selectedRules,
     hooks: selectedHooks
@@ -996,7 +996,7 @@ async function profileTui(profileName, options, prompts = defaultPromptFunctions
     initialValue: false
   });
   if (prompts.isCancel(shouldApply) || shouldApply !== true) {
-    console.log(`\u5F8C\u3067\u9069\u7528: skillsctl apply ${profileName}`);
+    console.log(`\u5F8C\u3067\u9069\u7528: harnessctl apply ${profileName}`);
     return;
   }
   await applyProfile(
@@ -1043,21 +1043,21 @@ function printProfile(config, name) {
 
 // tools/skills-ctl.ts
 function usage() {
-  console.log(`personal-skills profile\u7BA1\u7406
+  console.log(`personal-skills harness\u7BA1\u7406
 
 \u4F7F\u3044\u65B9:
-  skillsctl                         profile\u3092\u9078\u629E\u30FB\u4F5C\u6210\u3057\u3066resource\u3092\u7DE8\u96C6
-  skillsctl tui [name]              \u6307\u5B9Aprofile\u3092\u7DE8\u96C6
-  npm run skillsctl -- skills
-  npm run skillsctl -- sources list
-  npm run skillsctl -- sources add <path> [--id <id>]
-  npm run skillsctl -- profile list
-  npm run skillsctl -- profile show <name>
-  npm run skillsctl -- profile tui [name]
-  npm run skillsctl -- plan <name>
-  npm run skillsctl -- apply <name> [--dry-run] [--yes]
-  npm run skillsctl -- status
-  npm run skillsctl -- rollback [--yes]
+  harnessctl                         profile\u3092\u9078\u629E\u30FB\u4F5C\u6210\u3057\u3066resource\u3092\u7DE8\u96C6
+  harnessctl tui [name]              \u6307\u5B9Aprofile\u3092\u7DE8\u96C6
+  harnessctl skills
+  harnessctl sources list
+  harnessctl sources add <path> [--id <id>]
+  harnessctl profile list
+  harnessctl profile show <name>
+  harnessctl profile tui [name]
+  harnessctl plan <name>
+  harnessctl apply <name> [--dry-run] [--yes]
+  harnessctl status
+  harnessctl rollback [--yes]
 
 `);
   console.log("  --verbose, -v        skill\u306Epath\u3068\u8AAC\u660E\u3092\u8868\u793A");
