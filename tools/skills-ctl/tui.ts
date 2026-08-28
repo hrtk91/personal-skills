@@ -1,6 +1,7 @@
 import {
   autocomplete,
   autocompleteMultiselect,
+  confirm,
   isCancel,
   text,
 } from "@clack/prompts";
@@ -16,6 +17,7 @@ import {
   ruleMap,
   hookMap,
 } from "./catalog.ts";
+import { applyProfile } from "./activation.ts";
 
 export interface PickerItem {
   ref: string;
@@ -52,9 +54,17 @@ interface TextOptions {
   validate?: (value: string) => string | undefined;
 }
 
+interface ConfirmOptions {
+  message: string;
+  active?: string;
+  inactive?: string;
+  initialValue?: boolean;
+}
+
 export interface PromptFunctions {
   autocomplete: (options: AutocompleteOptions) => Promise<unknown>;
   autocompleteMultiselect: (options: AutocompleteOptions) => Promise<unknown>;
+  confirm: (options: ConfirmOptions) => Promise<unknown>;
   text: (options: TextOptions) => Promise<unknown>;
   isCancel: (value: unknown) => boolean;
 }
@@ -62,6 +72,7 @@ export interface PromptFunctions {
 const defaultPromptFunctions: PromptFunctions = {
   autocomplete: (options) => autocomplete(options),
   autocompleteMultiselect: (options) => autocompleteMultiselect(options),
+  confirm: (options) => confirm(options),
   text: (options) => text(options),
   isCancel,
 };
@@ -309,7 +320,24 @@ export async function profileTui(
   };
   writeJson(options.configPath, config);
   console.log(`profileを保存しました: ${profileName}`);
-  console.log(`次の操作: npm run skillsctl -- plan ${profileName}`);
+
+  const shouldApply = await prompts.confirm({
+    message: "保存したprofileを今すぐ適用しますか？",
+    active: "適用する",
+    inactive: "保存のみ",
+    initialValue: false,
+  });
+  if (prompts.isCancel(shouldApply) || shouldApply !== true) {
+    console.log(`後で適用: skillsctl apply ${profileName}`);
+    return;
+  }
+
+  await applyProfile(
+    profileName,
+    getProfile(config, profileName),
+    config,
+    { ...options, yes: true },
+  );
 }
 
 export function printSkillList(config: Config, verbose: boolean): void {
