@@ -179,28 +179,6 @@ export async function runMultiPicker(
   ];
 }
 
-export async function runSinglePicker(
-  items: PickerItem[],
-  message: string,
-  initialValue: string | null = null,
-  prompts: PromptFunctions = defaultPromptFunctions,
-): Promise<string | null | undefined> {
-  if (items.length === 0) return null;
-  const result = await prompts.autocomplete({
-    message,
-    options: [
-      { value: "", label: "(なし)", hint: "選択を解除" },
-      ...pickerOptions(items),
-    ],
-    initialValue: initialValue ?? "",
-    maxItems: 8,
-    placeholder: "入力して絞り込み",
-    filter: filterPickerOption,
-  });
-  if (prompts.isCancel(result)) return undefined;
-  return result === "" ? null : result as string;
-}
-
 const createProfileValue = "\0create-profile";
 
 export async function runProfilePicker(
@@ -291,12 +269,12 @@ export async function profileTui(
   }
 
   const rules = [...ruleMap(config).values()];
-  const selectedRules = await runSinglePicker(rules.map((rule) => ({
+  const selectedRules = await runMultiPicker(rules.map((rule) => ({
     ref: rule.ref,
     description: "常時読み込むAGENTS.md",
     source: rule.source,
-  })), "profileで使う常時ルール", currentProfile?.rules ?? null, prompts);
-  if (selectedRules === undefined) {
+  })), "profileに含める常時ルール", currentProfile?.rules ?? [], prompts);
+  if (selectedRules === null) {
     console.log("中止しました");
     return;
   }
@@ -368,7 +346,7 @@ export function printProfileList(config: Config): void {
   }
   for (const name of names) {
     const profile = getProfile(config, name);
-    console.log(`${name}\tskill ${profile.skills.length}件, rules ${profile.rules ? "1" : "0"}件, hook ${profile.hooks.length}件`);
+    console.log(`${name}\tskill ${profile.skills.length}件, rules ${profile.rules.length}件, hook ${profile.hooks.length}件`);
   }
 }
 

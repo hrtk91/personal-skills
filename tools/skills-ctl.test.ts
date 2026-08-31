@@ -39,10 +39,15 @@ function runCli(args: string[], root: string): string {
 function createManagedResourceSource(root: string): string {
   const source = join(root, "managed-resource-source");
   mkdirSync(join(source, "rules", "review-policy"), { recursive: true });
+  mkdirSync(join(source, "rules", "release-policy"), { recursive: true });
   mkdirSync(join(source, "hooks", "review-policy"), { recursive: true });
   writeFileSync(
     join(source, "rules", "review-policy", "AGENTS.md"),
     "# テスト用常時ルール\n",
+  );
+  writeFileSync(
+    join(source, "rules", "release-policy", "AGENTS.md"),
+    "# テスト用リリースルール\n",
   );
   writeFileSync(join(source, "hooks", "review-policy", "noop.mjs"), "process.exit(0);\n");
   writeFileSync(join(source, "hooks", "review-policy", "hooks.json"), JSON.stringify({
@@ -160,17 +165,17 @@ test("registers a source and applies namespaced skills", () => {
   }
 });
 
-test("profile applies and rolls back skills, rules, and merged hooks together", () => {
+test("profile generates AGENTS.md from multiple rules in order and rolls it back with other resources", () => {
   const root = mkdtempSync(join(tmpdir(), "personal-skills-ctl-resources-test-"));
   try {
     const resourceSource = createManagedResourceSource(root);
     writeFileSync(join(root, "profiles.json"), JSON.stringify({
-      version: 2,
+      version: 4,
       sources: { fixture: { path: resourceSource } },
       profiles: {
         guarded: {
           skills: ["review"],
-          rules: "fixture:review-policy",
+          rules: ["fixture:review-policy", "fixture:release-policy"],
           hooks: ["fixture:review-policy"],
         },
         empty: { skills: [] },
@@ -178,16 +183,19 @@ test("profile applies and rolls back skills, rules, and merged hooks together", 
     }));
 
     const plan = runCli(["plan", "guarded"], root);
-    assert.match(plan, /link追加 rules fixture:review-policy/);
+    assert.match(plan, /link追加 rules generated:[a-f0-9]{64}/);
     assert.match(plan, /link追加 hook-package fixture:review-policy/);
     assert.match(plan, /link追加 hook-config generated:/);
     assert.throws(() => realpathSync(join(root, "artifacts")));
 
     runCli(["apply", "guarded", "--yes"], root);
     const codexHome = join(root, "codex");
-    assert.equal(
-      realpathSync(join(codexHome, "AGENTS.md")),
-      join(resourceSource, "rules", "review-policy", "AGENTS.md"),
+    const agentsPath = realpathSync(join(codexHome, "AGENTS.md"));
+    assert.match(agentsPath, /artifacts\/agents-[a-f0-9]{64}\.md$/);
+    const agents = readFileSync(join(codexHome, "AGENTS.md"), "utf8");
+    assert.match(agents, /harnessctlが生成しました/);
+    assert.ok(
+      agents.indexOf("# テスト用常時ルール") < agents.indexOf("# テスト用リリースルール"),
     );
     assert.equal(
       realpathSync(join(codexHome, "managed-hooks", "fixture", "review-policy")),
@@ -205,17 +213,15 @@ test("profile applies and rolls back skills, rules, and merged hooks together", 
       input: JSON.stringify({ tool_name: "Bash", cwd: root, tool_input: { command: "git status" } }),
       encoding: "utf8",
     }), "");
-    assert.match(runCli(["status"], root), /ok\trules\tfixture:review-policy/);
+    assert.match(runCli(["status"], root), /ok\trules\tgenerated:[a-f0-9]{64}/);
 
     runCli(["apply", "empty", "--yes"], root);
     assert.throws(() => realpathSync(join(codexHome, "AGENTS.md")));
     assert.throws(() => realpathSync(join(codexHome, "hooks.json")));
 
     runCli(["rollback", "--yes"], root);
-    assert.equal(
-      realpathSync(join(codexHome, "AGENTS.md")),
-      join(resourceSource, "rules", "review-policy", "AGENTS.md"),
-    );
+    assert.equal(realpathSync(join(codexHome, "AGENTS.md")), agentsPath);
+    assert.equal(readFileSync(join(codexHome, "AGENTS.md"), "utf8"), agents);
     assert.match(runCli(["status"], root), /有効なprofile: guarded/);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -227,12 +233,12 @@ test("refuses unmanaged global files and an overriding AGENTS file before apply"
   try {
     const resourceSource = createManagedResourceSource(root);
     writeFileSync(join(root, "profiles.json"), JSON.stringify({
-      version: 3,
+      version: 4,
       sources: { fixture: { path: resourceSource } },
       profiles: {
         guarded: {
           skills: [],
-          rules: "fixture:review-policy",
+          rules: ["fixture:review-policy"],
           hooks: ["fixture:review-policy"],
         },
       },
@@ -265,7 +271,7 @@ test("rejects config versions newer than the CLI understands", () => {
   }
 });
 
-test("automatically persists v1 config and v2 state as normalized v3", () => {
+test("automatically persists legacy config as v4 and legacy state as v3", () => {
   const root = mkdtempSync(join(tmpdir(), "personal-skills-ctl-migration-test-"));
   try {
     const configPath = join(root, "profiles.json");
@@ -295,12 +301,12 @@ test("automatically persists v1 config and v2 state as normalized v3", () => {
     runCli(["status"], root);
 
     const config = JSON.parse(readFileSync(configPath, "utf8"));
-    assert.equal(config.version, 3);
+    assert.equal(config.version, 4);
     assert.equal(config.sources.personal.path, repoRoot);
     assert.deepEqual(config.profiles.legacy, {
       description: "legacy profile",
       skills: ["personal:review"],
-      rules: null,
+      rules: [],
       hooks: [],
     });
 
@@ -316,6 +322,33 @@ test("automatically persists v1 config and v2 state as normalized v3", () => {
       source: join(repoRoot, "skills", "review"),
       target: join(root, "target", "review"),
     });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("migrates a v3 profile with one rule to the ordered rules array", () => {
+  const root = mkdtempSync(join(tmpdir(), "personal-skills-ctl-rules-migration-test-"));
+  try {
+    const resourceSource = createManagedResourceSource(root);
+    const configPath = join(root, "profiles.json");
+    writeFileSync(configPath, JSON.stringify({
+      version: 3,
+      sources: { fixture: { path: resourceSource } },
+      profiles: {
+        guarded: {
+          skills: [],
+          rules: "fixture:review-policy",
+          hooks: [],
+        },
+      },
+    }));
+
+    runCli(["profile", "show", "guarded"], root);
+
+    const config = JSON.parse(readFileSync(configPath, "utf8"));
+    assert.equal(config.version, 4);
+    assert.deepEqual(config.profiles.guarded.rules, ["fixture:review-policy"]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -364,7 +397,7 @@ test("reports and refuses a managed hooks file replaced by another installer", (
   try {
     const resourceSource = createManagedResourceSource(root);
     writeFileSync(join(root, "profiles.json"), JSON.stringify({
-      version: 3,
+      version: 4,
       sources: { fixture: { path: resourceSource } },
       profiles: {
         guarded: { skills: [], hooks: ["fixture:review-policy"] },
@@ -389,7 +422,7 @@ test("restores the previous links when the atomic state write fails", () => {
   const root = mkdtempSync(join(tmpdir(), "personal-skills-ctl-state-failure-test-"));
   try {
     writeFileSync(join(root, "profiles.json"), JSON.stringify({
-      version: 3,
+      version: 4,
       profiles: {
         selected: { skills: ["personal:review"] },
         empty: { skills: [] },

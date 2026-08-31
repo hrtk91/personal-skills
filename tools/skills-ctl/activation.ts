@@ -220,7 +220,7 @@ export async function applyProfile(
     managed: state.managed,
   };
   for (const artifact of plan.artifacts) {
-    if (!existsSync(artifact.path)) writeJsonArtifact(artifact);
+    if (!existsSync(artifact.path)) writeArtifact(artifact);
   }
   applyEntries(desired, state);
   const nextState: State = {
@@ -238,10 +238,10 @@ export async function applyProfile(
     throw error;
   }
   console.log(`profileを適用しました: ${profileName}`);
-  if (profile.rules) console.log("常時ルールは次のCodex runから有効です");
+  if (profile.rules.length > 0) console.log("常時ルールは次のCodex runから有効です");
 }
 
-export function writeJsonArtifact(artifact: GeneratedArtifact): void {
+export function writeArtifact(artifact: GeneratedArtifact): void {
   mkdirSync(dirname(artifact.path), { recursive: true });
   const temporary = `${artifact.path}.${process.pid}.tmp`;
   writeFileSync(temporary, artifact.content, { mode: 0o600 });

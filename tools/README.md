@@ -9,7 +9,7 @@ Node.js 24以降が必要です。外部CLIは必要ありません。
 1つのprofileで、次の3種類を独立して選択します。
 
 - `~/.codex/skills`へ導入するskill
-- `~/.codex/AGENTS.md`へ導入する常時ルール
+- `~/.codex/AGENTS.md`へまとめて導入する常時ルール
 - `~/.codex/hooks.json`へ統合するCodex hook package
 
 skillからrulesやhookを暗黙に導入することはありません。複数のsourceを登録し、`source-id:resource-name`形式でresourceを選択します。
@@ -67,7 +67,7 @@ npm run build:cli
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "sources": {
     "personal": { "path": "/path/to/personal-skills" },
     "work": { "path": "/path/to/work-skills" }
@@ -75,14 +75,16 @@ npm run build:cli
   "profiles": {
     "safe": {
       "skills": ["personal:review", "work:company-review"],
-      "rules": "work:team-policy",
+      "rules": ["personal:single-review-decision", "work:team-policy"],
       "hooks": ["work:team-policy"]
     }
   }
 }
 ```
 
-bare名の`review`は`personal:review`として扱います。version 1または2のconfig/stateを正常に読み込むと、その場で正規化したversion 3へ書き換えます。次回のprofile編集やapplyまでは待ちません。
+bare名の`review`は`personal:review`として扱います。version 1から3のconfigを正常に読み込むと、その場でversion 4へ書き換えます。従来の単一rulesは1要素の配列へ変換します。version 1または2のstateも同様にversion 3へ書き換えます。
+
+選択したrulesの`AGENTS.md`はprofileの記載順で連結し、state directoryへcontent-addressed artifactとして保存します。`~/.codex/AGENTS.md`はこの生成物を参照します。選択元の本文を変更した場合は、profileを再度applyして反映します。
 
 選択したhook packageはprofileの記載順で統合します。hook command内の`{{HOOK_ROOT}}`は、管理対象packageのpathをshell用にquoteした値へ置換します。統合結果はstate directoryへcontent-addressed artifactとして保存し、`~/.codex/hooks.json`から参照します。
 

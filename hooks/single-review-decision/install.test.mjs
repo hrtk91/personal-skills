@@ -16,11 +16,11 @@ test("profileから常時ルールとPR本文guardを導入できる", () => {
     const statePath = join(root, "state.json");
     const codexHome = join(root, "codex");
     writeFileSync(configPath, JSON.stringify({
-      version: 3,
+      version: 4,
       profiles: {
         guarded: {
           skills: [],
-          rules: "personal:single-review-decision",
+          rules: ["personal:single-review-decision"],
           hooks: ["personal:single-review-decision"],
         },
       },
@@ -38,9 +38,13 @@ test("profileから常時ルールとPR本文guardを導入できる", () => {
       stdio: ["ignore", "pipe", "pipe"],
     });
 
-    assert.equal(
+    assert.match(
       realpathSync(join(codexHome, "AGENTS.md")),
-      join(repoRoot, "rules", "single-review-decision", "AGENTS.md"),
+      /artifacts\/agents-[a-f0-9]{64}\.md$/,
+    );
+    assert.match(
+      readFileSync(join(codexHome, "AGENTS.md"), "utf8"),
+      /# 1つのPull Requestで求めるレビュー判断は1つにする/,
     );
     assert.equal(
       realpathSync(join(codexHome, "managed-hooks", "personal", "single-review-decision")),

@@ -36,14 +36,27 @@ export interface HookInfo {
 export interface Profile {
   description?: string;
   skills: string[];
-  rules: string | null;
+  rules: string[];
   hooks: string[];
 }
 
 export interface Config {
-  version: 3;
+  version: 4;
   sources: Record<string, SourceConfig>;
   profiles: Record<string, Profile>;
+}
+
+interface SerializedProfile {
+  description?: string;
+  skills?: string[];
+  rules?: string[] | string | null;
+  hooks?: string[];
+}
+
+interface SerializedConfig {
+  version?: number;
+  sources?: Record<string, SourceConfig>;
+  profiles?: Record<string, SerializedProfile>;
 }
 
 export interface SourceConfig {
@@ -204,7 +217,7 @@ export function writeJsonAtomic(path: string, value: unknown): void {
 
 export function emptyConfig(): Config {
   return {
-    version: 3,
+    version: 4,
     sources: { [defaultSourceId]: { path: defaultSourceRoot } },
     profiles: {},
   };
@@ -223,9 +236,9 @@ export function emptyState(targetDir: string, codexHome: string): State {
 
 export function readConfig(path: string): Config {
   const shouldPersistMigration = existsSync(path);
-  const config = readJson<Partial<Config>>(path, emptyConfig());
+  const config = readJson<SerializedConfig>(path, emptyConfig());
   const version = Number(config.version ?? 1);
-  if (version > 3) throw new Error(`未対応のconfig versionです: ${version}`);
+  if (version > 4) throw new Error(`未対応のconfig versionです: ${version}`);
   const configuredSources = config.sources ?? {};
   const sources: Record<string, SourceConfig> = {
     [defaultSourceId]: { path: defaultSourceRoot },
@@ -242,11 +255,11 @@ export function readConfig(path: string): Config {
     ]),
   );
   const migrated: Config = {
-    version: 3,
+    version: 4,
     sources,
     profiles,
   };
-  if (shouldPersistMigration && version < 3) writeJson(path, migrated);
+  if (shouldPersistMigration && version < 4) writeJson(path, migrated);
   return migrated;
 }
 
@@ -289,14 +302,20 @@ export function normalizeManagedEntry(entry: Partial<ManagedEntry>): ManagedEntr
   };
 }
 
-export function normalizeProfile(profile: Partial<Profile>, name: string): Profile {
+export function normalizeProfile(profile: SerializedProfile, name: string): Profile {
   if (!Array.isArray(profile.skills)) {
     throw new Error(`profile ${name}にskills配列がありません`);
+  }
+  const rules = typeof profile.rules === "string"
+    ? [profile.rules]
+    : profile.rules ?? [];
+  if (!Array.isArray(rules)) {
+    throw new Error(`profile ${name}のrulesは配列である必要があります`);
   }
   return {
     description: profile.description,
     skills: [...new Set(profile.skills.map(normalizeSkillRef))],
-    rules: profile.rules ? normalizeSkillRef(profile.rules) : null,
+    rules: [...new Set(rules.map(normalizeSkillRef))],
     hooks: [...new Set((profile.hooks ?? []).map(normalizeSkillRef))],
   };
 }

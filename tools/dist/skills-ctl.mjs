@@ -121,7 +121,7 @@ function writeJsonAtomic(path, value) {
 }
 function emptyConfig() {
   return {
-    version: 3,
+    version: 4,
     sources: { [defaultSourceId]: { path: defaultSourceRoot } },
     profiles: {}
   };
@@ -140,7 +140,7 @@ function readConfig(path) {
   const shouldPersistMigration = existsSync(path);
   const config = readJson(path, emptyConfig());
   const version = Number(config.version ?? 1);
-  if (version > 3) throw new Error(`\u672A\u5BFE\u5FDC\u306Econfig version\u3067\u3059: ${version}`);
+  if (version > 4) throw new Error(`\u672A\u5BFE\u5FDC\u306Econfig version\u3067\u3059: ${version}`);
   const configuredSources = config.sources ?? {};
   const sources = {
     [defaultSourceId]: { path: defaultSourceRoot },
@@ -157,11 +157,11 @@ function readConfig(path) {
     ])
   );
   const migrated = {
-    version: 3,
+    version: 4,
     sources,
     profiles
   };
-  if (shouldPersistMigration && version < 3) writeJson(path, migrated);
+  if (shouldPersistMigration && version < 4) writeJson(path, migrated);
   return migrated;
 }
 function readState(path, targetDir, codexHome) {
@@ -205,10 +205,14 @@ function normalizeProfile(profile, name) {
   if (!Array.isArray(profile.skills)) {
     throw new Error(`profile ${name}\u306Bskills\u914D\u5217\u304C\u3042\u308A\u307E\u305B\u3093`);
   }
+  const rules = typeof profile.rules === "string" ? [profile.rules] : profile.rules ?? [];
+  if (!Array.isArray(rules)) {
+    throw new Error(`profile ${name}\u306Erules\u306F\u914D\u5217\u3067\u3042\u308B\u5FC5\u8981\u304C\u3042\u308A\u307E\u3059`);
+  }
   return {
     description: profile.description,
     skills: [...new Set(profile.skills.map(normalizeSkillRef))],
-    rules: profile.rules ? normalizeSkillRef(profile.rules) : null,
+    rules: [...new Set(rules.map(normalizeSkillRef))],
     hooks: [...new Set((profile.hooks ?? []).map(normalizeSkillRef))]
   };
 }
@@ -460,6 +464,21 @@ function mergedHooks(selected, packageTargets) {
   }, null, 2)}
 `;
 }
+function mergedRules(selected) {
+  const contents = selected.map((rule) => {
+    try {
+      const content = readFileSync3(rule.source, "utf8");
+      return content.endsWith("\n") ? content : `${content}
+`;
+    } catch (error) {
+      throw new Error(`rules\u3092\u8AAD\u307F\u8FBC\u3081\u307E\u305B\u3093 ${rule.source}: ${String(error)}`);
+    }
+  });
+  const header = "<!-- harnessctl\u304C\u751F\u6210\u3057\u307E\u3057\u305F\u3002\u3053\u306Efile\u3067\u306F\u306A\u304F\u6709\u52B9\u306Aprofile\u3067\u9078\u629E\u3057\u305Frules\u3092\u7DE8\u96C6\u3057\u3066\u304F\u3060\u3055\u3044\u3002 -->";
+  return `${header}
+
+${contents.join("\n")}`;
+}
 function desiredPlan(profile, targetDir, codexHome, statePath, config) {
   const skills = skillMap(config);
   const entries = profile.skills.map((rawRef) => {
@@ -476,16 +495,26 @@ function desiredPlan(profile, targetDir, codexHome, statePath, config) {
       target: join3(targetDir, skill.name)
     };
   });
-  if (profile.rules) {
-    const rules = ruleMap(config).get(profile.rules);
-    if (!rules) throw new Error(`rules\u304C\u898B\u3064\u304B\u308A\u307E\u305B\u3093: ${profile.rules}`);
+  const artifacts = [];
+  const rules = ruleMap(config);
+  const selectedRules = profile.rules.map((rawRef) => {
+    const ref = normalizeSkillRef(rawRef);
+    const rule = rules.get(ref);
+    if (!rule) throw new Error(`rules\u304C\u898B\u3064\u304B\u308A\u307E\u305B\u3093: ${ref}`);
+    return rule;
+  });
+  if (selectedRules.length > 0) {
+    const content = mergedRules(selectedRules);
+    const hash = createHash("sha256").update(content).digest("hex");
+    const source = join3(dirname3(statePath), "artifacts", `agents-${hash}.md`);
+    artifacts.push({ path: source, content });
     entries.push({
       kind: "rules",
       linkType: "file",
-      ref: rules.ref,
-      sourceId: rules.sourceId,
-      name: rules.name,
-      source: rules.source,
+      ref: `generated:${hash}`,
+      sourceId: "generated",
+      name: hash,
+      source,
       target: join3(codexHome, "AGENTS.md")
     });
   }
@@ -509,7 +538,6 @@ function desiredPlan(profile, targetDir, codexHome, statePath, config) {
       target
     });
   }
-  const artifacts = [];
   if (selectedHooks.length > 0) {
     const content = mergedHooks(selectedHooks, packageTargets);
     const hash = createHash("sha256").update(content).digest("hex");
@@ -702,7 +730,7 @@ async function applyProfile(profileName, profile, config, options) {
     managed: state.managed
   };
   for (const artifact of plan.artifacts) {
-    if (!existsSync3(artifact.path)) writeJsonArtifact(artifact);
+    if (!existsSync3(artifact.path)) writeArtifact(artifact);
   }
   applyEntries(desired, state);
   const nextState = {
@@ -720,9 +748,9 @@ async function applyProfile(profileName, profile, config, options) {
     throw error;
   }
   console.log(`profile\u3092\u9069\u7528\u3057\u307E\u3057\u305F: ${profileName}`);
-  if (profile.rules) console.log("\u5E38\u6642\u30EB\u30FC\u30EB\u306F\u6B21\u306ECodex run\u304B\u3089\u6709\u52B9\u3067\u3059");
+  if (profile.rules.length > 0) console.log("\u5E38\u6642\u30EB\u30FC\u30EB\u306F\u6B21\u306ECodex run\u304B\u3089\u6709\u52B9\u3067\u3059");
 }
-function writeJsonArtifact(artifact) {
+function writeArtifact(artifact) {
   mkdirSync2(dirname4(artifact.path), { recursive: true });
   const temporary = `${artifact.path}.${process.pid}.tmp`;
   writeFileSync2(temporary, artifact.content, { mode: 384 });
@@ -877,22 +905,6 @@ async function runMultiPicker(items, message, initialValues = [], prompts = defa
     ...selectedValues.filter((value) => !existing.has(value))
   ];
 }
-async function runSinglePicker(items, message, initialValue = null, prompts = defaultPromptFunctions) {
-  if (items.length === 0) return null;
-  const result = await prompts.autocomplete({
-    message,
-    options: [
-      { value: "", label: "(\u306A\u3057)", hint: "\u9078\u629E\u3092\u89E3\u9664" },
-      ...pickerOptions(items)
-    ],
-    initialValue: initialValue ?? "",
-    maxItems: 8,
-    placeholder: "\u5165\u529B\u3057\u3066\u7D5E\u308A\u8FBC\u307F",
-    filter: filterPickerOption
-  });
-  if (prompts.isCancel(result)) return void 0;
-  return result === "" ? null : result;
-}
 var createProfileValue = "\0create-profile";
 async function runProfilePicker(config, prompts = defaultPromptFunctions) {
   const result = await prompts.autocomplete({
@@ -962,12 +974,12 @@ async function profileTui(profileName, options, prompts = defaultPromptFunctions
     return;
   }
   const rules = [...ruleMap(config).values()];
-  const selectedRules = await runSinglePicker(rules.map((rule) => ({
+  const selectedRules = await runMultiPicker(rules.map((rule) => ({
     ref: rule.ref,
     description: "\u5E38\u6642\u8AAD\u307F\u8FBC\u3080AGENTS.md",
     source: rule.source
-  })), "profile\u3067\u4F7F\u3046\u5E38\u6642\u30EB\u30FC\u30EB", currentProfile?.rules ?? null, prompts);
-  if (selectedRules === void 0) {
+  })), "profile\u306B\u542B\u3081\u308B\u5E38\u6642\u30EB\u30FC\u30EB", currentProfile?.rules ?? [], prompts);
+  if (selectedRules === null) {
     console.log("\u4E2D\u6B62\u3057\u307E\u3057\u305F");
     return;
   }
@@ -1033,7 +1045,7 @@ function printProfileList(config) {
   }
   for (const name of names) {
     const profile = getProfile(config, name);
-    console.log(`${name}	skill ${profile.skills.length}\u4EF6, rules ${profile.rules ? "1" : "0"}\u4EF6, hook ${profile.hooks.length}\u4EF6`);
+    console.log(`${name}	skill ${profile.skills.length}\u4EF6, rules ${profile.rules.length}\u4EF6, hook ${profile.hooks.length}\u4EF6`);
   }
 }
 function printProfile(config, name) {
