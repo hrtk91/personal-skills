@@ -18,6 +18,7 @@ function createResourceSource(root: string): string {
   const source = join(root, "resources");
   mkdirSync(join(source, "skills", "sample-skill"), { recursive: true });
   mkdirSync(join(source, "rules", "sample-policy"), { recursive: true });
+  mkdirSync(join(source, "rules", "second-policy"), { recursive: true });
   mkdirSync(join(source, "hooks", "sample-policy"), { recursive: true });
   writeFileSync(join(source, "skills", "sample-skill", "SKILL.md"), [
     "---",
@@ -27,6 +28,7 @@ function createResourceSource(root: string): string {
     "",
   ].join("\n"));
   writeFileSync(join(source, "rules", "sample-policy", "AGENTS.md"), "# fixture\n");
+  writeFileSync(join(source, "rules", "second-policy", "AGENTS.md"), "# second fixture\n");
   writeFileSync(join(source, "hooks", "sample-policy", "hooks.json"), "{\"hooks\":{}}\n");
   return source;
 }
@@ -70,14 +72,14 @@ test("選んだresourceをprofileへ保存し、保存のみでは導入状態�
     const cliOptions = options(root);
     const receivedOptions: unknown[] = [];
     writeFileSync(cliOptions.configPath, JSON.stringify({
-      version: 3,
+      version: 4,
       sources: { fixture: { path: source } },
       profiles: {},
     }));
 
     await profileTui("safe", cliOptions, scriptedPrompts([
       ["fixture:sample-skill"],
-      "fixture:sample-policy",
+      ["fixture:sample-policy", "fixture:second-policy"],
       ["fixture:sample-policy"],
       false,
     ], undefined, receivedOptions));
@@ -86,7 +88,7 @@ test("選んだresourceをprofileへ保存し、保存のみでは導入状態�
     assert.deepEqual(config.profiles.safe, {
       description: "harnessctlで作成",
       skills: ["fixture:sample-skill"],
-      rules: "fixture:sample-policy",
+      rules: ["fixture:sample-policy", "fixture:second-policy"],
       hooks: ["fixture:sample-policy"],
     });
     assert.equal(existsSync(cliOptions.statePath), false);
@@ -107,14 +109,14 @@ test("適用するを選ぶと保存したprofileをそのまま適用する", a
     const source = createResourceSource(root);
     const cliOptions = options(root);
     writeFileSync(cliOptions.configPath, JSON.stringify({
-      version: 3,
+      version: 4,
       sources: { fixture: { path: source } },
       profiles: {},
     }));
 
     await profileTui("safe", cliOptions, scriptedPrompts([
       ["fixture:sample-skill"],
-      "fixture:sample-policy",
+      ["fixture:sample-policy", "fixture:second-policy"],
       ["fixture:sample-policy"],
       true,
     ]));
@@ -122,36 +124,38 @@ test("適用するを選ぶと保存したprofileをそのまま適用する", a
     const state = JSON.parse(readFileSync(cliOptions.statePath, "utf8"));
     assert.equal(state.activeProfile, "safe");
     const managed = state.managed as Array<{ kind: string; ref: string }>;
-    assert.deepEqual(
-      managed.slice(0, 3).map((entry) => [entry.kind, entry.ref]),
-      [
-        ["skill", "fixture:sample-skill"],
-        ["rules", "fixture:sample-policy"],
-        ["hook-package", "fixture:sample-policy"],
-      ],
-    );
+    assert.deepEqual(managed.slice(0, 3).map((entry) => entry.kind), [
+      "skill",
+      "rules",
+      "hook-package",
+    ]);
+    assert.equal(managed[0].ref, "fixture:sample-skill");
+    assert.match(managed[1].ref, /^generated:[a-f0-9]{64}$/);
+    assert.equal(managed[2].ref, "fixture:sample-policy");
     assert.equal(managed[3].kind, "hook-config");
     assert.match(managed[3].ref, /^generated:[a-f0-9]{64}$/);
     assert.equal(lstatSync(join(cliOptions.targetDir, "sample-skill")).isSymbolicLink(), true);
     assert.equal(lstatSync(join(cliOptions.codexHome, "AGENTS.md")).isSymbolicLink(), true);
     assert.equal(lstatSync(join(cliOptions.codexHome, "hooks.json")).isSymbolicLink(), true);
+    const agents = readFileSync(join(cliOptions.codexHome, "AGENTS.md"), "utf8");
+    assert.ok(agents.indexOf("# fixture") < agents.indexOf("# second fixture"));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("既存profileを編集すると現在のskill・rules・hookが選択済みで表示される", async () => {
+test("既存profileを編集すると現在のskill・複数rules・hookが選択済みで表示される", async () => {
   const root = mkdtempSync(join(tmpdir(), "skillsctl-tui-existing-test-"));
   try {
     const source = createResourceSource(root);
     const cliOptions = options(root);
     writeFileSync(cliOptions.configPath, JSON.stringify({
-      version: 3,
+      version: 4,
       sources: { fixture: { path: source } },
       profiles: {
         safe: {
           skills: ["fixture:sample-skill"],
-          rules: "fixture:sample-policy",
+          rules: ["fixture:sample-policy", "fixture:second-policy"],
           hooks: ["fixture:sample-policy"],
         },
       },
@@ -160,7 +164,7 @@ test("既存profileを編集すると現在のskill・rules・hookが選択済�
 
     await profileTui("safe", cliOptions, scriptedPrompts([
       ["fixture:sample-skill"],
-      "fixture:sample-policy",
+      ["fixture:second-policy", "fixture:sample-policy"],
       ["fixture:sample-policy"],
       false,
     ], undefined, receivedOptions));
@@ -169,9 +173,9 @@ test("既存profileを編集すると現在のskill・rules・hookが選択済�
       (receivedOptions[0] as { initialValues?: string[] }).initialValues,
       ["fixture:sample-skill"],
     );
-    assert.equal(
-      (receivedOptions[1] as { initialValue?: string }).initialValue,
-      "fixture:sample-policy",
+    assert.deepEqual(
+      (receivedOptions[1] as { initialValues?: string[] }).initialValues,
+      ["fixture:second-policy", "fixture:sample-policy"],
     );
     assert.deepEqual(
       (receivedOptions[2] as { initialValues?: string[] }).initialValues,
@@ -280,7 +284,7 @@ test("promptを途中で中止するとprofile設定を変更しない", async (
     const source = createResourceSource(root);
     const cliOptions = options(root);
     const original = JSON.stringify({
-      version: 3,
+      version: 4,
       sources: { fixture: { path: source } },
       profiles: {},
     });
@@ -298,18 +302,18 @@ test("promptを途中で中止するとprofile設定を変更しない", async (
   }
 });
 
-test("なしを選ぶと既存のrulesを解除できる", async () => {
+test("すべて外すと既存のrulesを解除できる", async () => {
   const root = mkdtempSync(join(tmpdir(), "skillsctl-tui-clear-test-"));
   try {
     const source = createResourceSource(root);
     const cliOptions = options(root);
     writeFileSync(cliOptions.configPath, JSON.stringify({
-      version: 3,
+      version: 4,
       sources: { fixture: { path: source } },
       profiles: {
         safe: {
           skills: ["fixture:sample-skill"],
-          rules: "fixture:sample-policy",
+          rules: ["fixture:sample-policy"],
           hooks: ["fixture:sample-policy"],
         },
       },
@@ -317,13 +321,13 @@ test("なしを選ぶと既存のrulesを解除できる", async () => {
 
     await profileTui("safe", cliOptions, scriptedPrompts([
       ["fixture:sample-skill"],
-      "",
+      [],
       [],
       false,
     ]));
 
     const config = JSON.parse(readFileSync(cliOptions.configPath, "utf8"));
-    assert.equal(config.profiles.safe.rules, null);
+    assert.deepEqual(config.profiles.safe.rules, []);
     assert.deepEqual(config.profiles.safe.hooks, []);
   } finally {
     rmSync(root, { recursive: true, force: true });

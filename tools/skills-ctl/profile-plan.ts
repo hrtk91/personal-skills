@@ -6,6 +6,7 @@ import {
   type HookInfo,
   type ManagedEntry,
   type Profile,
+  type RuleInfo,
   normalizeSkillRef,
 } from "./model.ts";
 import { hookMap, ruleMap, skillMap } from "./catalog.ts";
@@ -77,6 +78,19 @@ export function mergedHooks(
   }, null, 2)}\n`;
 }
 
+export function mergedRules(selected: RuleInfo[]): string {
+  const contents = selected.map((rule) => {
+    try {
+      const content = readFileSync(rule.source, "utf8");
+      return content.endsWith("\n") ? content : `${content}\n`;
+    } catch (error) {
+      throw new Error(`rulesを読み込めません ${rule.source}: ${String(error)}`);
+    }
+  });
+  const header = "<!-- harnessctlが生成しました。このfileではなく有効なprofileで選択したrulesを編集してください。 -->";
+  return `${header}\n\n${contents.join("\n")}`;
+}
+
 export function desiredPlan(
   profile: Profile,
   targetDir: string,
@@ -100,16 +114,26 @@ export function desiredPlan(
     };
   });
 
-  if (profile.rules) {
-    const rules = ruleMap(config).get(profile.rules);
-    if (!rules) throw new Error(`rulesが見つかりません: ${profile.rules}`);
+  const artifacts: GeneratedArtifact[] = [];
+  const rules = ruleMap(config);
+  const selectedRules = profile.rules.map((rawRef) => {
+    const ref = normalizeSkillRef(rawRef);
+    const rule = rules.get(ref);
+    if (!rule) throw new Error(`rulesが見つかりません: ${ref}`);
+    return rule;
+  });
+  if (selectedRules.length > 0) {
+    const content = mergedRules(selectedRules);
+    const hash = createHash("sha256").update(content).digest("hex");
+    const source = join(dirname(statePath), "artifacts", `agents-${hash}.md`);
+    artifacts.push({ path: source, content });
     entries.push({
       kind: "rules",
       linkType: "file",
-      ref: rules.ref,
-      sourceId: rules.sourceId,
-      name: rules.name,
-      source: rules.source,
+      ref: `generated:${hash}`,
+      sourceId: "generated",
+      name: hash,
+      source,
       target: join(codexHome, "AGENTS.md"),
     });
   }
@@ -135,7 +159,6 @@ export function desiredPlan(
     });
   }
 
-  const artifacts: GeneratedArtifact[] = [];
   if (selectedHooks.length > 0) {
     const content = mergedHooks(selectedHooks, packageTargets);
     const hash = createHash("sha256").update(content).digest("hex");
