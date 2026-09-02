@@ -40,6 +40,7 @@ function createManagedResourceSource(root: string): string {
   const source = join(root, "managed-resource-source");
   mkdirSync(join(source, "rules", "review-policy"), { recursive: true });
   mkdirSync(join(source, "rules", "release-policy"), { recursive: true });
+  mkdirSync(join(source, "rules", "方針共有ルール"), { recursive: true });
   mkdirSync(join(source, "hooks", "review-policy"), { recursive: true });
   writeFileSync(
     join(source, "rules", "review-policy", "AGENTS.md"),
@@ -48,6 +49,10 @@ function createManagedResourceSource(root: string): string {
   writeFileSync(
     join(source, "rules", "release-policy", "AGENTS.md"),
     "# テスト用リリースルール\n",
+  );
+  writeFileSync(
+    join(source, "rules", "方針共有ルール", "AGENTS.md"),
+    "# 日本語名の常時ルール\n",
   );
   writeFileSync(join(source, "hooks", "review-policy", "noop.mjs"), "process.exit(0);\n");
   writeFileSync(join(source, "hooks", "review-policy", "hooks.json"), JSON.stringify({
@@ -223,6 +228,33 @@ test("profile generates AGENTS.md from multiple rules in order and rolls it back
     assert.equal(realpathSync(join(codexHome, "AGENTS.md")), agentsPath);
     assert.equal(readFileSync(join(codexHome, "AGENTS.md"), "utf8"), agents);
     assert.match(runCli(["status"], root), /有効なprofile: guarded/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("日本語のrules directory name can be selected and applied", () => {
+  const root = mkdtempSync(join(tmpdir(), "personal-skills-ctl-japanese-rule-test-"));
+  try {
+    const resourceSource = createManagedResourceSource(root);
+    writeFileSync(join(root, "profiles.json"), JSON.stringify({
+      version: 4,
+      sources: { fixture: { path: resourceSource } },
+      profiles: {
+        guarded: {
+          skills: [],
+          rules: ["fixture:方針共有ルール"],
+          hooks: [],
+        },
+      },
+    }));
+
+    runCli(["apply", "guarded", "--yes"], root);
+
+    assert.match(
+      readFileSync(join(root, "codex", "AGENTS.md"), "utf8"),
+      /# 日本語名の常時ルール/,
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

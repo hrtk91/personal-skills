@@ -20,7 +20,7 @@ test("profileから常時ルールとPR本文guardを導入できる", () => {
       profiles: {
         guarded: {
           skills: [],
-          rules: ["personal:single-review-decision"],
+          rules: ["personal:レビュー判断を1つにする"],
           hooks: ["personal:single-review-decision"],
         },
       },
