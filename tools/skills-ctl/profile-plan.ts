@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
   type Config,
@@ -78,7 +78,17 @@ export function mergedHooks(
   }, null, 2)}\n`;
 }
 
-export function mergedRules(selected: RuleInfo[]): string {
+export function readBaseAgents(codexHome: string): string {
+  const source = join(codexHome, "AGENTS.md");
+  if (!existsSync(source)) return "";
+  try {
+    return readFileSync(source, "utf8");
+  } catch (error) {
+    throw new Error(`base AGENTS.mdを読み込めません ${source}: ${String(error)}`);
+  }
+}
+
+export function mergedRules(selected: RuleInfo[], baseContent = ""): string {
   const contents = selected.map((rule) => {
     try {
       const content = readFileSync(rule.source, "utf8");
@@ -87,8 +97,13 @@ export function mergedRules(selected: RuleInfo[]): string {
       throw new Error(`rulesを読み込めません ${rule.source}: ${String(error)}`);
     }
   });
-  const header = "<!-- harnessctlが生成しました。このfileではなく有効なprofileで選択したrulesを編集してください。 -->";
-  return `${header}\n\n${contents.join("\n")}`;
+  const header = "<!-- harnessctlが生成しました。このfileを直接編集せず、AGENTS.mdと有効なprofileを編集してください。 -->";
+  const sections = [
+    ...(baseContent.length > 0 ? [baseContent.replace(/\n+$/u, "")] : []),
+    header,
+    ...contents.map((content) => content.replace(/\n+$/u, "")),
+  ];
+  return `${sections.join("\n\n")}\n`;
 }
 
 export function desiredPlan(
@@ -123,7 +138,7 @@ export function desiredPlan(
     return rule;
   });
   if (selectedRules.length > 0) {
-    const content = mergedRules(selectedRules);
+    const content = mergedRules(selectedRules, readBaseAgents(codexHome));
     const hash = createHash("sha256").update(content).digest("hex");
     const source = join(dirname(statePath), "artifacts", `agents-${hash}.md`);
     artifacts.push({ path: source, content });
@@ -134,7 +149,7 @@ export function desiredPlan(
       sourceId: "generated",
       name: hash,
       source,
-      target: join(codexHome, "AGENTS.md"),
+      target: join(codexHome, "AGENTS.override.md"),
     });
   }
 

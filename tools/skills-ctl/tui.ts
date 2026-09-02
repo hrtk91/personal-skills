@@ -271,7 +271,7 @@ export async function profileTui(
   const rules = [...ruleMap(config).values()];
   const selectedRules = await runMultiPicker(rules.map((rule) => ({
     ref: rule.ref,
-    description: "常時読み込むAGENTS.md",
+    description: "AGENTS.mdを土台に生成するAGENTS.override.md",
     source: rule.source,
   })), "profileに含める常時ルール", currentProfile?.rules ?? [], prompts);
   if (selectedRules === null) {

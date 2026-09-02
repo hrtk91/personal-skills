@@ -113,6 +113,8 @@ test("適用するを選ぶと保存したprofileをそのまま適用する", a
       sources: { fixture: { path: source } },
       profiles: {},
     }));
+    mkdirSync(cliOptions.codexHome, { recursive: true });
+    writeFileSync(join(cliOptions.codexHome, "AGENTS.md"), "# base\n");
 
     await profileTui("safe", cliOptions, scriptedPrompts([
       ["fixture:sample-skill"],
@@ -135,9 +137,14 @@ test("適用するを選ぶと保存したprofileをそのまま適用する", a
     assert.equal(managed[3].kind, "hook-config");
     assert.match(managed[3].ref, /^generated:[a-f0-9]{64}$/);
     assert.equal(lstatSync(join(cliOptions.targetDir, "sample-skill")).isSymbolicLink(), true);
-    assert.equal(lstatSync(join(cliOptions.codexHome, "AGENTS.md")).isSymbolicLink(), true);
+    assert.equal(lstatSync(join(cliOptions.codexHome, "AGENTS.md")).isSymbolicLink(), false);
+    assert.equal(
+      lstatSync(join(cliOptions.codexHome, "AGENTS.override.md")).isSymbolicLink(),
+      true,
+    );
     assert.equal(lstatSync(join(cliOptions.codexHome, "hooks.json")).isSymbolicLink(), true);
-    const agents = readFileSync(join(cliOptions.codexHome, "AGENTS.md"), "utf8");
+    const agents = readFileSync(join(cliOptions.codexHome, "AGENTS.override.md"), "utf8");
+    assert.ok(agents.indexOf("# base") < agents.indexOf("# fixture"));
     assert.ok(agents.indexOf("# fixture") < agents.indexOf("# second fixture"));
   } finally {
     rmSync(root, { recursive: true, force: true });
