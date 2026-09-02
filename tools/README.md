@@ -75,7 +75,7 @@ npm run build:cli
   "profiles": {
     "safe": {
       "skills": ["personal:review", "work:company-review"],
-      "rules": ["personal:single-review-decision", "work:team-policy"],
+      "rules": ["personal:レビュー判断を1つにする", "work:team-policy"],
       "hooks": ["work:team-policy"]
     }
   }
@@ -103,6 +103,6 @@ bare名の`review`は`personal:review`として扱います。version 1から3�
 
 ## 同梱する常時ルール
 
-`personal:single-review-decision`は、1つのPull Requestでレビュワーに求める判断を1つに保ちます。同名のhookは、対応している`gh pr create`と本文を変更する`gh pr edit`で、`## レビュワーに求める判断`が1つの段落になっているか確認します。
+`personal:レビュー判断を1つにする`は、1つのPull Requestでレビュワーに求める判断を1つに保ちます。対応する`personal:single-review-decision` hookは、`gh pr create`と本文を変更する`gh pr edit`で、`## レビュワーに求める判断`が1つの段落になっているか確認します。
 
 意味上の判断は常時ルールが担当します。hookの対象外は、GitHub UI/API経由の変更と、段落内容の意味判定です。
