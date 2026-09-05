@@ -26,6 +26,8 @@ description: バックエンドの責務、依存方向、DIとport、外部境�
 
 UseCaseが必要とする外部能力は、UseCase側が定義した狭いportとして明示的に受け取る。portは「何ができるか」を表す契約であり、DIはcomposition rootがその具象実装を供給する仕組みである。具体的なadapter型をUseCaseへ渡すことや、UseCase・Domainが実行時に依存を探すことを基本にしない。
 
+必要な能力と依存方向を明確にすることと、型・クラス・ファイルを増やすことを区別する。必要な入出力を関数型で表せるなら、その関数を受け取る形でもよい。portを設けるためだけにinterface、実装クラス、factoryを一式追加しない。
+
 DB接続、外部client、clock、ID生成器、workerなどの具象依存は、アプリケーションの起動入口やhostに集約して生成・接続・注入する。依存の生成が複雑ならfactoryをcomposition rootの組み立て補助として使ってよいが、UseCaseやDomainからfactory、global registry、service locatorを呼ばない。テストでは、必要なportだけをFakeやStubへ差し替えられるようにする。
 
 portは外部clientのAPIをそのまま写すのではなく、UseCaseが必要とする能力と失敗を表す。読み取り、集計、検索、command側の保存など、必要な能力や整合性が異なる場合は、一つの大きなRepositoryへまとめず分ける。
