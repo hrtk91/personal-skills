@@ -1,6 +1,6 @@
 ---
 name: grok-second-opinion
-description: Grok CLIへ、目的・対象・制約・迷っている点・確認済みの事実を整理して渡し、独立した第二意見を得る。ユーザーが「Grokに相談して」「Grokでレビューして」「Grokならどう思う？」「second opinion」と依頼した時や、一度調査しても設計判断・原因・レビュー結果に迷いが残る時に使う。
+description: Grokへの相談を依頼されたときや、調査後も判断に迷いが残るときに、Grok CLIから独立した第二意見を得る。
 ---
 
 # Grok Second Opinion
