@@ -79,7 +79,7 @@ controller/viewmodelは具体的なadapterではなくportに依存させます�
 
 ## featureの構成
 
-最初のディレクトリ境界を技術ではなく業務featureにする。
+新しく構成を決める場合は、業務featureごとに関連する処理を近くへ置く。既存コードの変更では、その構成と理由を確認し、今回の問題を解決するために必要な範囲で見直す。
 
 ```text
 src/features/
