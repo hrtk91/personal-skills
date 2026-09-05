@@ -1,6 +1,6 @@
 ---
 name: create-pull-request
-description: GitHub Pull Requestを作成・更新する。PR作成、PR本文の修正、gh pr create/edit、HermesやCodexが実装結果をPR化する場面で使用し、日本語のタイトル・本文、概要、背景と目的、検討したが取らなかった選択肢と理由、確認内容を必ず整える。
+description: GitHubのPull Requestを作成・更新し、日本語でレビュー判断、背景、変更内容、確認結果を整える。
 ---
 
 # create-pull-request

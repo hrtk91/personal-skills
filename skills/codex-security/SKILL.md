@@ -1,6 +1,6 @@
 ---
 name: codex-security
-description: OpenAI Codex Security CLIをセットアップし、許可されたコードベースに対して対象選択、脆弱性スキャン、検出結果の検証、修正案のレビュー、再スキャンまで行う。「Codex Securityで見て」「セキュリティスキャン」「脆弱性診断」「リリース前のセキュリティ確認」「認証・認可変更を深く調べて」などの依頼で使う。
+description: Codex Security CLIで、許可されたコードベースの脆弱性を診断し、検出結果の検証・修正・再確認を行う。
 ---
 
 # Codex Security

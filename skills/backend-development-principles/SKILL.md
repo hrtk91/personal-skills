@@ -1,6 +1,6 @@
 ---
 name: backend-development-principles
-description: バックエンドの実装・設計・レビューで、domain/usecase/adapterの責務、依存方向、DIとport、外部境界、状態の所有を整理する。
+description: バックエンドの責務、依存方向、DIとport、外部境界、状態の所有を設計・実装・レビューする際に使う。
 ---
 
 # バックエンド開発

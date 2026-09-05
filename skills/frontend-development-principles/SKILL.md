@@ -1,6 +1,6 @@
 ---
 name: frontend-development-principles
-description: フロントエンドの設計原則。フロントエンドの実装・設計・リファクタリング・レビューを始めるときに参照する。業務状態、discriminated union、reducer、UI境界、副作用の責務分離、非同期処理、状態管理を扱う。
+description: フロントエンドの状態管理、UI境界、副作用、非同期処理の責務を設計・実装・レビューする際に使う。
 ---
 
 # フロントエンド開発
