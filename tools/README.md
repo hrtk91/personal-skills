@@ -74,7 +74,7 @@ npm run build:cli
   },
   "profiles": {
     "safe": {
-      "skills": ["personal:review", "work:company-review"],
+      "skills": ["personal:review-maintainability", "work:company-review"],
       "rules": ["personal:レビュー判断を1つにする", "work:team-policy"],
       "hooks": ["work:team-policy"]
     }
@@ -82,7 +82,7 @@ npm run build:cli
 }
 ```
 
-bare名の`review`は`personal:review`として扱います。version 1から3のconfigを正常に読み込むと、その場でversion 4へ書き換えます。従来の単一rulesは1要素の配列へ変換します。version 1または2のstateも同様にversion 3へ書き換えます。
+bare名の`review-maintainability`は`personal:review-maintainability`として扱います。version 1から3のconfigを正常に読み込むと、その場でversion 4へ書き換えます。従来の単一rulesは1要素の配列へ変換します。version 1または2のstateも同様にversion 3へ書き換えます。
 
 選択したrulesの`AGENTS.md`はprofileの記載順で連結し、`~/.codex/AGENTS.md`の内容を先頭へ加えて、state directoryへcontent-addressed artifactとして保存します。`~/.codex/AGENTS.override.md`はこの生成物を参照します。`AGENTS.md`はharnessctlが変更せず、選択元またはbaseの本文を変更した場合はprofileを再度applyして反映します。
 

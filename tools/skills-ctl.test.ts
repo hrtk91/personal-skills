@@ -73,7 +73,7 @@ test("plan, apply, status, and rollback only manage selected symlinks", () => {
     writeFileSync(join(root, "profiles.json"), JSON.stringify({
       version: 1,
       profiles: {
-        sample: { skills: ["review"] },
+        sample: { skills: ["review-maintainability"] },
         empty: { skills: [] },
       },
     }));
@@ -82,19 +82,19 @@ test("plan, apply, status, and rollback only manage selected symlinks", () => {
 
     const concise = runCli(["skills"], root);
     assert.match(concise, /^personal \(\d+\)$/m);
-    assert.match(concise, /  review/);
-    assert.doesNotMatch(concise, /\/skills\/review/);
+    assert.match(concise, /  review-maintainability/);
+    assert.doesNotMatch(concise, /\/skills\/review-maintainability/);
     assert.match(
       runCli(["skills", "--verbose"], root),
-      /personal:review\t.*\/skills\/review/,
+      /personal:review-maintainability\t.*\/skills\/review-maintainability/,
     );
 
     const plan = runCli(["plan", "sample"], root);
-    assert.match(plan, /\+ link追加 skill personal:review/);
+    assert.match(plan, /\+ link追加 skill personal:review-maintainability/);
 
     runCli(["apply", "sample", "--yes"], root);
-    const target = join(root, "target", "review");
-    assert.equal(realpathSync(target), join(repoRoot, "skills", "review"));
+    const target = join(root, "target", "review-maintainability");
+    assert.equal(realpathSync(target), join(repoRoot, "skills", "review-maintainability"));
     assert.equal(readFileSync(join(root, "target", ".system", "marker"), "utf8"), "keep");
     assert.match(runCli(["status"], root), /有効なprofile: sample/);
 
@@ -103,7 +103,7 @@ test("plan, apply, status, and rollback only manage selected symlinks", () => {
     assert.throws(() => realpathSync(target));
 
     runCli(["rollback", "--yes"], root);
-    assert.equal(realpathSync(target), join(repoRoot, "skills", "review"));
+    assert.equal(realpathSync(target), join(repoRoot, "skills", "review-maintainability"));
     assert.match(runCli(["status"], root), /有効なprofile: sample/);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -116,7 +116,7 @@ test("registers a source and applies namespaced skills", () => {
     const extraRepo = join(root, "work-skills-repo");
     const extraSkills = join(extraRepo, "skills");
     mkdirSync(join(extraSkills, "company-review"), { recursive: true });
-    mkdirSync(join(extraSkills, "review"), { recursive: true });
+    mkdirSync(join(extraSkills, "review-maintainability"), { recursive: true });
     writeFileSync(join(extraSkills, "company-review", "SKILL.md"), [
       "---",
       "name: company-review",
@@ -124,9 +124,9 @@ test("registers a source and applies namespaced skills", () => {
       "---",
       "",
     ].join("\n"));
-    writeFileSync(join(extraSkills, "review", "SKILL.md"), [
+    writeFileSync(join(extraSkills, "review-maintainability", "SKILL.md"), [
       "---",
-      "name: review",
+      "name: review-maintainability",
       "description: Another review skill",
       "---",
       "",
@@ -143,19 +143,19 @@ test("registers a source and applies namespaced skills", () => {
       profiles: Record<string, { skills: string[] }>;
     };
     config.profiles = {
-      multi: { skills: ["personal:review", "work:company-review"] },
-      collision: { skills: ["personal:review", "work:review"] },
+      multi: { skills: ["personal:review-maintainability", "work:company-review"] },
+      collision: { skills: ["personal:review-maintainability", "work:review-maintainability"] },
     };
     writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
 
     const plan = runCli(["plan", "multi"], root);
-    assert.match(plan, /\+ link追加 skill personal:review/);
+    assert.match(plan, /\+ link追加 skill personal:review-maintainability/);
     assert.match(plan, /\+ link追加 skill work:company-review/);
 
     runCli(["apply", "multi", "--yes"], root);
     assert.equal(
-      realpathSync(join(root, "target", "review")),
-      join(repoRoot, "skills", "review"),
+      realpathSync(join(root, "target", "review-maintainability")),
+      join(repoRoot, "skills", "review-maintainability"),
     );
     assert.equal(
       realpathSync(join(root, "target", "company-review")),
@@ -180,7 +180,7 @@ test("profile generates AGENTS.override.md from base AGENTS.md and multiple rule
       sources: { fixture: { path: resourceSource } },
       profiles: {
         guarded: {
-          skills: ["review"],
+          skills: ["review-maintainability"],
           rules: ["fixture:review-policy", "fixture:release-policy"],
           hooks: ["fixture:review-policy"],
         },
@@ -373,7 +373,7 @@ test("automatically persists legacy config as v4 and legacy state as v3", () => 
       profiles: {
         legacy: {
           description: "legacy profile",
-          skills: ["review", "review"],
+          skills: ["review-maintainability", "review-maintainability"],
         },
       },
     }));
@@ -383,9 +383,9 @@ test("automatically persists legacy config as v4 and legacy state as v3", () => 
       targetDir: join(root, "target"),
       activeProfile: "legacy",
       managed: [{
-        ref: "review",
-        source: join(repoRoot, "skills", "review"),
-        target: join(root, "target", "review"),
+        ref: "review-maintainability",
+        source: join(repoRoot, "skills", "review-maintainability"),
+        target: join(root, "target", "review-maintainability"),
       }],
       history: [],
     }));
@@ -398,7 +398,7 @@ test("automatically persists legacy config as v4 and legacy state as v3", () => 
     assert.equal(config.sources.personal.path, repoRoot);
     assert.deepEqual(config.profiles.legacy, {
       description: "legacy profile",
-      skills: ["personal:review"],
+      skills: ["personal:review-maintainability"],
       rules: [],
       hooks: [],
     });
@@ -409,11 +409,11 @@ test("automatically persists legacy config as v4 and legacy state as v3", () => 
     assert.deepEqual(state.managed[0], {
       kind: "skill",
       linkType: "dir",
-      ref: "personal:review",
+      ref: "personal:review-maintainability",
       sourceId: "personal",
-      name: "review",
-      source: join(repoRoot, "skills", "review"),
-      target: join(root, "target", "review"),
+      name: "review-maintainability",
+      source: join(repoRoot, "skills", "review-maintainability"),
+      target: join(root, "target", "review-maintainability"),
     });
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -517,19 +517,19 @@ test("restores the previous links when the atomic state write fails", () => {
     writeFileSync(join(root, "profiles.json"), JSON.stringify({
       version: 4,
       profiles: {
-        selected: { skills: ["personal:review"] },
+        selected: { skills: ["personal:review-maintainability"] },
         empty: { skills: [] },
       },
     }));
     runCli(["apply", "selected", "--yes"], root);
-    const target = join(root, "target", "review");
-    assert.equal(realpathSync(target), join(repoRoot, "skills", "review"));
+    const target = join(root, "target", "review-maintainability");
+    assert.equal(realpathSync(target), join(repoRoot, "skills", "review-maintainability"));
 
     chmodSync(root, 0o500);
     assert.throws(() => runCli(["apply", "empty", "--yes"], root), /read-only|permission|EACCES/i);
     chmodSync(root, 0o700);
 
-    assert.equal(realpathSync(target), join(repoRoot, "skills", "review"));
+    assert.equal(realpathSync(target), join(repoRoot, "skills", "review-maintainability"));
     assert.match(runCli(["status"], root), /有効なprofile: selected/);
   } finally {
     chmodSync(root, 0o700);
