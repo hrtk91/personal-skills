@@ -28,7 +28,7 @@ case作成だけを依頼された場合は、原則としてfailure hypothesis�
 
 2. **失敗原因を一つに決め打ちしない**
    - `benchmarks/hypotheses/TEMPLATE.md` を使い、競合する原因仮説を置く。
-   - 個別案件の問題設定を問い直し、原因候補を広く発散・反証する必要がある場合は `hypothesis-framing` を使う。このskillは、観測を固定evalへ育てて介入を比較する段階を担当する。
+   - 観測を説明できる別の原因候補と、それらを見分ける確認を整理してから、固定evalへ育てて介入を比較する。
    - 少なくとも、モデル能力、context探索不足、taskの曖昧さ、project固有前提、tool/環境、既存skillの副作用を候補として検討する。
    - 各仮説について「真なら何が起きるか」「何が出れば反証されるか」を書く。
 
@@ -78,5 +78,5 @@ case作成だけを依頼された場合は、原則としてfailure hypothesis�
 - 同種の失敗が再発した場合、または高重要度ならfailure hypothesisと識別evalへ進む。
 - 介入を変更したら、対象ケースだけでなく小さなregression setも再実行する。
 - モデルを変更したらsmoke caseと過去の高重要度caseを再実行し、skillなしでも改善しているなら不要になったskillを削る候補にする。
-- `skill-observation-recorder` 自身も推定器として扱い、人手でラベルしたsession集合に対するprecision / recallを定期的に確認する。
+- 観測の収集に自動判定を使う場合は、その判定も推定器として扱い、人手でラベルしたsession集合に対するprecision / recallを定期的に確認する。
 - benchmark自体の整備コストが介入の効果を上回らないよう、ケースは少数から始める。
