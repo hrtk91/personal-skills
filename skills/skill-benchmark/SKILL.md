@@ -1,6 +1,6 @@
 ---
 name: skill-benchmark
-description: skillやAGENTS.mdなどの介入前後を固定ケースで比較し、効果と回帰を検証する。実運用の失敗やskill-observation-recorderの観測を整理してfailure hypothesisを作る、過去の指摘をeval化する、benchmark case候補を作る・固定caseへ昇格する、bare modelで再現性を確かめてbaseline/treatmentを比較するときに使う。「最近の失敗からケースを作る」「この指摘をevalにする」「observationを検証ケース化する」といった依頼にも使う。
+description: AIの失敗事例を固定評価ケースにし、skillやAGENTS.mdの変更前後で効果と回帰を比較する。
 ---
 
 # Skill benchmark
@@ -28,7 +28,6 @@ case作成だけを依頼された場合は、原則としてfailure hypothesis�
 
 2. **失敗原因を一つに決め打ちしない**
    - `benchmarks/hypotheses/TEMPLATE.md` を使い、競合する原因仮説を置く。
-   - 個別案件の問題設定を問い直し、原因候補を広く発散・反証する必要がある場合は `hypothesis-framing` を使う。このskillは、観測を固定evalへ育てて介入を比較する段階を担当する。
    - 少なくとも、モデル能力、context探索不足、taskの曖昧さ、project固有前提、tool/環境、既存skillの副作用を候補として検討する。
    - 各仮説について「真なら何が起きるか」「何が出れば反証されるか」を書く。
 
@@ -78,5 +77,5 @@ case作成だけを依頼された場合は、原則としてfailure hypothesis�
 - 同種の失敗が再発した場合、または高重要度ならfailure hypothesisと識別evalへ進む。
 - 介入を変更したら、対象ケースだけでなく小さなregression setも再実行する。
 - モデルを変更したらsmoke caseと過去の高重要度caseを再実行し、skillなしでも改善しているなら不要になったskillを削る候補にする。
-- `skill-observation-recorder` 自身も推定器として扱い、人手でラベルしたsession集合に対するprecision / recallを定期的に確認する。
+- 観測の収集に自動判定を使う場合は、その判定も推定器として扱い、人手でラベルしたsession集合に対するprecision / recallを定期的に確認する。
 - benchmark自体の整備コストが介入の効果を上回らないよう、ケースは少数から始める。

@@ -2,7 +2,7 @@
 
 AIエージェントに、作業の進め方や判断基準を追加するための個人用スキル集です。
 
-コードレビュー、調査、文章作成、開発環境の運用など、繰り返し使う手順を `skills/` にまとめています。Codex、Claude Code、一部のスキルはHermesから利用できます。
+コードレビュー、調査、文章作成、開発環境の運用など、繰り返し使う手順を `skills/` にまとめています。Codex、Claude Code、一部のスキルはHermesから利用できます。`harnessctl` のprofileでは、選択skillに加えて常時ルールとCodex hookも管理できます。
 
 ## 使い方
 
@@ -29,8 +29,10 @@ Windows PowerShell:
 | スキル | 概要 |
 | --- | --- |
 | `ai-dev-workflow` | AIによる実装を、worktree、品質確認、再試行、通知まで含む作業フローにします。 |
+| `backend-development-principles` | domain、usecase、adapterの責務、依存方向、DI/port、境界、状態所有からバックエンドを設計します。 |
 | `comment-processing-order` | 複数段階の処理に、順序が分かるコメントを付けます。 |
 | `design-review` | 実装前の設計案を、目的、必須条件、変更容易性、失敗時の挙動から独立subagentにレビューさせます。 |
+| `explain-change-impact` | 実装前・途中・完了時に、変更前後の動作、影響する箇所、確認結果を説明します。 |
 | `fracta` | git worktree、Lima VM、Docker Composeを使う開発環境を操作します。 |
 | `frontend-development-principles` | 状態、UI、副作用の責務を整理してフロントエンドを設計します。 |
 | `hypothesis-framing` | 問題設定を問い直し、独立した仮説の発散・反証・最小検証を進めます。事実収集や差分反証そのものには使いません。 |
@@ -97,4 +99,6 @@ Windows PowerShell:
 - `benchmarks/`: observation、失敗原因の仮説、固定eval case、介入比較の結果
 - `commands/`: Claude Codeのカスタムコマンド
 - `hooks/`: セッション記録やコマンド実行前の確認などのhook
+- `rules/`: profileから`AGENTS.override.md`へ常時導入するCodexルール
 - `scripts/`: スキルと設定を各ツールへ反映するスクリプト
+- `tools/`: skill・常時ルール・hookをprofile単位で導入する`harnessctl`
