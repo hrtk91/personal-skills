@@ -2,6 +2,7 @@ import { strict as assert } from "node:assert";
 import { execFileSync } from "node:child_process";
 import {
   chmodSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -170,7 +171,7 @@ test("registers a source and applies namespaced skills", () => {
   }
 });
 
-test("profile generates AGENTS.md from multiple rules in order and rolls it back with other resources", () => {
+test("profile generates AGENTS.override.md from base AGENTS.md and multiple rules", () => {
   const root = mkdtempSync(join(tmpdir(), "personal-skills-ctl-resources-test-"));
   try {
     const resourceSource = createManagedResourceSource(root);
@@ -186,6 +187,9 @@ test("profile generates AGENTS.md from multiple rules in order and rolls it back
         empty: { skills: [] },
       },
     }));
+    const codexHome = join(root, "codex");
+    mkdirSync(codexHome, { recursive: true });
+    writeFileSync(join(codexHome, "AGENTS.md"), "# テスト用base\n");
 
     const plan = runCli(["plan", "guarded"], root);
     assert.match(plan, /link追加 rules generated:[a-f0-9]{64}/);
@@ -194,11 +198,15 @@ test("profile generates AGENTS.md from multiple rules in order and rolls it back
     assert.throws(() => realpathSync(join(root, "artifacts")));
 
     runCli(["apply", "guarded", "--yes"], root);
-    const codexHome = join(root, "codex");
-    const agentsPath = realpathSync(join(codexHome, "AGENTS.md"));
+    const agentsPath = realpathSync(join(codexHome, "AGENTS.override.md"));
     assert.match(agentsPath, /artifacts\/agents-[a-f0-9]{64}\.md$/);
-    const agents = readFileSync(join(codexHome, "AGENTS.md"), "utf8");
+    assert.equal(lstatSync(join(codexHome, "AGENTS.md")).isSymbolicLink(), false);
+    assert.equal(readFileSync(join(codexHome, "AGENTS.md"), "utf8"), "# テスト用base\n");
+    const agents = readFileSync(join(codexHome, "AGENTS.override.md"), "utf8");
     assert.match(agents, /harnessctlが生成しました/);
+    assert.ok(
+      agents.indexOf("# テスト用base") < agents.indexOf("# テスト用常時ルール"),
+    );
     assert.ok(
       agents.indexOf("# テスト用常時ルール") < agents.indexOf("# テスト用リリースルール"),
     );
@@ -221,12 +229,13 @@ test("profile generates AGENTS.md from multiple rules in order and rolls it back
     assert.match(runCli(["status"], root), /ok\trules\tgenerated:[a-f0-9]{64}/);
 
     runCli(["apply", "empty", "--yes"], root);
-    assert.throws(() => realpathSync(join(codexHome, "AGENTS.md")));
+    assert.throws(() => realpathSync(join(codexHome, "AGENTS.override.md")));
+    assert.equal(readFileSync(join(codexHome, "AGENTS.md"), "utf8"), "# テスト用base\n");
     assert.throws(() => realpathSync(join(codexHome, "hooks.json")));
 
     runCli(["rollback", "--yes"], root);
-    assert.equal(realpathSync(join(codexHome, "AGENTS.md")), agentsPath);
-    assert.equal(readFileSync(join(codexHome, "AGENTS.md"), "utf8"), agents);
+    assert.equal(realpathSync(join(codexHome, "AGENTS.override.md")), agentsPath);
+    assert.equal(readFileSync(join(codexHome, "AGENTS.override.md"), "utf8"), agents);
     assert.match(runCli(["status"], root), /有効なprofile: guarded/);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -252,7 +261,7 @@ test("日本語のrules directory name can be selected and applied", () => {
     runCli(["apply", "guarded", "--yes"], root);
 
     assert.match(
-      readFileSync(join(root, "codex", "AGENTS.md"), "utf8"),
+      readFileSync(join(root, "codex", "AGENTS.override.md"), "utf8"),
       /# 日本語名の常時ルール/,
     );
   } finally {
@@ -260,7 +269,7 @@ test("日本語のrules directory name can be selected and applied", () => {
   }
 });
 
-test("refuses unmanaged global files and an overriding AGENTS file before apply", () => {
+test("allows a user-owned AGENTS.md and refuses an unmanaged override or hooks file", () => {
   const root = mkdtempSync(join(tmpdir(), "personal-skills-ctl-conflict-test-"));
   try {
     const resourceSource = createManagedResourceSource(root);
@@ -278,16 +287,68 @@ test("refuses unmanaged global files and an overriding AGENTS file before apply"
     const codexHome = join(root, "codex");
     mkdirSync(codexHome, { recursive: true });
     writeFileSync(join(codexHome, "AGENTS.md"), "user owned\n");
-    assert.throws(() => runCli(["plan", "guarded"], root), /既存の通常fileまたはdirectoryが導入を妨げています/);
-    rmSync(join(codexHome, "AGENTS.md"));
+    assert.match(runCli(["plan", "guarded"], root), /link追加 rules generated:/);
 
     writeFileSync(join(codexHome, "AGENTS.override.md"), "override\n");
-    assert.throws(() => runCli(["plan", "guarded"], root), /AGENTS\.override\.mdが常時ルールを無効にします/);
+    assert.throws(() => runCli(["plan", "guarded"], root), /既存の通常fileまたはdirectoryが導入を妨げています/);
     rmSync(join(codexHome, "AGENTS.override.md"));
 
     writeFileSync(join(codexHome, "hooks.json"), "{}\n");
     assert.throws(() => runCli(["plan", "guarded"], root), /既存の通常fileまたはdirectoryが導入を妨げています/);
-    assert.throws(() => realpathSync(join(codexHome, "AGENTS.md")));
+    assert.equal(readFileSync(join(codexHome, "AGENTS.md"), "utf8"), "user owned\n");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("detaches the legacy AGENTS.md rules entry after the base becomes user-owned", () => {
+  const root = mkdtempSync(join(tmpdir(), "personal-skills-ctl-legacy-rules-test-"));
+  try {
+    const resourceSource = createManagedResourceSource(root);
+    const codexHome = join(root, "codex");
+    mkdirSync(codexHome, { recursive: true });
+    writeFileSync(join(codexHome, "AGENTS.md"), "base from override\n");
+    writeFileSync(join(root, "profiles.json"), JSON.stringify({
+      version: 4,
+      sources: { fixture: { path: resourceSource } },
+      profiles: {
+        guarded: {
+          skills: [],
+          rules: ["fixture:review-policy"],
+          hooks: [],
+        },
+      },
+    }));
+    writeFileSync(join(root, "state.json"), JSON.stringify({
+      version: 3,
+      codexHome,
+      targetDir: join(codexHome, "skills"),
+      activeProfile: "guarded",
+      managed: [{
+        kind: "rules",
+        linkType: "file",
+        ref: "generated:legacy",
+        sourceId: "generated",
+        name: "legacy",
+        source: join(root, "legacy-agents.md"),
+        target: join(codexHome, "AGENTS.md"),
+      }],
+      history: [],
+    }));
+
+    runCli(["apply", "guarded", "--yes"], root);
+
+    assert.equal(lstatSync(join(codexHome, "AGENTS.md")).isSymbolicLink(), false);
+    assert.equal(readFileSync(join(codexHome, "AGENTS.md"), "utf8"), "base from override\n");
+    assert.equal(lstatSync(join(codexHome, "AGENTS.override.md")).isSymbolicLink(), true);
+    const state = JSON.parse(readFileSync(join(root, "state.json"), "utf8")) as {
+      managed: Array<{ kind: string; target: string }>;
+      history: Array<{ managed: Array<{ target: string }> }>;
+    };
+    assert.ok(state.managed.every((entry) => entry.target !== join(codexHome, "AGENTS.md")));
+    assert.ok(state.history.every((backup) => backup.managed.every(
+      (entry) => entry.target !== join(codexHome, "AGENTS.md"),
+    )));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

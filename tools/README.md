@@ -9,7 +9,7 @@ Node.js 24以降が必要です。外部CLIは必要ありません。
 1つのprofileで、次の3種類を独立して選択します。
 
 - `~/.codex/skills`へ導入するskill
-- `~/.codex/AGENTS.md`へまとめて導入する常時ルール
+- `~/.codex/AGENTS.override.md`へまとめて導入する常時ルール（`AGENTS.md`を土台に生成）
 - `~/.codex/hooks.json`へ統合するCodex hook package
 
 skillからrulesやhookを暗黙に導入することはありません。複数のsourceを登録し、`source-id:resource-name`形式でresourceを選択します。
@@ -84,7 +84,7 @@ npm run build:cli
 
 bare名の`review`は`personal:review`として扱います。version 1から3のconfigを正常に読み込むと、その場でversion 4へ書き換えます。従来の単一rulesは1要素の配列へ変換します。version 1または2のstateも同様にversion 3へ書き換えます。
 
-選択したrulesの`AGENTS.md`はprofileの記載順で連結し、state directoryへcontent-addressed artifactとして保存します。`~/.codex/AGENTS.md`はこの生成物を参照します。選択元の本文を変更した場合は、profileを再度applyして反映します。
+選択したrulesの`AGENTS.md`はprofileの記載順で連結し、`~/.codex/AGENTS.md`の内容を先頭へ加えて、state directoryへcontent-addressed artifactとして保存します。`~/.codex/AGENTS.override.md`はこの生成物を参照します。`AGENTS.md`はharnessctlが変更せず、選択元またはbaseの本文を変更した場合はprofileを再度applyして反映します。
 
 選択したhook packageはprofileの記載順で統合します。hook command内の`{{HOOK_ROOT}}`は、管理対象packageのpathをshell用にquoteした値へ置換します。統合結果はstate directoryへcontent-addressed artifactとして保存し、`~/.codex/hooks.json`から参照します。
 
@@ -94,8 +94,8 @@ bare名の`review`は`personal:review`として扱います。version 1から3�
 - 導入状態とrollback履歴: `${XDG_STATE_HOME:-~/.local/state}/personal-skills/state.json`
 - 既存の通常fileやdirectoryは上書きしません。
 - 管理外symlinkは削除せず、衝突として停止します。
-- 管理外の`~/.codex/AGENTS.md`と`~/.codex/hooks.json`は統合も上書きもしません。
-- `~/.codex/AGENTS.override.md`がある場合、常時ルールが無効になるため停止します。
+- `~/.codex/AGENTS.md`は読み取り専用のbaseとして扱い、統合も上書きもしません。
+- `~/.codex/AGENTS.override.md`は常時ルールの生成物として管理し、管理外の通常fileやdirectoryがある場合は上書きせず停止します。
 - 同名skillが同じ導入先を要求した場合、暗黙に一方を選ばず停止します。
 - `.system`は選択・削除しません。
 

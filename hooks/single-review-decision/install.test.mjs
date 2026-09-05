@@ -39,11 +39,11 @@ test("profileから常時ルールとPR本文guardを導入できる", () => {
     });
 
     assert.match(
-      realpathSync(join(codexHome, "AGENTS.md")),
+      realpathSync(join(codexHome, "AGENTS.override.md")),
       /artifacts\/agents-[a-f0-9]{64}\.md$/,
     );
     assert.match(
-      readFileSync(join(codexHome, "AGENTS.md"), "utf8"),
+      readFileSync(join(codexHome, "AGENTS.override.md"), "utf8"),
       /# 1つのPull Requestで求めるレビュー判断は1つにする/,
     );
     assert.equal(

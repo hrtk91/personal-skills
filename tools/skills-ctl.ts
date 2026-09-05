@@ -11,6 +11,7 @@ import { addSource, printSourceList } from "./skills-ctl/catalog.ts";
 import { desiredPlan } from "./skills-ctl/profile-plan.ts";
 import {
   applyProfile,
+  detachLegacyRulesEntries,
   inspectStatus,
   printPlan,
   rollback,
@@ -83,9 +84,16 @@ async function main(): Promise<void> {
         const state = readState(options.statePath, options.targetDir, options.codexHome);
         state.targetDir = resolve(options.targetDir);
         state.codexHome = resolve(options.codexHome);
-        const plan = desiredPlan(profile, state.targetDir, state.codexHome, options.statePath, config);
-        validatePlan(plan.entries, state, state.targetDir);
-        printPlan(plan.entries, state);
+        const migratedState = detachLegacyRulesEntries(state);
+        const plan = desiredPlan(
+          profile,
+          migratedState.targetDir,
+          migratedState.codexHome,
+          options.statePath,
+          config,
+        );
+        validatePlan(plan.entries, migratedState, migratedState.targetDir);
+        printPlan(plan.entries, migratedState);
         return;
       }
       await applyProfile(name, profile, config, options);

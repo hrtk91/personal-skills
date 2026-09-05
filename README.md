@@ -98,6 +98,6 @@ Windows PowerShell:
 - `benchmarks/`: observation、失敗原因の仮説、固定eval case、介入比較の結果
 - `commands/`: Claude Codeのカスタムコマンド
 - `hooks/`: セッション記録やコマンド実行前の確認などのhook
-- `rules/`: profileから常時導入するCodexの`AGENTS.md`
+- `rules/`: profileから`AGENTS.override.md`へ常時導入するCodexルール
 - `scripts/`: スキルと設定を各ツールへ反映するスクリプト
 - `tools/`: skill・常時ルール・hookをprofile単位で導入する`harnessctl`

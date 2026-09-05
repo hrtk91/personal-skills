@@ -411,7 +411,7 @@ function printSourceList(config) {
 
 // tools/skills-ctl/profile-plan.ts
 import { createHash } from "node:crypto";
-import { readFileSync as readFileSync3 } from "node:fs";
+import { existsSync as existsSync3, readFileSync as readFileSync3 } from "node:fs";
 import { dirname as dirname3, join as join3 } from "node:path";
 function shellQuote(value) {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
@@ -464,7 +464,16 @@ function mergedHooks(selected, packageTargets) {
   }, null, 2)}
 `;
 }
-function mergedRules(selected) {
+function readBaseAgents(codexHome) {
+  const source = join3(codexHome, "AGENTS.md");
+  if (!existsSync3(source)) return "";
+  try {
+    return readFileSync3(source, "utf8");
+  } catch (error) {
+    throw new Error(`base AGENTS.md\u3092\u8AAD\u307F\u8FBC\u3081\u307E\u305B\u3093 ${source}: ${String(error)}`);
+  }
+}
+function mergedRules(selected, baseContent = "") {
   const contents = selected.map((rule) => {
     try {
       const content = readFileSync3(rule.source, "utf8");
@@ -474,10 +483,14 @@ function mergedRules(selected) {
       throw new Error(`rules\u3092\u8AAD\u307F\u8FBC\u3081\u307E\u305B\u3093 ${rule.source}: ${String(error)}`);
     }
   });
-  const header = "<!-- harnessctl\u304C\u751F\u6210\u3057\u307E\u3057\u305F\u3002\u3053\u306Efile\u3067\u306F\u306A\u304F\u6709\u52B9\u306Aprofile\u3067\u9078\u629E\u3057\u305Frules\u3092\u7DE8\u96C6\u3057\u3066\u304F\u3060\u3055\u3044\u3002 -->";
-  return `${header}
-
-${contents.join("\n")}`;
+  const header = "<!-- harnessctl\u304C\u751F\u6210\u3057\u307E\u3057\u305F\u3002\u3053\u306Efile\u3092\u76F4\u63A5\u7DE8\u96C6\u305B\u305A\u3001AGENTS.md\u3068\u6709\u52B9\u306Aprofile\u3092\u7DE8\u96C6\u3057\u3066\u304F\u3060\u3055\u3044\u3002 -->";
+  const sections = [
+    ...baseContent.length > 0 ? [baseContent.replace(/\n+$/u, "")] : [],
+    header,
+    ...contents.map((content) => content.replace(/\n+$/u, ""))
+  ];
+  return `${sections.join("\n\n")}
+`;
 }
 function desiredPlan(profile, targetDir, codexHome, statePath, config) {
   const skills = skillMap(config);
@@ -504,7 +517,7 @@ function desiredPlan(profile, targetDir, codexHome, statePath, config) {
     return rule;
   });
   if (selectedRules.length > 0) {
-    const content = mergedRules(selectedRules);
+    const content = mergedRules(selectedRules, readBaseAgents(codexHome));
     const hash = createHash("sha256").update(content).digest("hex");
     const source = join3(dirname3(statePath), "artifacts", `agents-${hash}.md`);
     artifacts.push({ path: source, content });
@@ -515,7 +528,7 @@ function desiredPlan(profile, targetDir, codexHome, statePath, config) {
       sourceId: "generated",
       name: hash,
       source,
-      target: join3(codexHome, "AGENTS.md")
+      target: join3(codexHome, "AGENTS.override.md")
     });
   }
   const hooks = hookMap(config);
@@ -558,7 +571,7 @@ function desiredPlan(profile, targetDir, codexHome, statePath, config) {
 
 // tools/skills-ctl/activation.ts
 import {
-  existsSync as existsSync3,
+  existsSync as existsSync4,
   mkdirSync as mkdirSync2,
   readlinkSync,
   renameSync as renameSync2,
@@ -582,6 +595,28 @@ function isSymlinkTo(path, source) {
 function managedEntryFor(state, target) {
   return state.managed.find((entry) => entry.target === target);
 }
+function detachLegacyRulesEntries(state) {
+  const legacyTarget = join4(resolve3(state.codexHome), "AGENTS.md");
+  const isLegacyRulesEntry = (entry) => entry.kind === "rules" && resolve3(entry.target) === legacyTarget;
+  const hasLegacyEntry = state.managed.some(isLegacyRulesEntry) || state.history.some((backup) => backup.managed.some(isLegacyRulesEntry));
+  if (!hasLegacyEntry) return state;
+  const stat = safeLstat(legacyTarget);
+  if (stat?.isSymbolicLink()) {
+    throw new Error(`\u65E7rules\u7BA1\u7406\u5BFE\u8C61\u306EAGENTS.md\u3092\u5B9F\u30D5\u30A1\u30A4\u30EB\u3078\u79FB\u884C\u3057\u3066\u304B\u3089\u9069\u7528\u3057\u3066\u304F\u3060\u3055\u3044: ${legacyTarget}`);
+  }
+  if (stat && !stat.isFile()) {
+    throw new Error(`AGENTS.md\u306F\u901A\u5E38file\u3067\u3042\u308B\u5FC5\u8981\u304C\u3042\u308A\u307E\u3059: ${legacyTarget}`);
+  }
+  const withoutLegacy = (entries) => entries.filter((entry) => !isLegacyRulesEntry(entry));
+  return {
+    ...state,
+    managed: withoutLegacy(state.managed),
+    history: state.history.map((backup) => ({
+      ...backup,
+      managed: withoutLegacy(backup.managed)
+    }))
+  };
+}
 function validatePlan(desired, state, targetDir) {
   if (desired.some((entry) => entry.name === ".system")) {
     throw new Error(".system\u306F\u4FDD\u8B77\u5BFE\u8C61\u306E\u305F\u3081\u7BA1\u7406\u3067\u304D\u307E\u305B\u3093");
@@ -596,12 +631,6 @@ function validatePlan(desired, state, targetDir) {
       );
     }
     targetOwners.set(entry.target, entry);
-  }
-  if (desired.some((entry) => entry.kind === "rules")) {
-    const override = join4(state.codexHome, "AGENTS.override.md");
-    if (safeLstat(override)) {
-      throw new Error(`AGENTS.override.md\u304C\u5E38\u6642\u30EB\u30FC\u30EB\u3092\u7121\u52B9\u306B\u3057\u307E\u3059: ${override}`);
-    }
   }
   for (const entry of desired) {
     const stat = safeLstat(entry.target);
@@ -627,7 +656,7 @@ function validateManagedTarget(entry, state, targetDir) {
   const target = resolve3(entry.target);
   const codexHome = resolve3(state.codexHome);
   if (entry.kind === "skill" && dirname4(target) === resolve3(targetDir)) return;
-  if (entry.kind === "rules" && target === join4(codexHome, "AGENTS.md")) return;
+  if (entry.kind === "rules" && target === join4(codexHome, "AGENTS.override.md")) return;
   if (entry.kind === "hook-config" && target === join4(codexHome, "hooks.json")) return;
   const hookRoot = join4(codexHome, "managed-hooks");
   if (entry.kind === "hook-package" && target.startsWith(`${hookRoot}/`)) return;
@@ -707,9 +736,10 @@ function applyEntries(desired, state) {
   }
 }
 async function applyProfile(profileName, profile, config, options) {
-  const state = readState(options.statePath, options.targetDir, options.codexHome);
+  let state = readState(options.statePath, options.targetDir, options.codexHome);
   state.targetDir = resolve3(options.targetDir);
   state.codexHome = resolve3(options.codexHome);
+  state = detachLegacyRulesEntries(state);
   const plan = desiredPlan(profile, state.targetDir, state.codexHome, options.statePath, config);
   const desired = plan.entries;
   validatePlan(desired, state, state.targetDir);
@@ -730,7 +760,7 @@ async function applyProfile(profileName, profile, config, options) {
     managed: state.managed
   };
   for (const artifact of plan.artifacts) {
-    if (!existsSync3(artifact.path)) writeArtifact(artifact);
+    if (!existsSync4(artifact.path)) writeArtifact(artifact);
   }
   applyEntries(desired, state);
   const nextState = {
@@ -764,12 +794,15 @@ function inspectStatus(state) {
     return;
   }
   for (const entry of state.managed) {
-    const status = !existsSync3(entry.source) ? "source-missing" : isSymlinkTo(entry.target, entry.source) ? "ok" : safeLstat(entry.target) ? "drifted" : "missing";
+    const status = !existsSync4(entry.source) ? "source-missing" : isSymlinkTo(entry.target, entry.source) ? "ok" : safeLstat(entry.target) ? "drifted" : "missing";
     console.log(`${status}	${entry.kind}	${entry.ref}	${entry.target} -> ${entry.source}`);
   }
 }
 async function rollback(options) {
-  const state = readState(options.statePath, options.targetDir, options.codexHome);
+  let state = readState(options.statePath, options.targetDir, options.codexHome);
+  state.targetDir = resolve3(options.targetDir);
+  state.codexHome = resolve3(options.codexHome);
+  state = detachLegacyRulesEntries(state);
   const backup = state.history.at(-1);
   if (!backup) throw new Error("rollback\u5C65\u6B74\u304C\u3042\u308A\u307E\u305B\u3093");
   const desired = backup.managed;
@@ -976,7 +1009,7 @@ async function profileTui(profileName, options, prompts = defaultPromptFunctions
   const rules = [...ruleMap(config).values()];
   const selectedRules = await runMultiPicker(rules.map((rule) => ({
     ref: rule.ref,
-    description: "\u5E38\u6642\u8AAD\u307F\u8FBC\u3080AGENTS.md",
+    description: "AGENTS.md\u3092\u571F\u53F0\u306B\u751F\u6210\u3059\u308BAGENTS.override.md",
     source: rule.source
   })), "profile\u306B\u542B\u3081\u308B\u5E38\u6642\u30EB\u30FC\u30EB", currentProfile?.rules ?? [], prompts);
   if (selectedRules === null) {
@@ -1127,9 +1160,16 @@ async function main() {
         const state = readState(options.statePath, options.targetDir, options.codexHome);
         state.targetDir = resolve4(options.targetDir);
         state.codexHome = resolve4(options.codexHome);
-        const plan = desiredPlan(profile, state.targetDir, state.codexHome, options.statePath, config);
-        validatePlan(plan.entries, state, state.targetDir);
-        printPlan(plan.entries, state);
+        const migratedState = detachLegacyRulesEntries(state);
+        const plan = desiredPlan(
+          profile,
+          migratedState.targetDir,
+          migratedState.codexHome,
+          options.statePath,
+          config
+        );
+        validatePlan(plan.entries, migratedState, migratedState.targetDir);
+        printPlan(plan.entries, migratedState);
         return;
       }
       await applyProfile(name, profile, config, options);

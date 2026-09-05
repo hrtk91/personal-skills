@@ -38,6 +38,34 @@ export function managedEntryFor(state: State, target: string): ManagedEntry | un
   return state.managed.find((entry) => entry.target === target);
 }
 
+export function detachLegacyRulesEntries(state: State): State {
+  const legacyTarget = join(resolve(state.codexHome), "AGENTS.md");
+  const isLegacyRulesEntry = (entry: ManagedEntry): boolean =>
+    entry.kind === "rules" && resolve(entry.target) === legacyTarget;
+  const hasLegacyEntry = state.managed.some(isLegacyRulesEntry)
+    || state.history.some((backup) => backup.managed.some(isLegacyRulesEntry));
+  if (!hasLegacyEntry) return state;
+
+  const stat = safeLstat(legacyTarget);
+  if (stat?.isSymbolicLink()) {
+    throw new Error(`旧rules管理対象のAGENTS.mdを実ファイルへ移行してから適用してください: ${legacyTarget}`);
+  }
+  if (stat && !stat.isFile()) {
+    throw new Error(`AGENTS.mdは通常fileである必要があります: ${legacyTarget}`);
+  }
+
+  const withoutLegacy = (entries: ManagedEntry[]): ManagedEntry[] =>
+    entries.filter((entry) => !isLegacyRulesEntry(entry));
+  return {
+    ...state,
+    managed: withoutLegacy(state.managed),
+    history: state.history.map((backup) => ({
+      ...backup,
+      managed: withoutLegacy(backup.managed),
+    })),
+  };
+}
+
 export function validatePlan(
   desired: ManagedEntry[],
   state: State,
@@ -57,13 +85,6 @@ export function validatePlan(
       );
     }
     targetOwners.set(entry.target, entry);
-  }
-
-  if (desired.some((entry) => entry.kind === "rules")) {
-    const override = join(state.codexHome, "AGENTS.override.md");
-    if (safeLstat(override)) {
-      throw new Error(`AGENTS.override.mdが常時ルールを無効にします: ${override}`);
-    }
   }
 
   for (const entry of desired) {
@@ -92,7 +113,7 @@ export function validateManagedTarget(entry: ManagedEntry, state: State, targetD
   const target = resolve(entry.target);
   const codexHome = resolve(state.codexHome);
   if (entry.kind === "skill" && dirname(target) === resolve(targetDir)) return;
-  if (entry.kind === "rules" && target === join(codexHome, "AGENTS.md")) return;
+  if (entry.kind === "rules" && target === join(codexHome, "AGENTS.override.md")) return;
   if (entry.kind === "hook-config" && target === join(codexHome, "hooks.json")) return;
   const hookRoot = join(codexHome, "managed-hooks");
   if (entry.kind === "hook-package" && target.startsWith(`${hookRoot}/`)) return;
@@ -194,9 +215,10 @@ export async function applyProfile(
   config: Config,
   options: Options,
 ): Promise<void> {
-  const state = readState(options.statePath, options.targetDir, options.codexHome);
+  let state = readState(options.statePath, options.targetDir, options.codexHome);
   state.targetDir = resolve(options.targetDir);
   state.codexHome = resolve(options.codexHome);
+  state = detachLegacyRulesEntries(state);
   const plan = desiredPlan(profile, state.targetDir, state.codexHome, options.statePath, config);
   const desired = plan.entries;
   validatePlan(desired, state, state.targetDir);
@@ -268,7 +290,10 @@ export function inspectStatus(state: State): void {
 }
 
 export async function rollback(options: Options): Promise<void> {
-  const state = readState(options.statePath, options.targetDir, options.codexHome);
+  let state = readState(options.statePath, options.targetDir, options.codexHome);
+  state.targetDir = resolve(options.targetDir);
+  state.codexHome = resolve(options.codexHome);
+  state = detachLegacyRulesEntries(state);
   const backup = state.history.at(-1);
   if (!backup) throw new Error("rollback履歴がありません");
 
