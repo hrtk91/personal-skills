@@ -26,11 +26,15 @@ type ResourceState =
 
 対象がないことが親の状態なら、親が`none`や空状態を表す。対象が必要な子には、非nullのpropsを渡す。
 
-### 3. 業務イベントと遷移をreducerに集める
+### 3. 状態更新と業務判断を分ける
 
 effect、watcher、refなどで処理を書き始める前に、有効な状態、状態を変えるイベント、各イベントを確定できる状態源を列挙する。複数の値の変化から「処理が始まったはず」と推測せず、router、form、外部APIなどがすでに持つ確定情報を使う。
 
-reducerに、現在の状態で許可されるイベントと遷移条件を書く。許可されない業務イベントは黙って無視せず、`error`や`rejected`など後から扱える状態へ遷移させるか、呼び出し側へ型付きエラーとして返す。
+複数のイベントによる状態更新が散らばり、遷移をまとめて扱う必要がある場合はreducerを使う。既存の状態管理機構やドメインの型が遷移を管理している場合は、同じ判断をreducerへ重複して実装しない。
+
+reducerは現在の状態とactionから次の状態を返す純粋な関数とし、通信や一連の処理の実行を持たせない。操作の可否や計算、業務上の遷移条件はUIから独立した関数や型に置き、reducerの各caseへ埋め込まず、必要な判断を委譲する。
+
+許可されない業務操作は黙って無視せず、操作を受け付ける処理から型付きエラーを返すか、拒否の結果を`error`や`rejected`など後から扱える状態へ反映する。reducerを使う場合も、呼び出し側への操作結果と次のstateを混同しない。
 
 UIイベントは、そのままreducerへ渡さない。UIの境界で、業務上の意味が分かるactionへ変換する。
 
@@ -44,28 +48,28 @@ UIイベントは、そのままreducerへ渡さない。UIの境界で、業務
 
 入力を受け取って表示するだけのUIには、無理にreducerや状態機械を作らない。入力途中の文字列のような単純な値は、使っているフレームワークのlocal stateで管理してよい。
 
-### 5. controller/viewmodelでUIと状態をつなぐ
+### 5. フレームワークに合う形で処理をつなぐ
 
-controller/viewmodelは、UIと状態・外部システムをつなぐグルーです。UIから業務actionを受け取り、reducerや外部I/Oの結果をUIが表示できるstateへ渡します。ReactのhookやVueのcomposableは、このcontroller/viewmodelを実装するための枠です。
+UIから操作を受け取り、業務判断を呼び出し、外部I/Oを実行して、その結果を状態へ反映する。一連の処理は、イベントハンドラ、Reactのcustom hook、Vueのcomposableなど、採用しているフレームワークと既存コードに合う場所へ置く。controller、viewmodel、usecaseという名前の層を必須にしない。
 
-controller/viewmodelの中には、担当する一つの関心ごとの状態と副作用だけを置きます。複数の業務関心ごとをまとめるworkflowは、別のcontrollerやworkflow層として名前と責務を明示します。ドメインの純粋な判定や状態遷移は、controller/viewmodelの外に置いてテストできるようにします。
+hookやcomposableにまとめる場合も、担当する関心ごとの状態と副作用を扱い、業務ルールは独立した関数や型へ委譲する。hookは状態やライフサイクルを扱うための仕組みであり、業務処理すべてをhookにする必要はない。例えば文字起こしでは、開始可否の判断は独立した関数や型、サービスへの依頼はイベントハンドラや専用hook、開始・成功・失敗に応じた状態更新は必要ならreducerが担う。
 
 ## adapterで外部I/Oを分ける
 
 外部通信は、差し替え可能なport（interface）を通して行います。adapterはportの実装であり、API、platform service、storageなどとの通信を担当します。adapterに業務状態や画面の判断を持たせません。
 
 ```text
-UI → controller/viewmodel → port → adapter → 外部システム
+UI → イベントハンドラや専用hookなど → port → adapter → 外部システム
 ```
 
-controller/viewmodelは具体的なadapterではなくportに依存させます。テストではFakeやStubを差し替えられるようにします。ただし、差し替える必要のない単純な処理まで、形式的にadapterへ分けないでください。
+外部I/Oを呼ぶ処理は具体的なadapterではなくportに依存させます。テストではFakeやStubを差し替えられるようにします。ただし、差し替える必要のない単純な処理まで、形式的にadapterへ分けないでください。
 
 外部のWidgetやbrowser APIを組み込む場合は、script読込、型定義、生成、更新、破棄を独自実装する前に、公式SDKと公式資料で案内されるlibraryを確認する。既存libraryへ任せる範囲と、アプリケーションが持つ状態・業務イベント・入力値を分ける。独自実装は、既存の選択肢で必要な契約を満たせない場合に限る。
 
 ## 非同期処理と副作用
 
 - 外部API、platform service、audio要素、Blob URL、timer、storageなどを扱う場合は、先に`unavailable`、`loading`、`ready`、`error`などの状態を決める。
-- 副作用は、その外部リソースを所有するUI、controller、専用hookなどに置く。
+- 副作用は、その外部リソースを所有するUI、専用hook、composableなどに置く。
 - propsやstateを外部システムへ同期する仕組みを使う。Reactなら`useEffect`がその手段になる。親が子のフラグを監視して、別の業務処理を開始する用途には使わない。
 - 同期処理の依存値には、外部リソースを特定する値を含める。`key`による暗黙の再初期化や、空の依存配列で処理順序を隠さない。
 - 非同期処理のcleanupで、購読解除、object URL解放、timer停止などを行う。
@@ -73,7 +77,7 @@ controller/viewmodelは具体的なadapterではなくportに依存させます�
 ## 状態源と責務の境界
 
 - URLやナビゲーション情報が状態源なら、そこから画面stateを導出し、local stateへ二重にコピーしない。画面の初期データを取得する仕組みは、使っているフレームワークのentrypoint境界に閉じ込める。
-- 複数画面にまたがる業務workflowはworkflow controllerやreducerに持たせ、UIには意味のあるstateとcallbackを渡す。
+- 複数画面や業務関心ごとにまたがる一連の処理は、全体の進行を扱う関数やモジュールにまとめ、UIには意味のあるstateとcallbackを渡す。処理の実行と状態更新を分け、reducerに外部I/Oや一連の処理を実行させない。
 - 子から親へはUI操作ではなく業務イベントを通知する。
 - APIやplatform serviceのadapterはtyped boundaryの背後に置き、外部payloadとerrorを境界で変換する。
 
@@ -94,7 +98,7 @@ feature内に独立した関心ごとが増えたら、`recording-library/`、`a
 
 ## 最低限の確認
 
-- reducerの主要な遷移をテストする
+- 業務判断と主要な状態遷移を、それぞれの所有者でテストする。reducerを使う場合は、その状態更新も確認する
 - 対象AからBへ切り替えたあと、Aの応答が返ってきてもBを上書きしないことをテストする
 - 入力、ナビゲーション情報、初期データからの状態導出をテストする
 - 外部境界のcleanupとerrorを確認する
