@@ -45,7 +45,6 @@ Windows PowerShell:
 
 | スキル | 概要 |
 | --- | --- |
-| `review` | 命名、責務、型、安全性、保守性、影響範囲、テストの観点でレビューします。 |
 | `adversarial-review` | 一見正しい変更にも残る抜け道や未検証の前提を探します。 |
 | `review-impact-analysis` | 変更の利用箇所をたどり、追従漏れを確認します。 |
 | `review-layer-responsibility` | 処理が適切な層にあり、依存方向を守っているか確認します。 |
