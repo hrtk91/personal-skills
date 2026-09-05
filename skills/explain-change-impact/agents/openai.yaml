@@ -1,0 +1,6 @@
+interface:
+  display_name: "変更の動作と影響説明"
+  short_description: "実装前から完了まで、変更前後の動作・影響・確認結果を説明する"
+  default_prompt: "$explain-change-impact を使って、現在の動作と変更後の動作、影響する箇所を説明しながら実装を進めてください。"
+policy:
+  allow_implicit_invocation: true
