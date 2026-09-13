@@ -10,4 +10,4 @@ modelを省略した組み込み `agent_type`（`default`、`worker`、`explorer
 
 モデル・推論レベルの実効値を設定ファイルから解決する処理は持ちません。subagentの既定値やcustom agent設定による上書きは、注意を受け取った主担当が確認します。出力形式は[OpenAI公式のHooks仕様](https://learn.chatgpt.com/docs/hooks#pretooluse)に従います。
 
-このpackageは今回、profileやグローバル設定へ未登録です。stdin/stdoutの実コマンド境界はテスト済みですが、実アプリでhookが発火することは未検証です。
+利用するprofileでこのpackageを選択し、harnessctlで適用します。stdin/stdoutの出力と一時環境での導入はテストで確認できます。実アプリでの発火・信頼状態は別途確認してください。
