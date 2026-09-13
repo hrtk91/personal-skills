@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Handoff"
+  short_description: "Codexタスクの引継ぎ資料と新タスク継続を安全に整理"
+  default_prompt: "$codex-handoff で現在の作業の引継ぎ資料をまとめ、新しいCodexタスクを作って承認済みの続きを進めてください。元のタスクは残してください。"

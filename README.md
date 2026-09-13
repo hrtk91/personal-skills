@@ -77,6 +77,7 @@ Windows PowerShell:
 | スキル | 概要 |
 | --- | --- |
 | `codex` | Codexを第二意見を得る相手として使います。 |
+| `codex-handoff` | Codexタスクの引継ぎ資料と新タスクの継続を、承認範囲・証拠つきで整理します。 |
 | `grok-second-opinion` | Grokへ前提と論点を渡し、別の角度から意見を得ます。 |
 | `personal-skills-auto-update` | 更新条件を確認しながら、WindowsとWSLの実行環境へスキルを自動反映します。 |
 | `personal-skills-ctl-daemon` | このリポジトリとローカルのスキルを同期するCLIやdaemonを設計します。 |
