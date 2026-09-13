@@ -1,0 +1,18 @@
+{
+  "description": "OpenAI Codex専用。subagent起動時のモデル・推論レベルを確認する注意contextを追加する。",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^(spawn_agent|Agent|collaboration\\.spawn_agent)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node {{HOOK_ROOT}}/notice.mjs",
+            "timeout": 5,
+            "statusMessage": "subagentのモデル指定を確認中"
+          }
+        ]
+      }
+    ]
+  }
+}
