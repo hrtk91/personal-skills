@@ -38,7 +38,6 @@ Windows PowerShell:
 | `frontend-development-principles` | 状態、UI、副作用の責務を整理してフロントエンドを設計します。 |
 | `hypothesis-framing` | 問題設定を問い直し、独立した仮説の発散・反証・最小検証を進めます。事実収集や差分反証そのものには使いません。 |
 | `investigating-domain` | 業務概念、ルール、状態遷移、権限、業務フローを実装横断で調査します。 |
-| `orchestrate-exploration` | 長い調査や設計から実装までをsubagentへ分け、親スレッドで契約・進捗・検証を管理します。 |
 | `research-experiment-loop` | 実験結果と仮説を記録し、過去の結果を踏まえて次の調査を決めます。 |
 | `test-design` | 仕様変更や不具合修正を守るテストを設計します。 |
 
@@ -92,6 +91,12 @@ Windows PowerShell:
 | --- | --- |
 | `evaluation-coach` | 日次・週次の振り返りから、半期評価の根拠を積み上げます。 |
 | `information-architecture-ui-review` | 情報の優先順位と操作の流れからUIをレビューします。 |
+
+## 常時ルール
+
+profileで選択して導入したルールを、作業時の指示として常時読み込ませます。
+
+- [実作業の委譲とユーザーへの説明-for-openai](rules/実作業の委譲とユーザーへの説明-for-openai/AGENTS.md): Lunaのmax推論を基本に実作業を委譲し、主担当が事実確認とユーザーへの説明を担います。
 
 ## そのほかの内容
 
