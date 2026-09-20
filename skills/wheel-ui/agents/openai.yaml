@@ -1,0 +1,4 @@
+interface:
+  display_name: "Wheel UI"
+  short_description: "慣性と中央への吸い付きを保ち、PC・スマホで使えるホイールUIを実装する"
+  default_prompt: "$wheel-ui を使い、マウスの1目盛りで飛ばず、連続操作は滑らかなホイール型ピッカーを実装してください。"
