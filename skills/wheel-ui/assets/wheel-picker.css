@@ -1,0 +1,19 @@
+.wheel-picker-control { --wheel-row-height: 88px; display: flex; align-items: center; gap: 8px; padding: 8px; border: 1px solid #d6dbd4; border-radius: 14px; background: #fffdf7; }
+.wheel-picker-frame { position: relative; flex: 1; min-width: 0; }
+.wheel-picker-frame::before, .wheel-picker-frame::after { content: ""; position: absolute; z-index: 1; left: 0; right: 0; height: 25%; pointer-events: none; }
+.wheel-picker-frame::before { top: 0; background: linear-gradient(#fffdf7, #fffdf700); }
+.wheel-picker-frame::after { bottom: 0; background: linear-gradient(#fffdf700, #fffdf7); }
+.wheel-picker-band { position: absolute; top: 50%; left: 0; right: 0; height: var(--wheel-row-height); box-sizing: border-box; transform: translateY(-50%); border: 1px solid #c8d5bf; border-radius: 10px; background: #edf1e2; pointer-events: none; }
+.wheel-picker { --wheel-height: 220px; position: relative; box-sizing: border-box; height: var(--wheel-height); overflow-y: auto; overscroll-behavior-y: contain; scroll-snap-type: y mandatory; padding-block: calc((var(--wheel-height) - var(--wheel-row-height)) / 2); scrollbar-width: none; border-radius: 12px; }
+.wheel-picker::-webkit-scrollbar { display: none; }
+.wheel-picker:focus-visible { outline: 3px solid #996829; outline-offset: 2px; }
+.wheel-picker-option { display: flex; box-sizing: border-box; align-items: center; gap: 10px; width: 100%; height: var(--wheel-row-height); padding: 8px 10px; scroll-snap-align: center; scroll-snap-stop: normal; cursor: pointer; color: #303d34; opacity: .6; }
+.wheel-picker-option[aria-selected="true"] { opacity: 1; font-weight: 600; }
+.wheel-picker-option-check { width: 16px; flex-shrink: 0; }
+.wheel-picker-option[aria-selected="false"] .wheel-picker-option-check { visibility: hidden; }
+.wheel-picker-option-label { display: grid; gap: 3px; min-width: 0; overflow-wrap: anywhere; }
+.wheel-picker-option-detail { font-size: 12px; font-weight: normal; }
+.wheel-picker-arrows { display: grid; gap: 8px; }
+.wheel-picker-arrows button { width: 44px; height: 44px; border: 1px solid #d6dbd4; border-radius: 50%; background: #fffdf7; color: #345b45; font: inherit; cursor: pointer; }
+.wheel-picker-arrows button:disabled { opacity: .35; cursor: default; }
+.wheel-picker-hint { margin: 8px 0; font-size: 12px; color: #657061; }
