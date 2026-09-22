@@ -15,7 +15,7 @@ description: Codexの現在タスクを、明示的な継続依頼に基づく�
 
 引継ぎのために、他者の編集を戻したり、作業を再委譲したりしない。勝手なcommit、push、reset、stash、プロセス停止、テスト、CI、外部送信、公開、登録を行わず、既存の検証結果だけを記録する。実行中の担当やprocessは移管されるとは見なさず、書込競合を避けるための情報として記録する。
 
-保存先の指定がなければ、許可されたrepo外に固有名で保存する。`/tmp`へ保存する場合は一時保存で消えることを伝える。repoへ入れる文書にはホスト固有パスを記載してcommitしない。秘密、token、音声、モデルキャッシュ、過去ログ全文は資料へ埋め込まない。
+保存先の指定がなければ、`/tmp`の固有名directoryに引継ぎ資料と開始promptを保存する。一時保存のため消える可能性を伝え、新タスクから読めることを確認する。保存に失敗した場合は原因を確認し、別の保存先を黙って選ばない。repoへ入れる文書にはホスト固有パスを記載してcommitしない。秘密、token、音声、モデルキャッシュ、過去ログ全文は資料へ埋め込まない。
 
 ## これまで実施したこと（調査・実装・試行と結果）
 
@@ -45,9 +45,9 @@ config、テスト、配置済みファイル、実際のruntime/product動作�
 現行環境のtool説明を唯一のAPI契約とし、架空のendpoint、引数、任意pathを作らない。順序は `discovery → list_projects → create_thread` とする。
 
 - `projectId`は`list_projects`の実値だけを使う。
-- `isGitRepository=true`は通常`worktree`、`false`は`local`を選ぶ。ユーザーが保存済みprojectを直接使うと明示した場合は`local`にする。repoがない場合は`projectless`にする。
+- Git repoの継続作業は、新しい別worktreeで行うことを前提に`environment.type="worktree"`で作成する。ユーザーが保存済みprojectを直接使うと明示した場合だけ`local`にする。`isGitRepository=false`は`local`、repoがない場合は`projectless`にする。
 - ユーザーが指定していない`model`や`thinking`を補わない。
-- `startingState`はユーザーが明示したbranchまたは`working-tree`だけを使う。default branchを継続状態と推測しない。現在の作業treeと保存projectが異なる場合、または「現在の変更ごと継続」で対象checkoutを保証できない場合は、資料を作って具体的な選択を一点だけ確認する。
+- `startingState`はユーザーが明示したbranchまたは`working-tree`だけを指定する。開始元が未指定で引き継ぐ未マージ・未コミット変更がなければ、`startingState`を省略し、toolの既定ブランチから別worktreeを作る。現在の作業treeと保存projectが異なることだけを理由に確認を求めない。継続に必要な変更が既定ブランチにない場合や、「現在の変更ごと継続」で対象checkoutを保証できない場合だけ、資料を作って開始元を一点確認する。既定ブランチが最新であるとは推測せず、確認できたHEADを資料へ残す。
 - 新タスクのpromptには資料のパスだけでなく、目的、承認済み範囲、禁止・承認待ち、現在のgit状態、完了/未完了、証拠、次の一手の核心を埋め込む。さらに「これまで実施したこと（調査/実装/試行と結果）」と「選ばなかった選択肢とその理由」を、資料と同じ事実・不明区分で判断に必要な要点だけ含める。続けて「まず引継ぎと実際のcwd/git/成果物/適用AGENTSを照合し、承認済み次作業だけ続行。未承認、必要な成果物の不足、旧担当との書込競合があれば編集せず確認で止まる。同じhandoffを再実行してtaskを増やさない」と明記する。
 - `create_thread`はprompt送信を含めて作業を開始するため、直後に二重の`send_message_to_thread`をしない。running agentやprocessは移管されない前提で、書込競合を避ける。
 - `fork_thread`は全履歴を分岐する機能であり、文脈を軽くするhandoffの代替にしない。`handoff_thread`は別taskのcheckout、worktree、hostを移動する機能で、calling task自身の移動や新task作成の代替にはしない。
