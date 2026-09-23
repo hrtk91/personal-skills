@@ -36,7 +36,6 @@ Windows PowerShell:
 | `explain-change-impact` | 実装前・途中・完了時に、変更前後の動作、影響する箇所、確認結果を説明します。 |
 | `fracta` | git worktree、Lima VM、Docker Composeを使う開発環境を操作します。 |
 | `frontend-development-principles` | 状態、UI、副作用の責務を整理してフロントエンドを設計します。 |
-| `hypothesis-framing` | 問題設定を問い直し、独立した仮説の発散・反証・最小検証を進めます。事実収集や差分反証そのものには使いません。 |
 | `investigating-domain` | 業務概念、ルール、状態遷移、権限、業務フローを実装横断で調査します。 |
 | `research-experiment-loop` | 実験結果と仮説を記録し、過去の結果を踏まえて次の調査を決めます。 |
 | `test-design` | 仕様変更や不具合修正を守るテストを設計します。 |
