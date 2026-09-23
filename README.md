@@ -2,7 +2,7 @@
 
 AIエージェントに、作業の進め方や判断基準を追加するための個人用スキル集です。
 
-コードレビュー、調査、文章作成、開発環境の運用など、繰り返し使う手順を `skills/` にまとめています。Codex、Claude Code、一部のスキルはHermesから利用できます。`harnessctl` のprofileでは、選択skillに加えて常時ルールとCodex hookも管理できます。
+コードレビュー、調査、文章作成、開発環境の運用など、繰り返し使う手順を `skills/` にまとめています。Codex、Claude Code、一部のスキルはHermesから利用できます。`harnessctl` のprofileでは対象ハーネスを選び、skill、常時ルール、対応するhookを管理できます。Claude Codeでは既存のユーザー`CLAUDE.md`を保ったまま、ユーザー共通rulesとsettings内のhookを扱います。詳しくは[harnessctlの使い方](tools/README.md)を参照してください。
 
 ## 使い方
 
@@ -106,6 +106,6 @@ profileで選択して導入したルールを、作業時の指示として常�
 - `benchmarks/`: observation、失敗原因の仮説、固定eval case、介入比較の結果
 - `commands/`: Claude Codeのカスタムコマンド
 - `hooks/`: セッション記録やコマンド実行前の確認などのhook
-- `rules/`: profileから`AGENTS.override.md`へ常時導入するCodexルール
+- `rules/`: profileからCodexの`AGENTS.override.md`またはClaude Codeのユーザー共通rulesへ導入する常時ルール
 - `scripts/`: スキルと設定を各ツールへ反映するスクリプト
 - `tools/`: skill・常時ルール・hookをprofile単位で導入する`harnessctl`

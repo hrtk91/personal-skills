@@ -7,6 +7,7 @@ import {
 } from "@clack/prompts";
 import {
   type Config,
+  type HarnessTarget,
   type Options,
   readConfig,
   getProfile,
@@ -191,7 +192,7 @@ export async function runProfilePicker(
       ...Object.keys(config.profiles).sort().map((name) => ({
         value: name,
         label: name,
-        hint: `${config.profiles[name].skills.length} skills`,
+        hint: `${config.profiles[name].skills.length} skills · ${config.profiles[name].targets.join(", ") || "対象なし"}`,
       })),
       { value: createProfileValue, label: "+ profileを作成", hint: "新しいprofile" },
     ],
@@ -256,6 +257,15 @@ export async function profileTui(
   validateProfileName(profileName);
   const config = readConfig(options.configPath);
   const currentProfile = config.profiles[profileName];
+  const targets = await runMultiPicker([
+    { ref: "codex", description: `${options.codexHome}へskill・rules・hookを導入`, source: "" },
+    { ref: "claude", description: `${options.claudeHome}へskill・rules・対応hookを導入`, source: "" },
+  ], "profileを適用するハーネス", currentProfile?.targets ?? ["codex"], prompts);
+  if (targets === null) {
+    console.log("中止しました");
+    return;
+  }
+
   const skills = discoverSkills(config);
   if (skills.length === 0) throw new Error("skillが見つかりません");
   const selectedSkills = await runMultiPicker(skills.map((skill) => ({
@@ -271,7 +281,7 @@ export async function profileTui(
   const rules = [...ruleMap(config).values()];
   const selectedRules = await runMultiPicker(rules.map((rule) => ({
     ref: rule.ref,
-    description: "AGENTS.mdを土台に生成するAGENTS.override.md",
+    description: "CodexはAGENTS.override.md、Claudeはユーザー共通rulesへ導入",
     source: rule.source,
   })), "profileに含める常時ルール", currentProfile?.rules ?? [], prompts);
   if (selectedRules === null) {
@@ -282,7 +292,7 @@ export async function profileTui(
   const hooks = [...hookMap(config).values()];
   const selectedHooks = await runMultiPicker(hooks.map((hook) => ({
     ref: hook.ref,
-    description: "Codex hook package",
+    description: `対応対象: ${hook.targets.join(", ") || "なし"}`,
     source: hook.source,
   })), "profileに含めるhook", currentProfile?.hooks ?? [], prompts);
   if (selectedHooks === null) {
@@ -292,6 +302,7 @@ export async function profileTui(
 
   config.profiles[profileName] = {
     description: config.profiles[profileName]?.description ?? "harnessctlで作成",
+    targets: targets as HarnessTarget[],
     skills: selectedSkills,
     rules: selectedRules,
     hooks: selectedHooks,
@@ -346,7 +357,7 @@ export function printProfileList(config: Config): void {
   }
   for (const name of names) {
     const profile = getProfile(config, name);
-    console.log(`${name}\tskill ${profile.skills.length}件, rules ${profile.rules.length}件, hook ${profile.hooks.length}件`);
+    console.log(`${name}\t対象 ${profile.targets.join(", ") || "(なし)"}, skill ${profile.skills.length}件, rules ${profile.rules.length}件, hook ${profile.hooks.length}件`);
   }
 }
 

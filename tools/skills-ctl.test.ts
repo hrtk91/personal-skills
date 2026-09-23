@@ -2,6 +2,7 @@ import { strict as assert } from "node:assert";
 import { execFileSync } from "node:child_process";
 import {
   chmodSync,
+  existsSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -18,7 +19,17 @@ import test from "node:test";
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const cli = join(repoRoot, "tools", "skills-ctl.ts");
 
-function runCli(args: string[], root: string): string {
+function runCli(args: string[], root: string, extraEnv: NodeJS.ProcessEnv = {}): string {
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    PERSONAL_SKILLS_CONFIG: join(root, "profiles.json"),
+    PERSONAL_SKILLS_STATE: join(root, "state.json"),
+    PERSONAL_SKILLS_TARGET: join(root, "target"),
+    PERSONAL_SKILLS_CODEX_HOME: join(root, "codex"),
+    CLAUDE_CONFIG_DIR: join(root, "claude"),
+    ...extraEnv,
+  };
+  delete env.PERSONAL_SKILLS_CLAUDE_HOME;
   return execFileSync(process.execPath, [
     "--experimental-strip-types",
     cli,
@@ -26,13 +37,7 @@ function runCli(args: string[], root: string): string {
   ], {
     cwd: repoRoot,
     encoding: "utf8",
-    env: {
-      ...process.env,
-      PERSONAL_SKILLS_CONFIG: join(root, "profiles.json"),
-      PERSONAL_SKILLS_STATE: join(root, "state.json"),
-      PERSONAL_SKILLS_TARGET: join(root, "target"),
-      PERSONAL_SKILLS_CODEX_HOME: join(root, "codex"),
-    },
+    env,
     stdio: ["ignore", "pipe", "pipe"],
   });
 }
@@ -57,6 +62,7 @@ function createManagedResourceSource(root: string): string {
   );
   writeFileSync(join(source, "hooks", "review-policy", "noop.mjs"), "process.exit(0);\n");
   writeFileSync(join(source, "hooks", "review-policy", "hooks.json"), JSON.stringify({
+    targets: ["codex", "claude"],
     hooks: {
       PreToolUse: [{
         matcher: "Bash",
@@ -364,7 +370,7 @@ test("rejects config versions newer than the CLI understands", () => {
   }
 });
 
-test("automatically persists legacy config as v4 and legacy state as v3", () => {
+test("automatically persists legacy config as v5 and legacy state as v4", () => {
   const root = mkdtempSync(join(tmpdir(), "personal-skills-ctl-migration-test-"));
   try {
     const configPath = join(root, "profiles.json");
@@ -394,19 +400,23 @@ test("automatically persists legacy config as v4 and legacy state as v3", () => 
     runCli(["status"], root);
 
     const config = JSON.parse(readFileSync(configPath, "utf8"));
-    assert.equal(config.version, 4);
+    assert.equal(config.version, 5);
     assert.equal(config.sources.personal.path, repoRoot);
     assert.deepEqual(config.profiles.legacy, {
       description: "legacy profile",
+      targets: ["codex"],
       skills: ["personal:review-maintainability"],
       rules: [],
       hooks: [],
     });
 
     const state = JSON.parse(readFileSync(statePath, "utf8"));
-    assert.equal(state.version, 3);
+    assert.equal(state.version, 4);
     assert.equal(state.codexHome, join(root, "codex"));
+    assert.equal(state.claudeHome, join(root, "claude"));
+    assert.deepEqual(state.targets, ["codex"]);
     assert.deepEqual(state.managed[0], {
+      harness: "codex",
       kind: "skill",
       linkType: "dir",
       ref: "personal:review-maintainability",
@@ -440,7 +450,7 @@ test("migrates a v3 profile with one rule to the ordered rules array", () => {
     runCli(["profile", "show", "guarded"], root);
 
     const config = JSON.parse(readFileSync(configPath, "utf8"));
-    assert.equal(config.version, 4);
+    assert.equal(config.version, 5);
     assert.deepEqual(config.profiles.guarded.rules, ["fixture:review-policy"]);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -533,6 +543,248 @@ test("restores the previous links when the atomic state write fails", () => {
     assert.match(runCli(["status"], root), /有効なprofile: selected/);
   } finally {
     chmodSync(root, 0o700);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Claude targetは既存CLAUDE.mdとsettingsの他hook・他keyを保ったままresourceを導入する", () => {
+  const root = mkdtempSync(join(tmpdir(), "personal-skills-ctl-claude-apply-test-"));
+  try {
+    const resourceSource = createManagedResourceSource(root);
+    const claudeHome = join(root, "claude");
+    mkdirSync(claudeHome, { recursive: true });
+    const claudeMemory = "# ユーザー所有の記憶\nこの内容を保持する。\n";
+    writeFileSync(join(claudeHome, "CLAUDE.md"), claudeMemory);
+    const userHook = {
+      matcher: "Bash",
+      hooks: [{ type: "command", command: "echo user-owned" }],
+    };
+    const settings = {
+      model: "claude-sonnet-4-5",
+      theme: "dark",
+      statusLine: { type: "command", command: "printf user-status" },
+      hooks: { PreToolUse: [userHook] },
+    };
+    writeFileSync(join(claudeHome, "settings.json"), `${JSON.stringify(settings, null, 2)}\n`);
+    writeFileSync(join(root, "profiles.json"), JSON.stringify({
+      version: 5,
+      sources: { fixture: { path: resourceSource } },
+      profiles: {
+        claude: {
+          targets: ["codex", "claude"],
+          skills: ["personal:review-maintainability"],
+          rules: ["fixture:review-policy"],
+          hooks: ["personal:single-review-decision"],
+        },
+      },
+    }));
+
+    const plan = runCli(["plan", "claude"], root);
+    assert.match(plan, /対象ハーネス: codex, claude/);
+    assert.match(plan, /link追加 skill personal:review-maintainability \[codex\]/);
+    assert.match(plan, /hook追加 claude-hook-config generated:/);
+    runCli(["apply", "claude", "--yes"], root);
+
+    assert.equal(realpathSync(join(claudeHome, "skills", "review-maintainability")), join(repoRoot, "skills", "review-maintainability"));
+    assert.equal(realpathSync(join(root, "target", "review-maintainability")), join(repoRoot, "skills", "review-maintainability"));
+    assert.equal(lstatSync(join(claudeHome, "rules", "harnessctl-personal-skills.md")).isSymbolicLink(), true);
+    assert.match(readFileSync(join(claudeHome, "rules", "harnessctl-personal-skills.md"), "utf8"), /# テスト用常時ルール/);
+    assert.equal(readFileSync(join(claudeHome, "CLAUDE.md"), "utf8"), claudeMemory);
+
+    const installedSettings = JSON.parse(readFileSync(join(claudeHome, "settings.json"), "utf8")) as {
+      model: string;
+      theme: string;
+      statusLine: unknown;
+      hooks: Record<string, Array<{ matcher?: string; hooks: Array<{ command: string }> }>>;
+    };
+    assert.equal(installedSettings.model, settings.model);
+    assert.equal(installedSettings.theme, settings.theme);
+    assert.deepEqual(installedSettings.statusLine, settings.statusLine);
+    assert.deepEqual(installedSettings.hooks.PreToolUse[0], userHook);
+    assert.equal(installedSettings.hooks.PreToolUse.length, 2);
+    const claudeHook = installedSettings.hooks.PreToolUse[1];
+    assert.equal(claudeHook.matcher, "Bash");
+    assert.match(claudeHook.hooks[0].command, /managed-hooks\/personal\/single-review-decision/);
+    assert.doesNotMatch(claudeHook.hooks[0].command, /\{\{HOOK_ROOT\}\}/);
+
+    const bodyPath = join(root, "pr-body.md");
+    writeFileSync(bodyPath, "## レビュワーに求める判断\nこのPRを承認してよいかを判断する。\n");
+    const hookOutput = execFileSync("bash", ["-lc", claudeHook.hooks[0].command], {
+      cwd: root,
+      input: JSON.stringify({
+        tool_name: "Bash",
+        cwd: root,
+        tool_input: { command: `gh pr create --body-file ${bodyPath}` },
+      }),
+      encoding: "utf8",
+    });
+    assert.equal(hookOutput, "");
+    assert.match(runCli(["status"], root), /ok\tclaude-hook-config\tgenerated:/);
+    const state = JSON.parse(readFileSync(join(root, "state.json"), "utf8")) as {
+      claudeHome: string;
+      managed: Array<{ harness: string }>;
+    };
+    assert.equal(state.claudeHome, claudeHome);
+    assert.deepEqual([...new Set(state.managed.map((entry) => entry.harness))], ["codex", "claude"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Claude profileのrollbackは後から変わったsettings keyと管理外hookを保持する", () => {
+  const root = mkdtempSync(join(tmpdir(), "personal-skills-ctl-claude-rollback-test-"));
+  try {
+    const claudeHome = join(root, "claude");
+    mkdirSync(claudeHome, { recursive: true });
+    const initialUserHook = { hooks: [{ type: "command", command: "echo before" }] };
+    writeFileSync(join(claudeHome, "settings.json"), `${JSON.stringify({
+      model: "claude-sonnet-4-5",
+      theme: "dark",
+      statusLine: { type: "command", command: "printf before" },
+      hooks: { PreToolUse: [initialUserHook] },
+    }, null, 2)}\n`);
+    writeFileSync(join(root, "profiles.json"), JSON.stringify({
+      version: 5,
+      profiles: {
+        claude: {
+          targets: ["claude"],
+          skills: [],
+          rules: [],
+          hooks: ["personal:single-review-decision"],
+        },
+        emptyClaude: { targets: ["claude"], skills: [], rules: [], hooks: [] },
+      },
+    }));
+
+    runCli(["apply", "claude", "--yes"], root);
+    const settingsPath = join(claudeHome, "settings.json");
+    const editedByUser = JSON.parse(readFileSync(settingsPath, "utf8")) as Record<string, unknown> & {
+      hooks: Record<string, unknown[]>;
+    };
+    editedByUser.theme = "light-after-install";
+    editedByUser.statusLine = { type: "command", command: "printf after" };
+    editedByUser.editorMode = "vim";
+    const laterUserHook = { matcher: "Write", hooks: [{ type: "command", command: "echo later" }] };
+    editedByUser.hooks.PreToolUse.push(laterUserHook);
+    writeFileSync(settingsPath, `${JSON.stringify(editedByUser, null, 2)}\n`);
+
+    runCli(["apply", "emptyClaude", "--yes"], root);
+    let settings = JSON.parse(readFileSync(settingsPath, "utf8")) as typeof editedByUser;
+    assert.equal(settings.hooks.PreToolUse.length, 2);
+    assert.deepEqual(settings.hooks.PreToolUse, [initialUserHook, laterUserHook]);
+
+    runCli(["rollback", "--yes"], root);
+    settings = JSON.parse(readFileSync(settingsPath, "utf8")) as typeof editedByUser;
+    assert.equal(settings.model, "claude-sonnet-4-5");
+    assert.equal(settings.theme, "light-after-install");
+    assert.deepEqual(settings.statusLine, { type: "command", command: "printf after" });
+    assert.equal(settings.editorMode, "vim");
+    assert.equal(settings.hooks.PreToolUse.length, 3);
+    assert.deepEqual(settings.hooks.PreToolUse[0], initialUserHook);
+    assert.deepEqual(settings.hooks.PreToolUse[1], laterUserHook);
+    assert.match(JSON.stringify(settings.hooks.PreToolUse[2]), /single-review-decision/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Claude設定で管理hookと同じgroupが重複したらdriftを示し、削除しない", () => {
+  const root = mkdtempSync(join(tmpdir(), "personal-skills-ctl-claude-hook-duplicate-test-"));
+  try {
+    writeFileSync(join(root, "profiles.json"), JSON.stringify({
+      version: 5,
+      profiles: {
+        claude: {
+          targets: ["claude"],
+          skills: [],
+          rules: [],
+          hooks: ["personal:single-review-decision"],
+        },
+      },
+    }));
+    runCli(["apply", "claude", "--yes"], root);
+
+    const settingsPath = join(root, "claude", "settings.json");
+    const settings = JSON.parse(readFileSync(settingsPath, "utf8")) as {
+      hooks: { PreToolUse: unknown[] };
+    };
+    settings.hooks.PreToolUse.push(structuredClone(settings.hooks.PreToolUse[0]));
+    const duplicatedSettings = `${JSON.stringify(settings, null, 2)}\n`;
+    writeFileSync(settingsPath, duplicatedSettings);
+
+    assert.match(runCli(["status"], root), /drifted\tclaude-hook-config/);
+    assert.throws(() => runCli(["apply", "claude", "--yes"], root));
+    assert.equal(readFileSync(settingsPath, "utf8"), duplicatedSettings);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("state保存失敗時はClaude settingsと管理symlinkを直前の状態へ戻す", () => {
+  const root = mkdtempSync(join(tmpdir(), "personal-skills-ctl-claude-state-failure-test-"));
+  const stateDirectory = join(root, "state-store");
+  mkdirSync(stateDirectory);
+  const statePath = join(stateDirectory, "state.json");
+  const cliEnv = { PERSONAL_SKILLS_STATE: statePath };
+  try {
+    const claudeHome = join(root, "claude");
+    mkdirSync(claudeHome, { recursive: true });
+    writeFileSync(join(claudeHome, "settings.json"), `${JSON.stringify({
+      theme: "dark",
+      hooks: { SessionStart: [{ hooks: [{ type: "command", command: "echo keep" }] }] },
+    }, null, 2)}\n`);
+    writeFileSync(join(root, "profiles.json"), JSON.stringify({
+      version: 5,
+      profiles: {
+        claude: {
+          targets: ["claude"],
+          skills: ["personal:review-maintainability"],
+          rules: [],
+          hooks: ["personal:single-review-decision"],
+        },
+        emptyClaude: { targets: ["claude"], skills: [], rules: [], hooks: [] },
+      },
+    }));
+    runCli(["apply", "claude", "--yes"], root, cliEnv);
+    const settingsPath = join(claudeHome, "settings.json");
+    const beforeFailedApply = readFileSync(settingsPath, "utf8");
+
+    chmodSync(stateDirectory, 0o500);
+    assert.throws(() => runCli(["apply", "emptyClaude", "--yes"], root, cliEnv));
+    chmodSync(stateDirectory, 0o700);
+
+    assert.equal(readFileSync(settingsPath, "utf8"), beforeFailedApply);
+    assert.equal(realpathSync(join(claudeHome, "skills", "review-maintainability")), join(repoRoot, "skills", "review-maintainability"));
+    assert.match(runCli(["status"], root, cliEnv), /有効なprofile: claude/);
+    assert.match(runCli(["status"], root, cliEnv), /ok\tclaude-hook-config/);
+  } finally {
+    chmodSync(stateDirectory, 0o700);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Codex専用hookをClaude profileで適用せずplanに対象外理由を表示する", () => {
+  const root = mkdtempSync(join(tmpdir(), "personal-skills-ctl-claude-excluded-hook-test-"));
+  try {
+    writeFileSync(join(root, "profiles.json"), JSON.stringify({
+      version: 5,
+      profiles: {
+        claudeOnly: {
+          targets: ["claude"],
+          skills: [],
+          rules: [],
+          hooks: ["personal:subagent-model-notice-for-openai"],
+        },
+      },
+    }));
+
+    const plan = runCli(["plan", "claudeOnly"], root);
+    assert.match(plan, /Claude対象外 hook personal:subagent-model-notice-for-openai/);
+    assert.match(plan, /対応対象はcodexです/);
+    runCli(["apply", "claudeOnly", "--yes"], root);
+    assert.equal(existsSync(join(root, "claude", "settings.json")), false);
+    assert.match(runCli(["status"], root), /有効なprofile: claudeOnly/);
+  } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });

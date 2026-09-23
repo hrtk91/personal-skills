@@ -2,6 +2,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import {
   type Config,
+  type HarnessTarget,
   type RuleInfo,
   type HookInfo,
   type Options,
@@ -82,16 +83,33 @@ export function discoverHooksFromSource(sourceId: string, configuredPath: string
       const source = join(root, entry.name);
       const config = join(source, "hooks.json");
       if (!existsSync(config)) return null;
+      let targets: unknown;
+      try {
+        const parsed = JSON.parse(readFileSync(config, "utf8")) as { targets?: unknown };
+        targets = parsed.targets;
+      } catch (error) {
+        throw new Error(`hook設定を読み込めません ${config}: ${String(error)}`);
+      }
+      const supportedTargets = hookTargets(targets, config);
       return {
         ref: `${sourceId}:${entry.name}`,
         sourceId,
         name: entry.name,
         source,
         config,
+        targets: supportedTargets,
       } satisfies HookInfo;
     })
     .filter((entry): entry is HookInfo => entry !== null)
     .sort((left, right) => left.ref.localeCompare(right.ref));
+}
+
+function hookTargets(value: unknown, config: string): HarnessTarget[] {
+  if (value === undefined) return ["codex"];
+  if (!Array.isArray(value) || value.some((target) => target !== "codex" && target !== "claude")) {
+    throw new Error(`hook targetsはcodex/claudeの配列である必要があります: ${config}`);
+  }
+  return [...new Set(value as HarnessTarget[])];
 }
 
 export function discoverSkills(config: Config): SkillInfo[] {

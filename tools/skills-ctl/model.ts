@@ -31,23 +31,28 @@ export interface HookInfo {
   name: string;
   source: string;
   config: string;
+  targets: HarnessTarget[];
 }
+
+export type HarnessTarget = "codex" | "claude";
 
 export interface Profile {
   description?: string;
+  targets: HarnessTarget[];
   skills: string[];
   rules: string[];
   hooks: string[];
 }
 
 export interface Config {
-  version: 4;
+  version: 5;
   sources: Record<string, SourceConfig>;
   profiles: Record<string, Profile>;
 }
 
 interface SerializedProfile {
   description?: string;
+  targets?: string[];
   skills?: string[];
   rules?: string[] | string | null;
   hooks?: string[];
@@ -64,7 +69,8 @@ export interface SourceConfig {
 }
 
 export interface ManagedEntry {
-  kind: "skill" | "rules" | "hook-package" | "hook-config";
+  harness: HarnessTarget;
+  kind: "skill" | "rules" | "hook-package" | "hook-config" | "claude-hook-config";
   linkType: "dir" | "file";
   ref: string;
   sourceId: string;
@@ -76,14 +82,17 @@ export interface ManagedEntry {
 export interface Backup {
   timestamp: string;
   activeProfile: string | null;
+  targets: HarnessTarget[];
   managed: ManagedEntry[];
 }
 
 export interface State {
-  version: 3;
+  version: 4;
   codexHome: string;
+  claudeHome: string;
   targetDir: string;
   activeProfile: string | null;
+  targets: HarnessTarget[];
   managed: ManagedEntry[];
   history: Backup[];
 }
@@ -92,6 +101,7 @@ export interface Options {
   configPath: string;
   statePath: string;
   codexHome: string;
+  claudeHome: string;
   targetDir: string;
   sourceId?: string;
   verbose: boolean;
@@ -125,6 +135,12 @@ export function defaultCodexHome(): string {
     ?? join(homedir(), ".codex");
 }
 
+export function defaultClaudeHome(): string {
+  return process.env.PERSONAL_SKILLS_CLAUDE_HOME
+    ?? process.env.CLAUDE_CONFIG_DIR
+    ?? join(homedir(), ".claude");
+}
+
 export function defaultTargetDir(codexHome: string): string {
   return process.env.PERSONAL_SKILLS_TARGET ?? join(codexHome, "skills");
 }
@@ -132,10 +148,12 @@ export function defaultTargetDir(codexHome: string): string {
 export function parseOptions(args: string[]): { positionals: string[]; options: Options } {
   const positionals: string[] = [];
   const codexHome = defaultCodexHome();
+  const claudeHome = defaultClaudeHome();
   const options: Options = {
     configPath: defaultConfigPath(),
     statePath: defaultStatePath(),
     codexHome,
+    claudeHome,
     targetDir: defaultTargetDir(codexHome),
     sourceId: undefined,
     verbose: false,
@@ -160,6 +178,9 @@ export function parseOptions(args: string[]): { positionals: string[]; options: 
         if (!process.env.PERSONAL_SKILLS_TARGET) {
           options.targetDir = join(options.codexHome, "skills");
         }
+        break;
+      case "--claude-home":
+        options.claudeHome = requireOptionValue(args, ++index, arg);
         break;
       case "--id":
         options.sourceId = requireOptionValue(args, ++index, arg);
@@ -217,18 +238,20 @@ export function writeJsonAtomic(path: string, value: unknown): void {
 
 export function emptyConfig(): Config {
   return {
-    version: 4,
+    version: 5,
     sources: { [defaultSourceId]: { path: defaultSourceRoot } },
     profiles: {},
   };
 }
 
-export function emptyState(targetDir: string, codexHome: string): State {
+export function emptyState(targetDir: string, codexHome: string, claudeHome: string): State {
   return {
-    version: 3,
+    version: 4,
     codexHome,
+    claudeHome,
     targetDir,
     activeProfile: null,
+    targets: [],
     managed: [],
     history: [],
   };
@@ -238,7 +261,7 @@ export function readConfig(path: string): Config {
   const shouldPersistMigration = existsSync(path);
   const config = readJson<SerializedConfig>(path, emptyConfig());
   const version = Number(config.version ?? 1);
-  if (version > 4) throw new Error(`未対応のconfig versionです: ${version}`);
+  if (version > 5) throw new Error(`未対応のconfig versionです: ${version}`);
   const configuredSources = config.sources ?? {};
   const sources: Record<string, SourceConfig> = {
     [defaultSourceId]: { path: defaultSourceRoot },
@@ -255,35 +278,54 @@ export function readConfig(path: string): Config {
     ]),
   );
   const migrated: Config = {
-    version: 4,
+    version: 5,
     sources,
     profiles,
   };
-  if (shouldPersistMigration && version < 4) writeJson(path, migrated);
+  if (shouldPersistMigration && version < 5) writeJson(path, migrated);
   return migrated;
 }
 
-export function readState(path: string, targetDir: string, codexHome: string): State {
+export function readState(
+  path: string,
+  targetDir: string,
+  codexHome: string,
+  claudeHome: string,
+): State {
   const shouldPersistMigration = existsSync(path);
-  const state = readJson<Partial<State>>(path, emptyState(targetDir, codexHome));
+  const state = readJson<Partial<State>>(path, emptyState(targetDir, codexHome, claudeHome));
   const version = Number(state.version ?? 1);
-  if (version > 3) throw new Error(`未対応のstate versionです: ${version}`);
+  if (version > 4) throw new Error(`未対応のstate versionです: ${version}`);
   const managed = (state.managed ?? []).map((entry) => normalizeManagedEntry(entry));
   const history = (state.history ?? []).map((backup) => ({
     timestamp: backup.timestamp,
     activeProfile: backup.activeProfile ?? null,
+    targets: normalizeHarnessTargets(
+      backup.targets ?? inferredTargets(backup.managed ?? []),
+      "state history",
+    ),
     managed: (backup.managed ?? []).map((entry) => normalizeManagedEntry(entry)),
   }));
   const migrated: State = {
-    version: 3,
+    version: 4,
     codexHome: state.codexHome ?? codexHome,
+    claudeHome: state.claudeHome ?? claudeHome,
     targetDir: state.targetDir ?? targetDir,
     activeProfile: state.activeProfile ?? null,
+    targets: normalizeHarnessTargets(
+      state.targets ?? inferredTargets(state.managed ?? []),
+      "state",
+    ),
     managed,
     history,
   };
-  if (shouldPersistMigration && version < 3) writeJsonAtomic(path, migrated);
+  if (shouldPersistMigration && version < 4) writeJsonAtomic(path, migrated);
   return migrated;
+}
+
+function inferredTargets(entries: Partial<ManagedEntry>[]): HarnessTarget[] {
+  const targets = [...new Set(entries.map((entry) => entry.harness === "claude" ? "claude" : "codex"))];
+  return targets.length > 0 ? targets : ["codex"];
 }
 
 export function normalizeManagedEntry(entry: Partial<ManagedEntry>): ManagedEntry {
@@ -292,6 +334,7 @@ export function normalizeManagedEntry(entry: Partial<ManagedEntry>): ManagedEntr
   const separator = ref.indexOf(":");
   const name = entry.name ?? ref.slice(separator + 1);
   return {
+    harness: normalizeHarness(entry.harness, "state entry"),
     kind: entry.kind ?? "skill",
     linkType: entry.linkType ?? "dir",
     ref,
@@ -314,10 +357,32 @@ export function normalizeProfile(profile: SerializedProfile, name: string): Prof
   }
   return {
     description: profile.description,
+    targets: normalizeHarnessTargets(profile.targets, `profile ${name}`),
     skills: [...new Set(profile.skills.map(normalizeSkillRef))],
     rules: [...new Set(rules.map(normalizeSkillRef))],
     hooks: [...new Set((profile.hooks ?? []).map(normalizeSkillRef))],
   };
+}
+
+function normalizeHarness(value: unknown, context: string): HarnessTarget {
+  if (value === undefined || value === "codex") return "codex";
+  if (value === "claude") return "claude";
+  throw new Error(`${context}のharnessが不正です: ${String(value)}`);
+}
+
+export function normalizeHarnessTargets(targets: unknown, context: string): HarnessTarget[] {
+  if (targets === undefined) return ["codex"];
+  if (!Array.isArray(targets)) {
+    throw new Error(`${context}のtargetsは配列である必要があります`);
+  }
+  const normalized: HarnessTarget[] = [];
+  for (const target of targets) {
+    if (target !== "codex" && target !== "claude") {
+      throw new Error(`${context}のtargetが不正です: ${target}`);
+    }
+    if (!normalized.includes(target)) normalized.push(target);
+  }
+  return normalized;
 }
 
 export function expandUserPath(path: string): string {

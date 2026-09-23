@@ -39,6 +39,7 @@ function options(root: string): Options {
     configPath: join(root, "profiles.json"),
     statePath: join(root, "state.json"),
     codexHome,
+    claudeHome: join(root, "claude"),
     targetDir: join(codexHome, "skills"),
     sourceId: undefined,
     verbose: false,
@@ -65,7 +66,7 @@ function scriptedPrompts(
   };
 }
 
-test("選んだresourceをprofileへ保存し、保存のみでは導入状態を変更しない", async () => {
+test("対象ハーネスとresourceをprofileへ保存し、保存のみでは導入状態を変更しない", async () => {
   const root = mkdtempSync(join(tmpdir(), "skillsctl-tui-test-"));
   try {
     const source = createResourceSource(root);
@@ -78,6 +79,7 @@ test("選んだresourceをprofileへ保存し、保存のみでは導入状態�
     }));
 
     await profileTui("safe", cliOptions, scriptedPrompts([
+      ["codex", "claude"],
       ["fixture:sample-skill"],
       ["fixture:sample-policy", "fixture:second-policy"],
       ["fixture:sample-policy"],
@@ -87,12 +89,13 @@ test("選んだresourceをprofileへ保存し、保存のみでは導入状態�
     const config = JSON.parse(readFileSync(cliOptions.configPath, "utf8"));
     assert.deepEqual(config.profiles.safe, {
       description: "harnessctlで作成",
+      targets: ["codex", "claude"],
       skills: ["fixture:sample-skill"],
       rules: ["fixture:sample-policy", "fixture:second-policy"],
       hooks: ["fixture:sample-policy"],
     });
     assert.equal(existsSync(cliOptions.statePath), false);
-    assert.deepEqual(receivedOptions[3], {
+    assert.deepEqual(receivedOptions[4], {
       message: "保存したprofileを今すぐ適用しますか？",
       active: "適用する",
       inactive: "保存のみ",
@@ -117,6 +120,7 @@ test("適用するを選ぶと保存したprofileをそのまま適用する", a
     writeFileSync(join(cliOptions.codexHome, "AGENTS.md"), "# base\n");
 
     await profileTui("safe", cliOptions, scriptedPrompts([
+      ["codex"],
       ["fixture:sample-skill"],
       ["fixture:sample-policy", "fixture:second-policy"],
       ["fixture:sample-policy"],
@@ -170,6 +174,7 @@ test("既存profileを編集すると現在のskill・複数rules・hookが選�
     const receivedOptions: unknown[] = [];
 
     await profileTui("safe", cliOptions, scriptedPrompts([
+      ["codex"],
       ["fixture:sample-skill"],
       ["fixture:second-policy", "fixture:sample-policy"],
       ["fixture:sample-policy"],
@@ -177,15 +182,15 @@ test("既存profileを編集すると現在のskill・複数rules・hookが選�
     ], undefined, receivedOptions));
 
     assert.deepEqual(
-      (receivedOptions[0] as { initialValues?: string[] }).initialValues,
+      (receivedOptions[1] as { initialValues?: string[] }).initialValues,
       ["fixture:sample-skill"],
     );
     assert.deepEqual(
-      (receivedOptions[1] as { initialValues?: string[] }).initialValues,
+      (receivedOptions[2] as { initialValues?: string[] }).initialValues,
       ["fixture:second-policy", "fixture:sample-policy"],
     );
     assert.deepEqual(
-      (receivedOptions[2] as { initialValues?: string[] }).initialValues,
+      (receivedOptions[3] as { initialValues?: string[] }).initialValues,
       ["fixture:sample-policy"],
     );
   } finally {
@@ -291,7 +296,7 @@ test("promptを途中で中止するとprofile設定を変更しない", async (
     const source = createResourceSource(root);
     const cliOptions = options(root);
     const original = JSON.stringify({
-      version: 4,
+      version: 5,
       sources: { fixture: { path: source } },
       profiles: {},
     });
@@ -299,6 +304,7 @@ test("promptを途中で中止するとprofile設定を変更しない", async (
     const cancelValue = Symbol("cancel");
 
     await profileTui("safe", cliOptions, scriptedPrompts([
+      ["codex"],
       ["fixture:sample-skill"],
       cancelValue,
     ], cancelValue));
@@ -327,6 +333,7 @@ test("すべて外すと既存のrulesを解除できる", async () => {
     }));
 
     await profileTui("safe", cliOptions, scriptedPrompts([
+      ["codex"],
       ["fixture:sample-skill"],
       [],
       [],
