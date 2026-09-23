@@ -28,6 +28,7 @@ import {
 function usage(): void {
   console.log(`personal-skills harness管理\n\n使い方:\n  harnessctl                         profileを選択・作成してresourceを編集\n  harnessctl tui [name]              指定profileを編集\n  harnessctl skills\n  harnessctl sources list\n  harnessctl sources add <path> [--id <id>]\n  harnessctl profile list\n  harnessctl profile show <name>\n  harnessctl profile tui [name]\n  harnessctl plan <name>\n  harnessctl apply <name> [--dry-run] [--yes]\n  harnessctl status\n  harnessctl rollback [--yes]\n\n`);
   console.log("  --verbose, -v        skillのpathと説明を表示");
+  console.log("  --claude-home <dir>  Claude Codeの設定directoryを指定");
 }
 
 async function main(): Promise<void> {
@@ -69,7 +70,7 @@ async function main(): Promise<void> {
       throw new Error(`不明なsources commandです: ${subcommand}`);
     }
     case "status":
-      inspectStatus(readState(options.statePath, options.targetDir, options.codexHome));
+      inspectStatus(readState(options.statePath, options.targetDir, options.codexHome, options.claudeHome));
       return;
     case "rollback":
       await rollback(options);
@@ -81,19 +82,21 @@ async function main(): Promise<void> {
       const config = readConfig(options.configPath);
       const profile = getProfile(config, name);
       if (command === "plan") {
-        const state = readState(options.statePath, options.targetDir, options.codexHome);
+        const state = readState(options.statePath, options.targetDir, options.codexHome, options.claudeHome);
         state.targetDir = resolve(options.targetDir);
         state.codexHome = resolve(options.codexHome);
+        state.claudeHome = resolve(options.claudeHome);
         const migratedState = detachLegacyRulesEntries(state);
         const plan = desiredPlan(
           profile,
           migratedState.targetDir,
           migratedState.codexHome,
+          migratedState.claudeHome,
           options.statePath,
           config,
         );
-        validatePlan(plan.entries, migratedState, migratedState.targetDir);
-        printPlan(plan.entries, migratedState);
+        validatePlan(plan.entries, migratedState, migratedState.targetDir, plan.artifacts);
+        printPlan(plan.entries, migratedState, plan.notices, profile.targets);
         return;
       }
       await applyProfile(name, profile, config, options);

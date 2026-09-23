@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
   type Config,
+  type HarnessTarget,
   type HookInfo,
   type ManagedEntry,
   type Profile,
@@ -19,6 +20,7 @@ export interface GeneratedArtifact {
 export interface DesiredPlan {
   entries: ManagedEntry[];
   artifacts: GeneratedArtifact[];
+  notices: string[];
 }
 
 export function shellQuote(value: string): string {
@@ -40,6 +42,7 @@ export function replaceHookRoot(value: unknown, root: string): unknown {
 export function mergedHooks(
   selected: HookInfo[],
   packageTargets: Map<string, string>,
+  harness: HarnessTarget,
 ): string {
   const hooks: Record<string, unknown[]> = {};
   for (const hook of selected) {
@@ -54,7 +57,9 @@ export function mergedHooks(
     }
     const record = parsed as Record<string, unknown>;
     const configuredHooks = record.hooks;
-    const unknown = Object.keys(record).filter((key) => key !== "description" && key !== "hooks");
+    const unknown = Object.keys(record).filter(
+      (key) => key !== "description" && key !== "hooks" && key !== "targets",
+    );
     if (unknown.length > 0) {
       throw new Error(`hook設定に未対応のkeyがあります ${hook.config}: ${unknown.join(", ")}`);
     }
@@ -73,7 +78,7 @@ export function mergedHooks(
     }
   }
   return `${JSON.stringify({
-    description: "harnessctlが生成しました。このfileではなく有効なprofileを編集してください。",
+    description: `harnessctlが${harness}用に生成しました。このfileではなく有効なprofileを編集してください。`,
     hooks,
   }, null, 2)}\n`;
 }
@@ -110,26 +115,17 @@ export function desiredPlan(
   profile: Profile,
   targetDir: string,
   codexHome: string,
+  claudeHome: string,
   statePath: string,
   config: Config,
 ): DesiredPlan {
   const skills = skillMap(config);
-  const entries: ManagedEntry[] = profile.skills.map((rawRef) => {
+  const selectedSkills = profile.skills.map((rawRef) => {
     const ref = normalizeSkillRef(rawRef);
     const skill = skills.get(ref);
     if (!skill) throw new Error(`skillが見つかりません: ${ref}`);
-    return {
-      kind: "skill" as const,
-      linkType: "dir" as const,
-      ref,
-      sourceId: skill.sourceId,
-      name: skill.name,
-      source: skill.source,
-      target: join(targetDir, skill.name),
-    };
+    return { ref, skill };
   });
-
-  const artifacts: GeneratedArtifact[] = [];
   const rules = ruleMap(config);
   const selectedRules = profile.rules.map((rawRef) => {
     const ref = normalizeSkillRef(rawRef);
@@ -137,57 +133,99 @@ export function desiredPlan(
     if (!rule) throw new Error(`rulesが見つかりません: ${ref}`);
     return rule;
   });
-  if (selectedRules.length > 0) {
-    const content = mergedRules(selectedRules, readBaseAgents(codexHome));
-    const hash = createHash("sha256").update(content).digest("hex");
-    const source = join(dirname(statePath), "artifacts", `agents-${hash}.md`);
-    artifacts.push({ path: source, content });
-    entries.push({
-      kind: "rules",
-      linkType: "file",
-      ref: `generated:${hash}`,
-      sourceId: "generated",
-      name: hash,
-      source,
-      target: join(codexHome, "AGENTS.override.md"),
-    });
-  }
-
   const hooks = hookMap(config);
   const selectedHooks = profile.hooks.map((ref) => {
     const hook = hooks.get(ref);
     if (!hook) throw new Error(`hookが見つかりません: ${ref}`);
     return hook;
   });
-  const packageTargets = new Map<string, string>();
-  for (const hook of selectedHooks) {
-    const target = join(codexHome, "managed-hooks", hook.sourceId, hook.name);
-    packageTargets.set(hook.ref, target);
-    entries.push({
-      kind: "hook-package",
-      linkType: "dir",
-      ref: hook.ref,
-      sourceId: hook.sourceId,
-      name: hook.name,
-      source: hook.source,
-      target,
-    });
-  }
 
-  if (selectedHooks.length > 0) {
-    const content = mergedHooks(selectedHooks, packageTargets);
-    const hash = createHash("sha256").update(content).digest("hex");
-    const source = join(dirname(statePath), "artifacts", `hooks-${hash}.json`);
-    artifacts.push({ path: source, content });
-    entries.push({
-      kind: "hook-config",
-      linkType: "file",
-      ref: `generated:${hash}`,
-      sourceId: "generated",
-      name: hash,
-      source,
-      target: join(codexHome, "hooks.json"),
-    });
+  const artifacts: GeneratedArtifact[] = [];
+  const entries: ManagedEntry[] = [];
+  const notices: string[] = [];
+  for (const harness of profile.targets) {
+    const home = harness === "codex" ? codexHome : claudeHome;
+    const skillsTarget = harness === "codex" ? targetDir : join(claudeHome, "skills");
+    for (const { ref, skill } of selectedSkills) {
+      entries.push({
+        harness,
+        kind: "skill",
+        linkType: "dir",
+        ref,
+        sourceId: skill.sourceId,
+        name: skill.name,
+        source: skill.source,
+        target: join(skillsTarget, skill.name),
+      });
+    }
+
+    if (selectedRules.length > 0) {
+      const content = mergedRules(
+        selectedRules,
+        harness === "codex" ? readBaseAgents(codexHome) : "",
+      );
+      const hash = createHash("sha256").update(content).digest("hex");
+      const prefix = harness === "codex" ? "agents" : "claude-rules";
+      const source = join(dirname(statePath), "artifacts", `${prefix}-${hash}.md`);
+      artifacts.push({ path: source, content });
+      entries.push({
+        harness,
+        kind: "rules",
+        linkType: "file",
+        ref: `generated:${hash}`,
+        sourceId: "generated",
+        name: hash,
+        source,
+        target: harness === "codex"
+          ? join(codexHome, "AGENTS.override.md")
+          : join(claudeHome, "rules", "harnessctl-personal-skills.md"),
+      });
+    }
+
+    const supportedHooks = selectedHooks.filter((hook) => hook.targets.includes(harness));
+    if (harness === "claude") {
+      for (const hook of selectedHooks) {
+        if (!hook.targets.includes("claude")) {
+          const reason = hook.targets.length === 0
+            ? "targetsにClaudeが指定されていません"
+            : `対応対象は${hook.targets.join(", ")}です`;
+          notices.push(`Claude対象外 hook ${hook.ref}: ${reason}`);
+        }
+      }
+    }
+
+    const packageTargets = new Map<string, string>();
+    for (const hook of supportedHooks) {
+      const packageTarget = join(home, "managed-hooks", hook.sourceId, hook.name);
+      packageTargets.set(hook.ref, packageTarget);
+      entries.push({
+        harness,
+        kind: "hook-package",
+        linkType: "dir",
+        ref: hook.ref,
+        sourceId: hook.sourceId,
+        name: hook.name,
+        source: hook.source,
+        target: packageTarget,
+      });
+    }
+
+    if (supportedHooks.length > 0) {
+      const content = mergedHooks(supportedHooks, packageTargets, harness);
+      const hash = createHash("sha256").update(content).digest("hex");
+      const source = join(dirname(statePath), "artifacts", `${harness}-hooks-${hash}.json`);
+      artifacts.push({ path: source, content });
+      entries.push({
+        harness,
+        kind: harness === "codex" ? "hook-config" : "claude-hook-config",
+        linkType: "file",
+        ref: `generated:${hash}`,
+        sourceId: "generated",
+        name: hash,
+        source,
+        target: harness === "codex" ? join(codexHome, "hooks.json") : join(claudeHome, "settings.json"),
+      });
+    }
   }
-  return { entries, artifacts };
+  return { entries, artifacts, notices };
 }

@@ -11,8 +11,8 @@ $ErrorActionPreference = "Stop"
 # 処理順:
 # 1. 開発checkoutの取得元を確認する。
 # 2. 自動更新専用のruntime repoを作成または検証する。
-# 3. runtime repoを最新化し、skill/agentの配布まで成功させる。
-# 4. 以後の更新に必要なruntime repoと開発checkoutの場所をTaskへ登録する。
+# 3. runtime repoだけを最新化する。
+# 4. 以後の更新に必要なruntime repoをTaskへ登録する。
 # 5. 登録されたTaskの現在状態と次回実行時刻を表示する。
 
 # 1. 開発checkoutの取得元を確認する。
@@ -39,18 +39,17 @@ if ($LASTEXITCODE -ne 0 -or $runtimeRemoteUrl -ne $remoteUrl) {
 $updateScript = Join-Path $RuntimeRepo "skills\personal-skills-auto-update\scripts\update.ps1"
 $bootstrapUpdateScript = Join-Path $PSScriptRoot "update.ps1"
 
-# 3. runtime repoを最新化し、skill/agentの配布まで成功させる。
-# ここで失敗した場合はTaskを登録せず、壊れた配布状態の自動再実行を防ぐ。
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $bootstrapUpdateScript -Repo $RuntimeRepo -BaseBranch $BaseBranch -AdoptRepoRoot $SourceRepo -TaskName $TaskName
+# 3. runtime repoだけを最新化する。
+# ここで失敗した場合はTaskを登録せず、runtime cloneを更新できない状態で定期実行を始めない。
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $bootstrapUpdateScript -Repo $RuntimeRepo -BaseBranch $BaseBranch -TaskName $TaskName
 if ($LASTEXITCODE -ne 0) {
     throw "initial runtime update failed with exit code $LASTEXITCODE"
 }
 
-# 4. 以後の更新に必要なruntime repoと開発checkoutの場所をTaskへ登録する。
-# AdoptRepoRootは、旧agent Junctionがこの開発checkoutを指す場合だけ移行を許可するために使う。
+# 4. 以後の更新に必要なruntime repoをTaskへ登録する。
 $action = New-ScheduledTaskAction `
     -Execute (Join-Path $env:SystemRoot "System32\conhost.exe") `
-    -Argument "--headless powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$updateScript`" -Repo `"$RuntimeRepo`" -BaseBranch `"$BaseBranch`" -TaskName `"$TaskName`" -AdoptRepoRoot `"$SourceRepo`""
+    -Argument "--headless powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$updateScript`" -Repo `"$RuntimeRepo`" -BaseBranch `"$BaseBranch`" -TaskName `"$TaskName`""
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
     -RepetitionInterval (New-TimeSpan -Minutes 15)
 $settings = New-ScheduledTaskSettingsSet `
@@ -65,7 +64,7 @@ Register-ScheduledTask `
     -Action $action `
     -Trigger $trigger `
     -Settings $settings `
-    -Description "Safely fast-forward and install personal-skills" `
+    -Description "Safely fast-forward personal-skills runtime clone" `
     -Force | Out-Null
 
 # 5. 登録されたTaskの現在状態と次回実行時刻を表示する。

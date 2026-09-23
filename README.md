@@ -2,23 +2,11 @@
 
 AIエージェントに、作業の進め方や判断基準を追加するための個人用スキル集です。
 
-コードレビュー、調査、文章作成、開発環境の運用など、繰り返し使う手順を `skills/` にまとめています。Codex、Claude Code、一部のスキルはHermesから利用できます。`harnessctl` のprofileでは、選択skillに加えて常時ルールとCodex hookも管理できます。
+コードレビュー、調査、文章作成、開発環境の運用など、繰り返し使う手順を `skills/` にまとめています。Codex、Claude Code、一部のスキルはHermesから利用できます。`harnessctl` のprofileでは対象ハーネスを選び、skill、常時ルール、対応するhookを管理できます。Claude Codeでは既存のユーザー`CLAUDE.md`を保ったまま、ユーザー共通rulesとsettings内のhookを扱います。詳しくは[harnessctlの使い方](tools/README.md)を参照してください。
 
 ## 使い方
 
-リポジトリをcloneし、環境に合うインストールスクリプトを実行します。
-
-Linux / macOS / WSL:
-
-```bash
-./scripts/install-symlinks.sh
-```
-
-Windows PowerShell:
-
-```powershell
-./scripts/install-symlinks.ps1
-```
+導入するskill・ルール・hookは、`harnessctl`のprofileで選択して適用します。CLIの導入方法と利用手順は[harnessctlの使い方](tools/README.md)を参照してください。
 
 各スキルの詳しい使い方は、`skills/<スキル名>/SKILL.md` にあります。
 
@@ -79,7 +67,7 @@ Windows PowerShell:
 | `codex` | Codexを第二意見を得る相手として使います。 |
 | `codex-handoff` | Codexタスクの引継ぎ資料と新タスクの継続を、承認範囲・証拠つきで整理します。 |
 | `grok-second-opinion` | Grokへ前提と論点を渡し、別の角度から意見を得ます。 |
-| `personal-skills-auto-update` | 更新条件を確認しながら、WindowsとWSLの実行環境へスキルを自動反映します。 |
+| `personal-skills-auto-update` | WindowsとWSLのruntime cloneを安全に更新します。skillの導入は`harnessctl apply`で行います。 |
 | `personal-skills-ctl-daemon` | このリポジトリとローカルのスキルを同期するCLIやdaemonを設計します。 |
 | `retlaude` | Claudeセッションの振り返りを非同期で保存します。 |
 | `skill-benchmark` | 実運用の失敗や観測から原因仮説とeval caseを作り、介入前後の効果と回帰を比較します。 |
@@ -106,6 +94,5 @@ profileで選択して導入したルールを、作業時の指示として常�
 - `benchmarks/`: observation、失敗原因の仮説、固定eval case、介入比較の結果
 - `commands/`: Claude Codeのカスタムコマンド
 - `hooks/`: セッション記録やコマンド実行前の確認などのhook
-- `rules/`: profileから`AGENTS.override.md`へ常時導入するCodexルール
-- `scripts/`: スキルと設定を各ツールへ反映するスクリプト
+- `rules/`: profileからCodexの`AGENTS.override.md`またはClaude Codeのユーザー共通rulesへ導入する常時ルール
 - `tools/`: skill・常時ルール・hookをprofile単位で導入する`harnessctl`

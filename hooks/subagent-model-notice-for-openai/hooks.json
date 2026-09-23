@@ -1,5 +1,6 @@
 {
   "description": "OpenAI Codex専用。subagent起動時のモデル・推論レベルを確認する注意contextを追加する。",
+  "targets": ["codex"],
   "hooks": {
     "PreToolUse": [
       {

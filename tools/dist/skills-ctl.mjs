@@ -35,16 +35,21 @@ function defaultStatePath() {
 function defaultCodexHome() {
   return process.env.PERSONAL_SKILLS_CODEX_HOME ?? process.env.CODEX_HOME ?? join(homedir(), ".codex");
 }
+function defaultClaudeHome() {
+  return process.env.PERSONAL_SKILLS_CLAUDE_HOME ?? process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude");
+}
 function defaultTargetDir(codexHome) {
   return process.env.PERSONAL_SKILLS_TARGET ?? join(codexHome, "skills");
 }
 function parseOptions(args) {
   const positionals = [];
   const codexHome = defaultCodexHome();
+  const claudeHome = defaultClaudeHome();
   const options = {
     configPath: defaultConfigPath(),
     statePath: defaultStatePath(),
     codexHome,
+    claudeHome,
     targetDir: defaultTargetDir(codexHome),
     sourceId: void 0,
     verbose: false,
@@ -68,6 +73,9 @@ function parseOptions(args) {
         if (!process.env.PERSONAL_SKILLS_TARGET) {
           options.targetDir = join(options.codexHome, "skills");
         }
+        break;
+      case "--claude-home":
+        options.claudeHome = requireOptionValue(args, ++index, arg);
         break;
       case "--id":
         options.sourceId = requireOptionValue(args, ++index, arg);
@@ -121,17 +129,19 @@ function writeJsonAtomic(path, value) {
 }
 function emptyConfig() {
   return {
-    version: 4,
+    version: 5,
     sources: { [defaultSourceId]: { path: defaultSourceRoot } },
     profiles: {}
   };
 }
-function emptyState(targetDir, codexHome) {
+function emptyState(targetDir, codexHome, claudeHome) {
   return {
-    version: 3,
+    version: 4,
     codexHome,
+    claudeHome,
     targetDir,
     activeProfile: null,
+    targets: [],
     managed: [],
     history: []
   };
@@ -140,7 +150,7 @@ function readConfig(path) {
   const shouldPersistMigration = existsSync(path);
   const config = readJson(path, emptyConfig());
   const version = Number(config.version ?? 1);
-  if (version > 4) throw new Error(`\u672A\u5BFE\u5FDC\u306Econfig version\u3067\u3059: ${version}`);
+  if (version > 5) throw new Error(`\u672A\u5BFE\u5FDC\u306Econfig version\u3067\u3059: ${version}`);
   const configuredSources = config.sources ?? {};
   const sources = {
     [defaultSourceId]: { path: defaultSourceRoot },
@@ -157,34 +167,47 @@ function readConfig(path) {
     ])
   );
   const migrated = {
-    version: 4,
+    version: 5,
     sources,
     profiles
   };
-  if (shouldPersistMigration && version < 4) writeJson(path, migrated);
+  if (shouldPersistMigration && version < 5) writeJson(path, migrated);
   return migrated;
 }
-function readState(path, targetDir, codexHome) {
+function readState(path, targetDir, codexHome, claudeHome) {
   const shouldPersistMigration = existsSync(path);
-  const state = readJson(path, emptyState(targetDir, codexHome));
+  const state = readJson(path, emptyState(targetDir, codexHome, claudeHome));
   const version = Number(state.version ?? 1);
-  if (version > 3) throw new Error(`\u672A\u5BFE\u5FDC\u306Estate version\u3067\u3059: ${version}`);
+  if (version > 4) throw new Error(`\u672A\u5BFE\u5FDC\u306Estate version\u3067\u3059: ${version}`);
   const managed = (state.managed ?? []).map((entry) => normalizeManagedEntry(entry));
   const history = (state.history ?? []).map((backup) => ({
     timestamp: backup.timestamp,
     activeProfile: backup.activeProfile ?? null,
+    targets: normalizeHarnessTargets(
+      backup.targets ?? inferredTargets(backup.managed ?? []),
+      "state history"
+    ),
     managed: (backup.managed ?? []).map((entry) => normalizeManagedEntry(entry))
   }));
   const migrated = {
-    version: 3,
+    version: 4,
     codexHome: state.codexHome ?? codexHome,
+    claudeHome: state.claudeHome ?? claudeHome,
     targetDir: state.targetDir ?? targetDir,
     activeProfile: state.activeProfile ?? null,
+    targets: normalizeHarnessTargets(
+      state.targets ?? inferredTargets(state.managed ?? []),
+      "state"
+    ),
     managed,
     history
   };
-  if (shouldPersistMigration && version < 3) writeJsonAtomic(path, migrated);
+  if (shouldPersistMigration && version < 4) writeJsonAtomic(path, migrated);
   return migrated;
+}
+function inferredTargets(entries) {
+  const targets = [...new Set(entries.map((entry) => entry.harness === "claude" ? "claude" : "codex"))];
+  return targets.length > 0 ? targets : ["codex"];
 }
 function normalizeManagedEntry(entry) {
   const rawRef = entry.ref ?? `${defaultSourceId}:${entry.name ?? ""}`;
@@ -192,6 +215,7 @@ function normalizeManagedEntry(entry) {
   const separator = ref.indexOf(":");
   const name = entry.name ?? ref.slice(separator + 1);
   return {
+    harness: normalizeHarness(entry.harness, "state entry"),
     kind: entry.kind ?? "skill",
     linkType: entry.linkType ?? "dir",
     ref,
@@ -211,10 +235,30 @@ function normalizeProfile(profile, name) {
   }
   return {
     description: profile.description,
+    targets: normalizeHarnessTargets(profile.targets, `profile ${name}`),
     skills: [...new Set(profile.skills.map(normalizeSkillRef))],
     rules: [...new Set(rules.map(normalizeSkillRef))],
     hooks: [...new Set((profile.hooks ?? []).map(normalizeSkillRef))]
   };
+}
+function normalizeHarness(value, context) {
+  if (value === void 0 || value === "codex") return "codex";
+  if (value === "claude") return "claude";
+  throw new Error(`${context}\u306Eharness\u304C\u4E0D\u6B63\u3067\u3059: ${String(value)}`);
+}
+function normalizeHarnessTargets(targets, context) {
+  if (targets === void 0) return ["codex"];
+  if (!Array.isArray(targets)) {
+    throw new Error(`${context}\u306Etargets\u306F\u914D\u5217\u3067\u3042\u308B\u5FC5\u8981\u304C\u3042\u308A\u307E\u3059`);
+  }
+  const normalized = [];
+  for (const target of targets) {
+    if (target !== "codex" && target !== "claude") {
+      throw new Error(`${context}\u306Etarget\u304C\u4E0D\u6B63\u3067\u3059: ${target}`);
+    }
+    if (!normalized.includes(target)) normalized.push(target);
+  }
+  return normalized;
 }
 function expandUserPath(path) {
   if (path === "~") return homedir();
@@ -322,14 +366,30 @@ function discoverHooksFromSource(sourceId, configuredPath) {
     const source = join2(root, entry.name);
     const config = join2(source, "hooks.json");
     if (!existsSync2(config)) return null;
+    let targets;
+    try {
+      const parsed = JSON.parse(readFileSync2(config, "utf8"));
+      targets = parsed.targets;
+    } catch (error) {
+      throw new Error(`hook\u8A2D\u5B9A\u3092\u8AAD\u307F\u8FBC\u3081\u307E\u305B\u3093 ${config}: ${String(error)}`);
+    }
+    const supportedTargets = hookTargets(targets, config);
     return {
       ref: `${sourceId}:${entry.name}`,
       sourceId,
       name: entry.name,
       source,
-      config
+      config,
+      targets: supportedTargets
     };
   }).filter((entry) => entry !== null).sort((left, right) => left.ref.localeCompare(right.ref));
+}
+function hookTargets(value, config) {
+  if (value === void 0) return ["codex"];
+  if (!Array.isArray(value) || value.some((target) => target !== "codex" && target !== "claude")) {
+    throw new Error(`hook targets\u306Fcodex/claude\u306E\u914D\u5217\u3067\u3042\u308B\u5FC5\u8981\u304C\u3042\u308A\u307E\u3059: ${config}`);
+  }
+  return [...new Set(value)];
 }
 function discoverSkills(config) {
   const skills = [];
@@ -426,7 +486,7 @@ function replaceHookRoot(value, root) {
   }
   return value;
 }
-function mergedHooks(selected, packageTargets) {
+function mergedHooks(selected, packageTargets, harness) {
   const hooks = {};
   for (const hook of selected) {
     let parsed;
@@ -440,7 +500,9 @@ function mergedHooks(selected, packageTargets) {
     }
     const record = parsed;
     const configuredHooks = record.hooks;
-    const unknown = Object.keys(record).filter((key) => key !== "description" && key !== "hooks");
+    const unknown = Object.keys(record).filter(
+      (key) => key !== "description" && key !== "hooks" && key !== "targets"
+    );
     if (unknown.length > 0) {
       throw new Error(`hook\u8A2D\u5B9A\u306B\u672A\u5BFE\u5FDC\u306Ekey\u304C\u3042\u308A\u307E\u3059 ${hook.config}: ${unknown.join(", ")}`);
     }
@@ -459,7 +521,7 @@ function mergedHooks(selected, packageTargets) {
     }
   }
   return `${JSON.stringify({
-    description: "harnessctl\u304C\u751F\u6210\u3057\u307E\u3057\u305F\u3002\u3053\u306Efile\u3067\u306F\u306A\u304F\u6709\u52B9\u306Aprofile\u3092\u7DE8\u96C6\u3057\u3066\u304F\u3060\u3055\u3044\u3002",
+    description: `harnessctl\u304C${harness}\u7528\u306B\u751F\u6210\u3057\u307E\u3057\u305F\u3002\u3053\u306Efile\u3067\u306F\u306A\u304F\u6709\u52B9\u306Aprofile\u3092\u7DE8\u96C6\u3057\u3066\u304F\u3060\u3055\u3044\u3002`,
     hooks
   }, null, 2)}
 `;
@@ -492,23 +554,14 @@ function mergedRules(selected, baseContent = "") {
   return `${sections.join("\n\n")}
 `;
 }
-function desiredPlan(profile, targetDir, codexHome, statePath, config) {
+function desiredPlan(profile, targetDir, codexHome, claudeHome, statePath, config) {
   const skills = skillMap(config);
-  const entries = profile.skills.map((rawRef) => {
+  const selectedSkills = profile.skills.map((rawRef) => {
     const ref = normalizeSkillRef(rawRef);
     const skill = skills.get(ref);
     if (!skill) throw new Error(`skill\u304C\u898B\u3064\u304B\u308A\u307E\u305B\u3093: ${ref}`);
-    return {
-      kind: "skill",
-      linkType: "dir",
-      ref,
-      sourceId: skill.sourceId,
-      name: skill.name,
-      source: skill.source,
-      target: join3(targetDir, skill.name)
-    };
+    return { ref, skill };
   });
-  const artifacts = [];
   const rules = ruleMap(config);
   const selectedRules = profile.rules.map((rawRef) => {
     const ref = normalizeSkillRef(rawRef);
@@ -516,63 +569,99 @@ function desiredPlan(profile, targetDir, codexHome, statePath, config) {
     if (!rule) throw new Error(`rules\u304C\u898B\u3064\u304B\u308A\u307E\u305B\u3093: ${ref}`);
     return rule;
   });
-  if (selectedRules.length > 0) {
-    const content = mergedRules(selectedRules, readBaseAgents(codexHome));
-    const hash = createHash("sha256").update(content).digest("hex");
-    const source = join3(dirname3(statePath), "artifacts", `agents-${hash}.md`);
-    artifacts.push({ path: source, content });
-    entries.push({
-      kind: "rules",
-      linkType: "file",
-      ref: `generated:${hash}`,
-      sourceId: "generated",
-      name: hash,
-      source,
-      target: join3(codexHome, "AGENTS.override.md")
-    });
-  }
   const hooks = hookMap(config);
   const selectedHooks = profile.hooks.map((ref) => {
     const hook = hooks.get(ref);
     if (!hook) throw new Error(`hook\u304C\u898B\u3064\u304B\u308A\u307E\u305B\u3093: ${ref}`);
     return hook;
   });
-  const packageTargets = /* @__PURE__ */ new Map();
-  for (const hook of selectedHooks) {
-    const target = join3(codexHome, "managed-hooks", hook.sourceId, hook.name);
-    packageTargets.set(hook.ref, target);
-    entries.push({
-      kind: "hook-package",
-      linkType: "dir",
-      ref: hook.ref,
-      sourceId: hook.sourceId,
-      name: hook.name,
-      source: hook.source,
-      target
-    });
+  const artifacts = [];
+  const entries = [];
+  const notices = [];
+  for (const harness of profile.targets) {
+    const home = harness === "codex" ? codexHome : claudeHome;
+    const skillsTarget = harness === "codex" ? targetDir : join3(claudeHome, "skills");
+    for (const { ref, skill } of selectedSkills) {
+      entries.push({
+        harness,
+        kind: "skill",
+        linkType: "dir",
+        ref,
+        sourceId: skill.sourceId,
+        name: skill.name,
+        source: skill.source,
+        target: join3(skillsTarget, skill.name)
+      });
+    }
+    if (selectedRules.length > 0) {
+      const content = mergedRules(
+        selectedRules,
+        harness === "codex" ? readBaseAgents(codexHome) : ""
+      );
+      const hash = createHash("sha256").update(content).digest("hex");
+      const prefix = harness === "codex" ? "agents" : "claude-rules";
+      const source = join3(dirname3(statePath), "artifacts", `${prefix}-${hash}.md`);
+      artifacts.push({ path: source, content });
+      entries.push({
+        harness,
+        kind: "rules",
+        linkType: "file",
+        ref: `generated:${hash}`,
+        sourceId: "generated",
+        name: hash,
+        source,
+        target: harness === "codex" ? join3(codexHome, "AGENTS.override.md") : join3(claudeHome, "rules", "harnessctl-personal-skills.md")
+      });
+    }
+    const supportedHooks = selectedHooks.filter((hook) => hook.targets.includes(harness));
+    if (harness === "claude") {
+      for (const hook of selectedHooks) {
+        if (!hook.targets.includes("claude")) {
+          const reason = hook.targets.length === 0 ? "targets\u306BClaude\u304C\u6307\u5B9A\u3055\u308C\u3066\u3044\u307E\u305B\u3093" : `\u5BFE\u5FDC\u5BFE\u8C61\u306F${hook.targets.join(", ")}\u3067\u3059`;
+          notices.push(`Claude\u5BFE\u8C61\u5916 hook ${hook.ref}: ${reason}`);
+        }
+      }
+    }
+    const packageTargets = /* @__PURE__ */ new Map();
+    for (const hook of supportedHooks) {
+      const packageTarget = join3(home, "managed-hooks", hook.sourceId, hook.name);
+      packageTargets.set(hook.ref, packageTarget);
+      entries.push({
+        harness,
+        kind: "hook-package",
+        linkType: "dir",
+        ref: hook.ref,
+        sourceId: hook.sourceId,
+        name: hook.name,
+        source: hook.source,
+        target: packageTarget
+      });
+    }
+    if (supportedHooks.length > 0) {
+      const content = mergedHooks(supportedHooks, packageTargets, harness);
+      const hash = createHash("sha256").update(content).digest("hex");
+      const source = join3(dirname3(statePath), "artifacts", `${harness}-hooks-${hash}.json`);
+      artifacts.push({ path: source, content });
+      entries.push({
+        harness,
+        kind: harness === "codex" ? "hook-config" : "claude-hook-config",
+        linkType: "file",
+        ref: `generated:${hash}`,
+        sourceId: "generated",
+        name: hash,
+        source,
+        target: harness === "codex" ? join3(codexHome, "hooks.json") : join3(claudeHome, "settings.json")
+      });
+    }
   }
-  if (selectedHooks.length > 0) {
-    const content = mergedHooks(selectedHooks, packageTargets);
-    const hash = createHash("sha256").update(content).digest("hex");
-    const source = join3(dirname3(statePath), "artifacts", `hooks-${hash}.json`);
-    artifacts.push({ path: source, content });
-    entries.push({
-      kind: "hook-config",
-      linkType: "file",
-      ref: `generated:${hash}`,
-      sourceId: "generated",
-      name: hash,
-      source,
-      target: join3(codexHome, "hooks.json")
-    });
-  }
-  return { entries, artifacts };
+  return { entries, artifacts, notices };
 }
 
 // tools/skills-ctl/activation.ts
 import {
   existsSync as existsSync4,
   mkdirSync as mkdirSync2,
+  readFileSync as readFileSync4,
   readlinkSync,
   renameSync as renameSync2,
   symlinkSync,
@@ -580,6 +669,7 @@ import {
   writeFileSync as writeFileSync2
 } from "node:fs";
 import { dirname as dirname4, join as join4, resolve as resolve3 } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 function isSymlinkTo(path, source) {
@@ -593,11 +683,20 @@ function isSymlinkTo(path, source) {
   }
 }
 function managedEntryFor(state, target) {
-  return state.managed.find((entry) => entry.target === target);
+  return state.managed.find((entry) => resolve3(entry.target) === resolve3(target));
+}
+function isClaudeHookConfig(entry) {
+  return entry.harness === "claude" && entry.kind === "claude-hook-config";
+}
+function linkEntries(entries) {
+  return entries.filter((entry) => !isClaudeHookConfig(entry));
+}
+function claudeHookEntry(entries) {
+  return entries.find(isClaudeHookConfig);
 }
 function detachLegacyRulesEntries(state) {
   const legacyTarget = join4(resolve3(state.codexHome), "AGENTS.md");
-  const isLegacyRulesEntry = (entry) => entry.kind === "rules" && resolve3(entry.target) === legacyTarget;
+  const isLegacyRulesEntry = (entry) => entry.harness === "codex" && entry.kind === "rules" && resolve3(entry.target) === legacyTarget;
   const hasLegacyEntry = state.managed.some(isLegacyRulesEntry) || state.history.some((backup) => backup.managed.some(isLegacyRulesEntry));
   if (!hasLegacyEntry) return state;
   const stat = safeLstat(legacyTarget);
@@ -617,22 +716,27 @@ function detachLegacyRulesEntries(state) {
     }))
   };
 }
-function validatePlan(desired, state, targetDir) {
-  if (desired.some((entry) => entry.name === ".system")) {
+function validatePlan(desired, state, targetDir, artifacts = []) {
+  if (desired.some((entry) => entry.kind === "skill" && entry.name === ".system")) {
     throw new Error(".system\u306F\u4FDD\u8B77\u5BFE\u8C61\u306E\u305F\u3081\u7BA1\u7406\u3067\u304D\u307E\u305B\u3093");
   }
   const targetOwners = /* @__PURE__ */ new Map();
   for (const entry of desired) {
     validateManagedTarget(entry, state, targetDir);
-    const previous = targetOwners.get(entry.target);
-    if (previous && previous.ref !== entry.ref) {
+    const target = resolve3(entry.target);
+    const previous = targetOwners.get(target);
+    if (previous && (previous.ref !== entry.ref || previous.harness !== entry.harness)) {
       throw new Error(
         `\u5C0E\u5165\u5148\u304C\u885D\u7A81\u3057\u3066\u3044\u307E\u3059: ${previous.ref}\u3068${entry.ref}\u304C\u540C\u3058${entry.target}\u3092\u8981\u6C42\u3057\u3066\u3044\u307E\u3059`
       );
     }
-    targetOwners.set(entry.target, entry);
+    targetOwners.set(target, entry);
   }
   for (const entry of desired) {
+    if (isClaudeHookConfig(entry)) {
+      readClaudeSettings(entry.target);
+      continue;
+    }
     const stat = safeLstat(entry.target);
     if (!stat) continue;
     if (stat.isSymbolicLink()) {
@@ -646,52 +750,107 @@ function validatePlan(desired, state, targetDir) {
   }
   for (const entry of state.managed) {
     validateManagedTarget(entry, state, targetDir);
+    if (isClaudeHookConfig(entry)) {
+      assertClaudeHooksPresent(entry);
+      continue;
+    }
     const stat = safeLstat(entry.target);
     if (stat && !stat.isSymbolicLink()) {
       throw new Error(`\u7BA1\u7406\u5BFE\u8C61\u304C\u901A\u5E38file\u307E\u305F\u306Fdirectory\u3078\u7F6E\u304D\u63DB\u3048\u3089\u308C\u3066\u3044\u307E\u3059: ${entry.target}`);
+    }
+  }
+  const artifactContent = new Map(artifacts.map((artifact) => [resolve3(artifact.path), artifact.content]));
+  const previousClaudeHooks = claudeHookEntry(state.managed);
+  for (const entry of desired) {
+    if (!isClaudeHookConfig(entry)) continue;
+    const settings = readClaudeSettings(entry.target);
+    const hooks = { ...settings.hooks ?? {} };
+    if (previousClaudeHooks) {
+      const previousGroups = readHookArtifact(previousClaudeHooks);
+      for (const [event, groups] of Object.entries(previousGroups)) {
+        const current = hooks[event];
+        if (!Array.isArray(current)) {
+          throw new Error(`\u7BA1\u7406\u5BFE\u8C61Claude hook\u304C\u898B\u3064\u304B\u308A\u307E\u305B\u3093: ${event} (${entry.target})`);
+        }
+        const remaining = [...current];
+        for (const group of groups) {
+          const index = remaining.findIndex((candidate) => isDeepStrictEqual(candidate, group));
+          if (index === -1) {
+            throw new Error(`\u7BA1\u7406\u5BFE\u8C61Claude hook\u304C\u5909\u66F4\u307E\u305F\u306F\u524A\u9664\u3055\u308C\u3066\u3044\u307E\u3059: ${event} (${entry.target})`);
+          }
+          remaining.splice(index, 1);
+        }
+        if (remaining.length === 0) delete hooks[event];
+        else hooks[event] = remaining;
+      }
+    }
+    const desiredGroups = readHookArtifact(
+      entry,
+      artifactContent.get(resolve3(entry.source))
+    );
+    for (const [event, groups] of Object.entries(desiredGroups)) {
+      const current = hooks[event] ?? [];
+      if (!Array.isArray(current)) throw new Error(`Claude hook event\u306F\u914D\u5217\u3067\u3042\u308B\u5FC5\u8981\u304C\u3042\u308A\u307E\u3059: ${event}`);
+      if (groups.some((group) => current.some((candidate) => isDeepStrictEqual(candidate, group)))) {
+        throw new Error(`\u65E2\u5B58hook\u3068\u540C\u3058Claude hook group\u3092\u5B89\u5168\u306B\u533A\u5225\u3067\u304D\u307E\u305B\u3093: ${event} (${entry.target})`);
+      }
     }
   }
 }
 function validateManagedTarget(entry, state, targetDir) {
   const target = resolve3(entry.target);
   const codexHome = resolve3(state.codexHome);
-  if (entry.kind === "skill" && dirname4(target) === resolve3(targetDir)) return;
-  if (entry.kind === "rules" && target === join4(codexHome, "AGENTS.override.md")) return;
-  if (entry.kind === "hook-config" && target === join4(codexHome, "hooks.json")) return;
-  const hookRoot = join4(codexHome, "managed-hooks");
+  const claudeHome = resolve3(state.claudeHome);
+  if (entry.kind === "skill" && entry.harness === "codex" && dirname4(target) === resolve3(targetDir)) return;
+  if (entry.kind === "skill" && entry.harness === "claude" && dirname4(target) === join4(claudeHome, "skills")) return;
+  if (entry.kind === "rules" && entry.harness === "codex" && target === join4(codexHome, "AGENTS.override.md")) return;
+  if (entry.kind === "rules" && entry.harness === "claude" && target === join4(claudeHome, "rules", "harnessctl-personal-skills.md")) return;
+  if (entry.kind === "hook-config" && entry.harness === "codex" && target === join4(codexHome, "hooks.json")) return;
+  if (entry.kind === "claude-hook-config" && entry.harness === "claude" && target === join4(claudeHome, "settings.json")) return;
+  const hookRoot = join4(entry.harness === "codex" ? codexHome : claudeHome, "managed-hooks");
   if (entry.kind === "hook-package" && target.startsWith(`${hookRoot}/`)) return;
   throw new Error(`state entry\u304C${entry.kind}\u306E\u8A31\u53EF\u7BC4\u56F2\u5916\u3067\u3059: ${entry.target}`);
 }
-function planLines(desired, state) {
+function planAction(entry) {
+  return isClaudeHookConfig(entry) ? "hook" : "link";
+}
+function planLines(desired, state, selectedTargets = [...new Set(desired.map((entry) => entry.harness))]) {
   const lines = [
-    `skill\u5C0E\u5165\u5148: ${resolve3(state.targetDir)}`,
+    `\u5BFE\u8C61\u30CF\u30FC\u30CD\u30B9: ${selectedTargets.length ? selectedTargets.join(", ") : "(\u306A\u3057)"}`,
+    `skill\u5C0E\u5165\u5148 (Codex): ${resolve3(state.targetDir)}`,
     `Codex home: ${resolve3(state.codexHome)}`,
+    `Claude home: ${resolve3(state.claudeHome)}`,
     `\u5C0E\u5165\u4E88\u5B9Aresource: ${desired.length}\u4EF6`
   ];
-  const current = new Map(state.managed.map((entry) => [entry.target, entry]));
-  const next = new Map(desired.map((entry) => [entry.target, entry]));
+  const current = new Map(state.managed.map((entry) => [resolve3(entry.target), entry]));
+  const next = new Map(desired.map((entry) => [resolve3(entry.target), entry]));
   for (const entry of desired) {
-    const previous = current.get(entry.target);
+    const previous = current.get(resolve3(entry.target));
+    const action = planAction(entry);
     if (!previous) {
-      lines.push(`+ link\u8FFD\u52A0 ${entry.kind} ${entry.ref} -> ${entry.source}`);
+      lines.push(`+ ${action}\u8FFD\u52A0 ${entry.kind} ${entry.ref} [${entry.harness}] -> ${entry.source}`);
     } else if (resolve3(previous.source) !== resolve3(entry.source)) {
-      lines.push(`~ link\u66F4\u65B0 ${entry.kind} ${entry.ref}: ${previous.source} -> ${entry.source}`);
+      lines.push(`~ ${action}\u66F4\u65B0 ${entry.kind} ${entry.ref} [${entry.harness}]: ${previous.source} -> ${entry.source}`);
     } else {
-      lines.push(`= \u7DAD\u6301 ${entry.kind} ${entry.ref}`);
+      lines.push(`= \u7DAD\u6301 ${entry.kind} ${entry.ref} [${entry.harness}]`);
     }
   }
   for (const entry of state.managed) {
-    if (!next.has(entry.target)) lines.push(`- link\u524A\u9664 ${entry.kind} ${entry.ref} (${entry.target})`);
+    if (!next.has(resolve3(entry.target))) {
+      lines.push(`- ${planAction(entry)}\u524A\u9664 ${entry.kind} ${entry.ref} [${entry.harness}] (${entry.target})`);
+    }
   }
   if (desired.length === 0 && state.managed.length === 0) {
     lines.push("= \u7BA1\u7406\u5BFE\u8C61resource\u306A\u3057");
   }
   return lines;
 }
-function printPlan(desired, state) {
-  for (const line of planLines(desired, state)) console.log(line);
+function printPlan(desired, state, notices = [], selectedTargets = [...new Set(desired.map((entry) => entry.harness))]) {
+  for (const line of planLines(desired, state, selectedTargets)) console.log(line);
+  for (const notice of notices) console.log(`! ${notice}`);
 }
 function unlinkIfManaged(entry, state) {
+  if (isClaudeHookConfig(entry)) return;
   const stat = safeLstat(entry.target);
   if (!stat) return;
   if (!stat.isSymbolicLink()) {
@@ -704,17 +863,18 @@ function unlinkIfManaged(entry, state) {
   unlinkSync(entry.target);
 }
 function applyEntries(desired, state) {
-  const desiredByTarget = new Map(desired.map((entry) => [entry.target, entry]));
+  const desiredLinks = linkEntries(desired);
+  const currentLinks = linkEntries(state.managed);
+  const desiredByTarget = new Map(desiredLinks.map((entry) => [resolve3(entry.target), entry]));
   const changed = [];
   try {
-    mkdirSync2(state.targetDir, { recursive: true });
-    for (const previous of state.managed) {
-      if (!desiredByTarget.has(previous.target)) {
+    for (const previous of currentLinks) {
+      if (!desiredByTarget.has(resolve3(previous.target))) {
         unlinkIfManaged(previous, state);
         changed.push(previous.target);
       }
     }
-    for (const entry of desired) {
+    for (const entry of desiredLinks) {
       mkdirSync2(dirname4(entry.target), { recursive: true });
       const stat = safeLstat(entry.target);
       if (stat?.isSymbolicLink() && isSymlinkTo(entry.target, entry.source)) continue;
@@ -727,7 +887,7 @@ function applyEntries(desired, state) {
       const stat = safeLstat(target);
       if (stat?.isSymbolicLink()) unlinkSync(target);
     }
-    for (const entry of state.managed) {
+    for (const entry of currentLinks) {
       if (safeLstat(entry.target)) continue;
       mkdirSync2(dirname4(entry.target), { recursive: true });
       symlinkSync(entry.source, entry.target, entry.linkType);
@@ -735,15 +895,202 @@ function applyEntries(desired, state) {
     throw error;
   }
 }
+function readHookArtifact(entry, artifactContent) {
+  let parsed;
+  try {
+    parsed = JSON.parse(artifactContent ?? readFileSync4(entry.source, "utf8"));
+  } catch (error) {
+    throw new Error(`Claude hook artifact\u3092\u8AAD\u307F\u8FBC\u3081\u307E\u305B\u3093 ${entry.source}: ${String(error)}`);
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`Claude hook artifact\u306Fobject\u3067\u3042\u308B\u5FC5\u8981\u304C\u3042\u308A\u307E\u3059: ${entry.source}`);
+  }
+  const hooks = parsed.hooks;
+  if (!hooks || typeof hooks !== "object" || Array.isArray(hooks)) {
+    throw new Error(`Claude hook artifact\u306Bhooks object\u304C\u3042\u308A\u307E\u305B\u3093: ${entry.source}`);
+  }
+  for (const [event, groups] of Object.entries(hooks)) {
+    if (!Array.isArray(groups)) throw new Error(`Claude hook event\u306F\u914D\u5217\u3067\u3042\u308B\u5FC5\u8981\u304C\u3042\u308A\u307E\u3059: ${event}`);
+  }
+  return hooks;
+}
+function readClaudeSettings(path) {
+  const stat = safeLstat(path);
+  if (stat?.isSymbolicLink()) throw new Error(`settings.json\u304Csymlink\u306E\u305F\u3081\u5909\u66F4\u3067\u304D\u307E\u305B\u3093: ${path}`);
+  if (stat && !stat.isFile()) throw new Error(`settings.json\u306F\u901A\u5E38file\u3067\u3042\u308B\u5FC5\u8981\u304C\u3042\u308A\u307E\u3059: ${path}`);
+  if (!stat) return {};
+  let parsed;
+  try {
+    parsed = JSON.parse(readFileSync4(path, "utf8"));
+  } catch (error) {
+    throw new Error(`Claude settings.json\u3092\u8AAD\u307F\u8FBC\u3081\u307E\u305B\u3093 ${path}: ${String(error)}`);
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`Claude settings.json\u306Fobject\u3067\u3042\u308B\u5FC5\u8981\u304C\u3042\u308A\u307E\u3059: ${path}`);
+  }
+  const settings = parsed;
+  if (settings.hooks !== void 0 && (!settings.hooks || typeof settings.hooks !== "object" || Array.isArray(settings.hooks))) {
+    throw new Error(`Claude settings.json\u306Ehooks\u306Fobject\u3067\u3042\u308B\u5FC5\u8981\u304C\u3042\u308A\u307E\u3059: ${path}`);
+  }
+  return settings;
+}
+function assertClaudeHooksPresent(entry) {
+  const expected = readHookArtifact(entry);
+  const actual = readClaudeSettings(entry.target).hooks ?? {};
+  for (const [event, groups] of Object.entries(expected)) {
+    const current = actual[event];
+    if (!Array.isArray(current)) throw new Error(`\u7BA1\u7406\u5BFE\u8C61Claude hook\u304C\u898B\u3064\u304B\u308A\u307E\u305B\u3093: ${event} (${entry.target})`);
+    const distinctGroups = [];
+    for (const group of groups) {
+      if (!distinctGroups.some((candidate) => isDeepStrictEqual(candidate, group))) {
+        distinctGroups.push(group);
+      }
+    }
+    for (const group of distinctGroups) {
+      const expectedCount = groups.filter((candidate) => isDeepStrictEqual(candidate, group)).length;
+      const actualCount = current.filter((candidate) => isDeepStrictEqual(candidate, group)).length;
+      if (actualCount !== expectedCount) {
+        throw new Error(`\u7BA1\u7406\u5BFE\u8C61Claude hook\u304C\u5909\u66F4\u30FB\u524A\u9664\u30FB\u91CD\u8907\u3057\u3066\u3044\u307E\u3059: ${event} (${entry.target})`);
+      }
+    }
+  }
+}
+function snapshotSettings(path) {
+  const stat = safeLstat(path);
+  if (stat?.isSymbolicLink()) throw new Error(`settings.json\u304Csymlink\u306E\u305F\u3081\u5909\u66F4\u3067\u304D\u307E\u305B\u3093: ${path}`);
+  if (stat && !stat.isFile()) throw new Error(`settings.json\u306F\u901A\u5E38file\u3067\u3042\u308B\u5FC5\u8981\u304C\u3042\u308A\u307E\u3059: ${path}`);
+  return {
+    path,
+    existed: Boolean(stat),
+    content: stat ? readFileSync4(path, "utf8") : "",
+    mode: stat ? stat.mode & 511 : 384
+  };
+}
+function restoreSettingsSnapshot(snapshot) {
+  const current = safeLstat(snapshot.path);
+  if (current?.isSymbolicLink() || current && !current.isFile()) {
+    throw new Error(`settings.json\u304C\u901A\u5E38file\u3067\u306F\u306A\u304F\u306A\u3063\u305F\u305F\u3081\u5FA9\u5143\u3067\u304D\u307E\u305B\u3093: ${snapshot.path}`);
+  }
+  if (!snapshot.existed) {
+    if (current) unlinkSync(snapshot.path);
+    return;
+  }
+  writeSettingsFile(snapshot.path, snapshot.content, snapshot.mode);
+}
+function writeSettingsFile(path, content, mode) {
+  mkdirSync2(dirname4(path), { recursive: true });
+  const temporary = `${path}.${process.pid}.tmp`;
+  writeFileSync2(temporary, content, { mode });
+  renameSync2(temporary, path);
+}
+function updateClaudeSettingsHooks(previous, desired) {
+  if (!previous && !desired) return;
+  const path = (desired ?? previous).target;
+  const settings = readClaudeSettings(path);
+  const hooks = { ...settings.hooks ?? {} };
+  if (previous) {
+    const managedHooks = readHookArtifact(previous);
+    for (const [event, groups] of Object.entries(managedHooks)) {
+      const current = hooks[event];
+      if (!Array.isArray(current)) {
+        throw new Error(`\u7BA1\u7406\u5BFE\u8C61Claude hook\u304C\u898B\u3064\u304B\u308A\u307E\u305B\u3093: ${event} (${path})`);
+      }
+      const remaining = [...current];
+      for (const group of groups) {
+        const index = remaining.findIndex((candidate) => isDeepStrictEqual(candidate, group));
+        if (index === -1) {
+          throw new Error(`\u7BA1\u7406\u5BFE\u8C61Claude hook\u304C\u5909\u66F4\u307E\u305F\u306F\u524A\u9664\u3055\u308C\u3066\u3044\u307E\u3059: ${event} (${path})`);
+        }
+        remaining.splice(index, 1);
+      }
+      if (remaining.length === 0) delete hooks[event];
+      else hooks[event] = remaining;
+    }
+  }
+  if (desired) {
+    const managedHooks = readHookArtifact(desired);
+    for (const [event, groups] of Object.entries(managedHooks)) {
+      const current = hooks[event] ?? [];
+      if (!Array.isArray(current)) throw new Error(`Claude hook event\u306F\u914D\u5217\u3067\u3042\u308B\u5FC5\u8981\u304C\u3042\u308A\u307E\u3059: ${event}`);
+      for (const group of groups) {
+        if (current.some((candidate) => isDeepStrictEqual(candidate, group))) {
+          throw new Error(`\u65E2\u5B58hook\u3068\u540C\u3058Claude hook group\u3092\u5B89\u5168\u306B\u533A\u5225\u3067\u304D\u307E\u305B\u3093: ${event} (${path})`);
+        }
+      }
+      hooks[event] = [...current, ...groups];
+    }
+  }
+  const nextSettings = { ...settings };
+  if (Object.keys(hooks).length === 0) delete nextSettings.hooks;
+  else nextSettings.hooks = hooks;
+  const snapshot = snapshotSettings(path);
+  writeSettingsFile(path, `${JSON.stringify(nextSettings, null, 2)}
+`, snapshot.mode);
+}
+function applyManagedResources(desired, state) {
+  const previousHooks = claudeHookEntry(state.managed);
+  const desiredHooks = claudeHookEntry(desired);
+  const settingsPath = desiredHooks?.target ?? previousHooks?.target;
+  const settingsSnapshot = settingsPath ? snapshotSettings(settingsPath) : null;
+  const currentLinks = linkEntries(state.managed);
+  const desiredLinks = linkEntries(desired);
+  try {
+    applyEntries(desiredLinks, { ...state, managed: currentLinks });
+    updateClaudeSettingsHooks(previousHooks, desiredHooks);
+  } catch (error) {
+    const restorationErrors = [];
+    try {
+      applyEntries(currentLinks, { ...state, managed: desiredLinks });
+    } catch (rollbackError) {
+      restorationErrors.push(`symlink\u5FA9\u5143: ${String(rollbackError)}`);
+    }
+    if (settingsSnapshot) {
+      try {
+        restoreSettingsSnapshot(settingsSnapshot);
+      } catch (rollbackError) {
+        restorationErrors.push(`settings\u5FA9\u5143: ${String(rollbackError)}`);
+      }
+    }
+    if (restorationErrors.length > 0) {
+      throw new Error(`${String(error)} (${restorationErrors.join("; ")})`);
+    }
+    throw error;
+  }
+  return settingsSnapshot;
+}
+function restoreAfterStateFailure(desired, state, settingsSnapshot) {
+  const errors = [];
+  try {
+    applyEntries(linkEntries(state.managed), { ...state, managed: linkEntries(desired) });
+  } catch (error) {
+    errors.push(`symlink\u5FA9\u5143: ${String(error)}`);
+  }
+  if (settingsSnapshot) {
+    try {
+      restoreSettingsSnapshot(settingsSnapshot);
+    } catch (error) {
+      errors.push(`settings\u5FA9\u5143: ${String(error)}`);
+    }
+  }
+  if (errors.length > 0) throw new Error(errors.join("; "));
+}
 async function applyProfile(profileName, profile, config, options) {
-  let state = readState(options.statePath, options.targetDir, options.codexHome);
+  let state = readState(options.statePath, options.targetDir, options.codexHome, options.claudeHome);
   state.targetDir = resolve3(options.targetDir);
   state.codexHome = resolve3(options.codexHome);
+  state.claudeHome = resolve3(options.claudeHome);
   state = detachLegacyRulesEntries(state);
-  const plan = desiredPlan(profile, state.targetDir, state.codexHome, options.statePath, config);
+  const plan = desiredPlan(
+    profile,
+    state.targetDir,
+    state.codexHome,
+    state.claudeHome,
+    options.statePath,
+    config
+  );
   const desired = plan.entries;
-  validatePlan(desired, state, state.targetDir);
-  printPlan(desired, state);
+  validatePlan(desired, state, state.targetDir, plan.artifacts);
+  printPlan(desired, state, plan.notices, profile.targets);
   if (options.dryRun) return;
   if (!options.yes) {
     const rl = createInterface({ input, output });
@@ -757,28 +1104,38 @@ async function applyProfile(profileName, profile, config, options) {
   const backup = {
     timestamp: (/* @__PURE__ */ new Date()).toISOString(),
     activeProfile: state.activeProfile,
+    targets: state.targets,
     managed: state.managed
   };
   for (const artifact of plan.artifacts) {
     if (!existsSync4(artifact.path)) writeArtifact(artifact);
   }
-  applyEntries(desired, state);
+  const settingsSnapshot = applyManagedResources(desired, state);
   const nextState = {
-    version: 3,
+    version: 4,
     codexHome: state.codexHome,
+    claudeHome: state.claudeHome,
     targetDir: state.targetDir,
     activeProfile: profileName,
+    targets: profile.targets,
     managed: desired,
     history: [...state.history, backup].slice(-20)
   };
   try {
     writeJsonAtomic(options.statePath, nextState);
   } catch (error) {
-    applyEntries(state.managed, { ...state, managed: desired });
+    try {
+      restoreAfterStateFailure(desired, state, settingsSnapshot);
+    } catch (rollbackError) {
+      throw new Error(`${String(error)} (resource\u5FA9\u5143\u306B\u5931\u6557\u3057\u307E\u3057\u305F: ${String(rollbackError)})`);
+    }
     throw error;
   }
   console.log(`profile\u3092\u9069\u7528\u3057\u307E\u3057\u305F: ${profileName}`);
-  if (profile.rules.length > 0) console.log("\u5E38\u6642\u30EB\u30FC\u30EB\u306F\u6B21\u306ECodex run\u304B\u3089\u6709\u52B9\u3067\u3059");
+  if (profile.rules.length > 0) {
+    const targets = profile.targets.join("\u30FB") || "\u9078\u629E\u3057\u305F\u30CF\u30FC\u30CD\u30B9";
+    console.log(`\u5E38\u6642\u30EB\u30FC\u30EB\u306F\u6B21\u306E${targets} run\u304B\u3089\u6709\u52B9\u3067\u3059`);
+  }
 }
 function writeArtifact(artifact) {
   mkdirSync2(dirname4(artifact.path), { recursive: true });
@@ -786,29 +1143,42 @@ function writeArtifact(artifact) {
   writeFileSync2(temporary, artifact.content, { mode: 384 });
   renameSync2(temporary, artifact.path);
 }
+function claudeHookStatus(entry) {
+  if (!existsSync4(entry.source) || !existsSync4(entry.target)) return "missing";
+  try {
+    assertClaudeHooksPresent(entry);
+    return "ok";
+  } catch {
+    return "drifted";
+  }
+}
 function inspectStatus(state) {
-  console.log(`\u5C0E\u5165\u5148: ${resolve3(state.targetDir)}`);
+  console.log(`skill\u5C0E\u5165\u5148 (Codex): ${resolve3(state.targetDir)}`);
+  console.log(`Codex home: ${resolve3(state.codexHome)}`);
+  console.log(`Claude home: ${resolve3(state.claudeHome)}`);
   console.log(`\u6709\u52B9\u306Aprofile: ${state.activeProfile ?? "(\u306A\u3057)"}`);
+  console.log(`\u5BFE\u8C61\u30CF\u30FC\u30CD\u30B9: ${state.targets.join(", ") || "(\u306A\u3057)"}`);
   if (state.managed.length === 0) {
     console.log("\u7BA1\u7406\u5BFE\u8C61resource: \u306A\u3057");
     return;
   }
   for (const entry of state.managed) {
-    const status = !existsSync4(entry.source) ? "source-missing" : isSymlinkTo(entry.target, entry.source) ? "ok" : safeLstat(entry.target) ? "drifted" : "missing";
-    console.log(`${status}	${entry.kind}	${entry.ref}	${entry.target} -> ${entry.source}`);
+    const status = !existsSync4(entry.source) ? "source-missing" : isClaudeHookConfig(entry) ? claudeHookStatus(entry) : isSymlinkTo(entry.target, entry.source) ? "ok" : safeLstat(entry.target) ? "drifted" : "missing";
+    console.log(`${status}	${entry.kind}	${entry.ref}	${entry.target} -> ${entry.source}	${entry.harness}`);
   }
 }
 async function rollback(options) {
-  let state = readState(options.statePath, options.targetDir, options.codexHome);
+  let state = readState(options.statePath, options.targetDir, options.codexHome, options.claudeHome);
   state.targetDir = resolve3(options.targetDir);
   state.codexHome = resolve3(options.codexHome);
+  state.claudeHome = resolve3(options.claudeHome);
   state = detachLegacyRulesEntries(state);
   const backup = state.history.at(-1);
   if (!backup) throw new Error("rollback\u5C65\u6B74\u304C\u3042\u308A\u307E\u305B\u3093");
   const desired = backup.managed;
   validatePlan(desired, state, state.targetDir);
   console.log(`rollback\u5148: ${backup.activeProfile ?? "(\u306A\u3057)"}`);
-  printPlan(desired, state);
+  printPlan(desired, state, [], backup.targets);
   if (!options.yes) {
     const rl = createInterface({ input, output });
     const confirmation = await rl.question("rollback\u3092\u5B9F\u884C\u3057\u307E\u3059\u304B\uFF1F [y/N] ");
@@ -821,21 +1191,28 @@ async function rollback(options) {
   const currentBackup = {
     timestamp: (/* @__PURE__ */ new Date()).toISOString(),
     activeProfile: state.activeProfile,
+    targets: state.targets,
     managed: state.managed
   };
-  applyEntries(desired, state);
+  const settingsSnapshot = applyManagedResources(desired, state);
   const restoredState = {
-    version: 3,
+    version: 4,
     codexHome: state.codexHome,
+    claudeHome: state.claudeHome,
     targetDir: state.targetDir,
     activeProfile: backup.activeProfile,
+    targets: backup.targets,
     managed: desired,
     history: [...state.history.slice(0, -1), currentBackup].slice(-20)
   };
   try {
     writeJsonAtomic(options.statePath, restoredState);
   } catch (error) {
-    applyEntries(state.managed, { ...state, managed: desired });
+    try {
+      restoreAfterStateFailure(desired, state, settingsSnapshot);
+    } catch (rollbackError) {
+      throw new Error(`${String(error)} (resource\u5FA9\u5143\u306B\u5931\u6557\u3057\u307E\u3057\u305F: ${String(rollbackError)})`);
+    }
     throw error;
   }
   console.log("rollback\u304C\u5B8C\u4E86\u3057\u307E\u3057\u305F");
@@ -946,7 +1323,7 @@ async function runProfilePicker(config, prompts = defaultPromptFunctions) {
       ...Object.keys(config.profiles).sort().map((name) => ({
         value: name,
         label: name,
-        hint: `${config.profiles[name].skills.length} skills`
+        hint: `${config.profiles[name].skills.length} skills \xB7 ${config.profiles[name].targets.join(", ") || "\u5BFE\u8C61\u306A\u3057"}`
       })),
       { value: createProfileValue, label: "+ profile\u3092\u4F5C\u6210", hint: "\u65B0\u3057\u3044profile" }
     ],
@@ -995,6 +1372,14 @@ async function profileTui(profileName, options, prompts = defaultPromptFunctions
   validateProfileName(profileName);
   const config = readConfig(options.configPath);
   const currentProfile = config.profiles[profileName];
+  const targets = await runMultiPicker([
+    { ref: "codex", description: `${options.codexHome}\u3078skill\u30FBrules\u30FBhook\u3092\u5C0E\u5165`, source: "" },
+    { ref: "claude", description: `${options.claudeHome}\u3078skill\u30FBrules\u30FB\u5BFE\u5FDChook\u3092\u5C0E\u5165`, source: "" }
+  ], "profile\u3092\u9069\u7528\u3059\u308B\u30CF\u30FC\u30CD\u30B9", currentProfile?.targets ?? ["codex"], prompts);
+  if (targets === null) {
+    console.log("\u4E2D\u6B62\u3057\u307E\u3057\u305F");
+    return;
+  }
   const skills = discoverSkills(config);
   if (skills.length === 0) throw new Error("skill\u304C\u898B\u3064\u304B\u308A\u307E\u305B\u3093");
   const selectedSkills = await runMultiPicker(skills.map((skill) => ({
@@ -1009,7 +1394,7 @@ async function profileTui(profileName, options, prompts = defaultPromptFunctions
   const rules = [...ruleMap(config).values()];
   const selectedRules = await runMultiPicker(rules.map((rule) => ({
     ref: rule.ref,
-    description: "AGENTS.md\u3092\u571F\u53F0\u306B\u751F\u6210\u3059\u308BAGENTS.override.md",
+    description: "Codex\u306FAGENTS.override.md\u3001Claude\u306F\u30E6\u30FC\u30B6\u30FC\u5171\u901Arules\u3078\u5C0E\u5165",
     source: rule.source
   })), "profile\u306B\u542B\u3081\u308B\u5E38\u6642\u30EB\u30FC\u30EB", currentProfile?.rules ?? [], prompts);
   if (selectedRules === null) {
@@ -1019,7 +1404,7 @@ async function profileTui(profileName, options, prompts = defaultPromptFunctions
   const hooks = [...hookMap(config).values()];
   const selectedHooks = await runMultiPicker(hooks.map((hook) => ({
     ref: hook.ref,
-    description: "Codex hook package",
+    description: `\u5BFE\u5FDC\u5BFE\u8C61: ${hook.targets.join(", ") || "\u306A\u3057"}`,
     source: hook.source
   })), "profile\u306B\u542B\u3081\u308Bhook", currentProfile?.hooks ?? [], prompts);
   if (selectedHooks === null) {
@@ -1028,6 +1413,7 @@ async function profileTui(profileName, options, prompts = defaultPromptFunctions
   }
   config.profiles[profileName] = {
     description: config.profiles[profileName]?.description ?? "harnessctl\u3067\u4F5C\u6210",
+    targets,
     skills: selectedSkills,
     rules: selectedRules,
     hooks: selectedHooks
@@ -1078,7 +1464,7 @@ function printProfileList(config) {
   }
   for (const name of names) {
     const profile = getProfile(config, name);
-    console.log(`${name}	skill ${profile.skills.length}\u4EF6, rules ${profile.rules.length}\u4EF6, hook ${profile.hooks.length}\u4EF6`);
+    console.log(`${name}	\u5BFE\u8C61 ${profile.targets.join(", ") || "(\u306A\u3057)"}, skill ${profile.skills.length}\u4EF6, rules ${profile.rules.length}\u4EF6, hook ${profile.hooks.length}\u4EF6`);
   }
 }
 function printProfile(config, name) {
@@ -1106,6 +1492,7 @@ function usage() {
 
 `);
   console.log("  --verbose, -v        skill\u306Epath\u3068\u8AAC\u660E\u3092\u8868\u793A");
+  console.log("  --claude-home <dir>  Claude Code\u306E\u8A2D\u5B9Adirectory\u3092\u6307\u5B9A");
 }
 async function main() {
   const firstArg = process.argv[2];
@@ -1145,7 +1532,7 @@ async function main() {
       throw new Error(`\u4E0D\u660E\u306Asources command\u3067\u3059: ${subcommand}`);
     }
     case "status":
-      inspectStatus(readState(options.statePath, options.targetDir, options.codexHome));
+      inspectStatus(readState(options.statePath, options.targetDir, options.codexHome, options.claudeHome));
       return;
     case "rollback":
       await rollback(options);
@@ -1157,19 +1544,21 @@ async function main() {
       const config = readConfig(options.configPath);
       const profile = getProfile(config, name);
       if (command === "plan") {
-        const state = readState(options.statePath, options.targetDir, options.codexHome);
+        const state = readState(options.statePath, options.targetDir, options.codexHome, options.claudeHome);
         state.targetDir = resolve4(options.targetDir);
         state.codexHome = resolve4(options.codexHome);
+        state.claudeHome = resolve4(options.claudeHome);
         const migratedState = detachLegacyRulesEntries(state);
         const plan = desiredPlan(
           profile,
           migratedState.targetDir,
           migratedState.codexHome,
+          migratedState.claudeHome,
           options.statePath,
           config
         );
-        validatePlan(plan.entries, migratedState, migratedState.targetDir);
-        printPlan(plan.entries, migratedState);
+        validatePlan(plan.entries, migratedState, migratedState.targetDir, plan.artifacts);
+        printPlan(plan.entries, migratedState, plan.notices, profile.targets);
         return;
       }
       await applyProfile(name, profile, config, options);

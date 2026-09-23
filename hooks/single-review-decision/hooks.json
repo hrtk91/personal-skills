@@ -1,5 +1,6 @@
 {
   "description": "ghで作成・更新するPR本文に、レビュワーへ求める判断を1つ明記させる。",
+  "targets": ["codex", "claude"],
   "hooks": {
     "PreToolUse": [
       {
