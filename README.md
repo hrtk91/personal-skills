@@ -21,7 +21,6 @@ AIエージェントに、作業の進め方や判断基準を追加するため
 | `comment-processing-order` | 複数段階の処理に、順序が分かるコメントを付けます。 |
 | `data-modeling` | 機能追加で今のデータの持ち方が困らないか確認し、必要な変更と理由を残します。 |
 | `design-review` | 実装前の設計案を、目的、必須条件、変更容易性、失敗時の挙動から独立subagentにレビューさせます。 |
-| `explain-change-impact` | 実装前・途中・完了時に、変更前後の動作、影響する箇所、確認結果を説明します。 |
 | `fracta` | git worktree、Lima VM、Docker Composeを使う開発環境を操作します。 |
 | `frontend-development-principles` | 状態、UI、副作用の責務を整理してフロントエンドを設計します。 |
 | `investigating-domain` | 業務概念、ルール、状態遷移、権限、業務フローを実装横断で調査します。 |
