@@ -6,19 +6,7 @@ AIエージェントに、作業の進め方や判断基準を追加するため
 
 ## 使い方
 
-リポジトリをcloneし、環境に合うインストールスクリプトを実行します。
-
-Linux / macOS / WSL:
-
-```bash
-./scripts/install-symlinks.sh
-```
-
-Windows PowerShell:
-
-```powershell
-./scripts/install-symlinks.ps1
-```
+導入するskill・ルール・hookは、`harnessctl`のprofileで選択して適用します。CLIの導入方法と利用手順は[harnessctlの使い方](tools/README.md)を参照してください。
 
 各スキルの詳しい使い方は、`skills/<スキル名>/SKILL.md` にあります。
 
@@ -79,7 +67,7 @@ Windows PowerShell:
 | `codex` | Codexを第二意見を得る相手として使います。 |
 | `codex-handoff` | Codexタスクの引継ぎ資料と新タスクの継続を、承認範囲・証拠つきで整理します。 |
 | `grok-second-opinion` | Grokへ前提と論点を渡し、別の角度から意見を得ます。 |
-| `personal-skills-auto-update` | 更新条件を確認しながら、WindowsとWSLの実行環境へスキルを自動反映します。 |
+| `personal-skills-auto-update` | WindowsとWSLのruntime cloneを安全に更新します。skillの導入は`harnessctl apply`で行います。 |
 | `personal-skills-ctl-daemon` | このリポジトリとローカルのスキルを同期するCLIやdaemonを設計します。 |
 | `retlaude` | Claudeセッションの振り返りを非同期で保存します。 |
 | `skill-benchmark` | 実運用の失敗や観測から原因仮説とeval caseを作り、介入前後の効果と回帰を比較します。 |
@@ -107,5 +95,4 @@ profileで選択して導入したルールを、作業時の指示として常�
 - `commands/`: Claude Codeのカスタムコマンド
 - `hooks/`: セッション記録やコマンド実行前の確認などのhook
 - `rules/`: profileからCodexの`AGENTS.override.md`またはClaude Codeのユーザー共通rulesへ導入する常時ルール
-- `scripts/`: スキルと設定を各ツールへ反映するスクリプト
 - `tools/`: skill・常時ルール・hookをprofile単位で導入する`harnessctl`

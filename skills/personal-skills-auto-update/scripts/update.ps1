@@ -3,9 +3,9 @@ param(
     [string]$Repo = (Join-Path $HOME "repos\personal-skills"),
     [string]$Remote = "origin",
     [string]$BaseBranch = "main",
+    # 旧Scheduled Taskが渡す値を受け付け、成功後のAction更新で取り除く。
     [string]$AdoptRepoRoot = "",
     [string]$TaskName = "PersonalSkillsAutoUpdate",
-    [switch]$SkipInstall,
     [switch]$DryRun
 )
 
@@ -33,14 +33,13 @@ function Update-WindowsScheduledTaskAction {
     param(
         [string]$Repo,
         [string]$BaseBranch,
-        [string]$TaskName,
-        [string]$AdoptRepoRoot
+        [string]$TaskName
     )
 
     # 保証:
     # - このruntime repoのupdate.ps1を実行する既存Taskだけを更新する。
     # - 同名でも別repoを指すTaskや、複数Actionを持つTaskには触らない。
-    # - AdoptRepoRootを次回以降にも渡し、旧agent Junctionの所有元を判定できる状態を保つ。
+    # - 更新対象repoの既存Taskだけをheadless形式へ更新する。
     # ここでTaskはWindowsの定期実行設定、ActionはそのTaskが実行するコマンドを指す。
     #
     # 処理順:
@@ -79,10 +78,8 @@ function Update-WindowsScheduledTaskAction {
     }
 
     # 4. 現在必要な引数を含むActionを組み立て、同じなら変更しない。
-    # AdoptRepoRootは「どの開発checkoutなら旧Junctionとして移行してよいか」をinstallerへ伝える。
     $expectedExecute = Join-Path $env:SystemRoot "System32\conhost.exe"
-    $adoptArgument = if ([string]::IsNullOrWhiteSpace($AdoptRepoRoot)) { "" } else { " -AdoptRepoRoot `"$AdoptRepoRoot`"" }
-    $expectedArguments = "--headless powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$updateScript`" -Repo `"$Repo`" -BaseBranch `"$BaseBranch`" -TaskName `"$TaskName`"$adoptArgument"
+    $expectedArguments = "--headless powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$updateScript`" -Repo `"$Repo`" -BaseBranch `"$BaseBranch`" -TaskName `"$TaskName`""
     if ([string]$actions[0].Execute -ieq $expectedExecute -and $currentArguments -eq $expectedArguments) {
         Write-Output "scheduled_task_status=ok task=$TaskName"
         return
@@ -150,23 +147,7 @@ try {
         }
     }
 
-    if (-not $SkipInstall) {
-        # 更新済みruntime repoからskill/agentを公開する。
-        # AdoptRepoRootを渡すことで、開発checkoutを指す旧agent Junctionだけを安全に移行できる。
-        $installer = Join-Path $Repo "scripts\install-symlinks.ps1"
-        $installerArguments = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $installer, "-RepoRoot", $Repo)
-        if (-not [string]::IsNullOrWhiteSpace($AdoptRepoRoot)) {
-            $installerArguments += @("-AdoptRepoRoot", $AdoptRepoRoot)
-        }
-        & powershell.exe @installerArguments
-        if ($LASTEXITCODE -ne 0) {
-            [Console]::Error.WriteLine("update_status=failed reason=install")
-            exit 22
-        }
-
-        # 次回の定期更新でも同じ所有元判定を行えるよう、TaskのActionにもAdoptRepoRootを残す。
-        Update-WindowsScheduledTaskAction -Repo $Repo -BaseBranch $BaseBranch -TaskName $TaskName -AdoptRepoRoot $AdoptRepoRoot
-    }
+    Update-WindowsScheduledTaskAction -Repo $Repo -BaseBranch $BaseBranch -TaskName $TaskName
 
     $head = (Invoke-Git @("rev-parse", "HEAD") | Select-Object -Last 1).Trim()
     Write-Output "update_status=ok head=$head"

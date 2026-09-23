@@ -60,8 +60,6 @@ personal-skills/
       SKILL.md
     personal-skills-ctl-daemon/
       SKILL.md
-  scripts/
-    install-symlinks.sh
   daemon/
     personal-skills.shx
     config.example.toml
@@ -121,7 +119,7 @@ exclude = [".system/**"]
 3. `sync` でbranch作成、同期、commitまで行う。
 4. GitHub push / draft PR作成を追加する。
 5. `watch` は最後に追加する。
-6. install scriptで `~/.codex/skills/<name>` へのsymlinkを張る。
+6. skillの導入は`harnessctl`のprofileで管理し、利用者が`harnessctl apply <profile>`を実行して反映する。
 
 ## 完了条件
 
