@@ -1,6 +1,6 @@
 interface:
-  display_name: "Verifiable Minimal Writing"
-  short_description: "読者目的、文の役割、根拠、不明点、冗長さで文章を検品する。"
-  default_prompt: "verifiable-minimal-writing skill を使い、読者目的、文の役割、根拠、不明点、冗長さを点検し、必要なら媒体別referenceを参照して文章を整理してください。"
+  display_name: "Readable Writing Check"
+  short_description: "文章の意味が一読で伝わるか、返答前に読み手目線で確認する。"
+  default_prompt: "$minimal-writing で、一読で意味が伝わる文章に整えてください。"
 policy:
   allow_implicit_invocation: true
