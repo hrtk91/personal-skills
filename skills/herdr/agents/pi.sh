@@ -6,6 +6,8 @@
 # 送る文は 1 行の通常のプロンプト（pi に /goal はない）。終わりは印で判定する。
 
 pi_start() {  # <agent> <pane> <作業場所>（作業場所はペインの cwd で決まる）
+  # astra は設計だけに使う型なので、実装・レビューには使わない（codex.sh と同じ）
+  case ${PI_MODEL:-gpt-6-luna} in *astra*) log "$1: ${PI_MODEL} は設計だけに使う。実装・レビューには luna を使う"; return 1 ;; esac
   herdr agent start "$1" --kind pi --pane "$2" --timeout 90000 -- \
     --provider "${PI_PROVIDER:-openai-codex}" --model "${PI_MODEL:-gpt-6-luna}" --thinking "${PI_THINKING:-high}" \
     --no-session --system-prompt "${PI_SYSTEM:-$SKILL_DIR/agents/pi-system.md}" >/dev/null

@@ -1,10 +1,21 @@
 # Codex 用の部品。herdr-run.sh から source される（単独では動かさない）。
-# 既定は gpt-6-luna・priority（fast）・念入りさ max。設計の重い仕事は CODEX_MODEL=gpt-6-astra CODEX_TIER=default（fast は切る）。
-# 旧名の MODEL・TIER・EFFORT も読む。
+# 既定は gpt-6-luna・priority（fast）・念入りさ max。実装（impl-*）は CODEX_MODEL・CODEX_TIER・CODEX_EFFORT、
+# レビュー（rev-*）は CODEX_REV_MODEL・CODEX_REV_TIER・CODEX_REV_EFFORT で変える（無ければ実装と同じ）。旧名の MODEL・TIER・EFFORT も読む。
+# gpt-6-astra は設計だけに使う型なので、この台本（実装・レビュー）では起動を断る。設計は台本の外で動かす（SKILL.md）。
+
+codex_setting() {  # <IMPL|REV> <MODEL|TIER|EFFORT> <既定>
+  local role=$1 key=$2 default=$3 value=
+  [ "$role" = REV ] && eval "value=\${CODEX_REV_$key:-}"
+  [ -n "$value" ] || eval "value=\${CODEX_$key:-\${$key:-$default}}"
+  echo "$value"
+}
 
 codex_start() {  # <agent> <pane> <作業場所>
-  local agent=$1 pane=$2 w=$3
-  local model=${CODEX_MODEL:-${MODEL:-gpt-6-luna}} tier=${CODEX_TIER:-${TIER:-priority}} effort=${CODEX_EFFORT:-${EFFORT:-max}}
+  local agent=$1 pane=$2 w=$3 role=IMPL
+  case $agent in rev-*) role=REV ;; esac
+  local model tier effort
+  model=$(codex_setting $role MODEL gpt-6-luna); tier=$(codex_setting $role TIER priority); effort=$(codex_setting $role EFFORT max)
+  case $model in *astra*) log "$agent: $model は設計だけに使う。実装・レビューには luna を使う（CODEX_MODEL・CODEX_REV_MODEL を確かめる）"; return 1 ;; esac
   # -s danger-full-access: workspace-write は Codex CLI 0.157.1 で 9/26 から全コマンド失敗する。書いてよい場所は依頼文で絞る
   herdr agent start "$agent" --kind codex --pane "$pane" --timeout 120000 -- \
     -m "$model" -c "service_tier=\"$tier\"" -c "model_reasoning_effort=$effort" \
