@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 
-import { resolve } from "node:path";
 import {
   getProfile,
   parseOptions,
@@ -11,9 +10,10 @@ import { addSource, printSourceList } from "./skills-ctl/catalog.ts";
 import { desiredPlan } from "./skills-ctl/profile-plan.ts";
 import {
   applyProfile,
-  detachLegacyRulesEntries,
   inspectStatus,
+  prepareScopedState,
   printPlan,
+  profileScope,
   rollback,
   validatePlan,
 } from "./skills-ctl/activation.ts";
@@ -83,10 +83,8 @@ async function main(): Promise<void> {
       const profile = getProfile(config, name);
       if (command === "plan") {
         const state = readState(options.statePath, options.targetDir, options.codexHome, options.claudeHome);
-        state.targetDir = resolve(options.targetDir);
-        state.codexHome = resolve(options.codexHome);
-        state.claudeHome = resolve(options.claudeHome);
-        const migratedState = detachLegacyRulesEntries(state);
+        const scope = profileScope(name, profile, state);
+        const migratedState = prepareScopedState(state, scope, options, profile.targets);
         const plan = desiredPlan(
           profile,
           migratedState.targetDir,
@@ -95,8 +93,8 @@ async function main(): Promise<void> {
           options.statePath,
           config,
         );
-        validatePlan(plan.entries, migratedState, migratedState.targetDir, plan.artifacts);
-        printPlan(plan.entries, migratedState, plan.notices, profile.targets);
+        validatePlan(plan.entries, migratedState, migratedState.targetDir, plan.artifacts, scope);
+        printPlan(plan.entries, migratedState, plan.notices, scope);
         return;
       }
       await applyProfile(name, profile, config, options);

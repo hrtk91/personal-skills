@@ -102,7 +102,7 @@ test("plan, apply, status, and rollback only manage selected symlinks", () => {
     const target = join(root, "target", "review-maintainability");
     assert.equal(realpathSync(target), join(repoRoot, "skills", "review-maintainability"));
     assert.equal(readFileSync(join(root, "target", ".system", "marker"), "utf8"), "keep");
-    assert.match(runCli(["status"], root), /有効なprofile: sample/);
+    assert.match(runCli(["status"], root), /有効なprofile \[codex\]: sample/);
 
     runCli(["apply", "empty", "--yes"], root);
     assert.equal(readFileSync(join(root, "state.json"), "utf8").includes('"empty"'), true);
@@ -110,7 +110,7 @@ test("plan, apply, status, and rollback only manage selected symlinks", () => {
 
     runCli(["rollback", "--yes"], root);
     assert.equal(realpathSync(target), join(repoRoot, "skills", "review-maintainability"));
-    assert.match(runCli(["status"], root), /有効なprofile: sample/);
+    assert.match(runCli(["status"], root), /有効なprofile \[codex\]: sample/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -200,7 +200,7 @@ test("profile generates AGENTS.override.md from base AGENTS.md and multiple rule
     const plan = runCli(["plan", "guarded"], root);
     assert.match(plan, /link追加 rules generated:[a-f0-9]{64}/);
     assert.match(plan, /link追加 hook-package fixture:review-policy/);
-    assert.match(plan, /link追加 hook-config generated:/);
+    assert.match(plan, /hook追加 hook-config generated:/);
     assert.throws(() => realpathSync(join(root, "artifacts")));
 
     runCli(["apply", "guarded", "--yes"], root);
@@ -237,12 +237,12 @@ test("profile generates AGENTS.override.md from base AGENTS.md and multiple rule
     runCli(["apply", "empty", "--yes"], root);
     assert.throws(() => realpathSync(join(codexHome, "AGENTS.override.md")));
     assert.equal(readFileSync(join(codexHome, "AGENTS.md"), "utf8"), "# テスト用base\n");
-    assert.throws(() => realpathSync(join(codexHome, "hooks.json")));
+    assert.deepEqual(JSON.parse(readFileSync(join(codexHome, "hooks.json"), "utf8")), {});
 
     runCli(["rollback", "--yes"], root);
     assert.equal(realpathSync(join(codexHome, "AGENTS.override.md")), agentsPath);
     assert.equal(readFileSync(join(codexHome, "AGENTS.override.md"), "utf8"), agents);
-    assert.match(runCli(["status"], root), /有効なprofile: guarded/);
+    assert.match(runCli(["status"], root), /有効なprofile \[codex\]: guarded/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -275,7 +275,7 @@ test("日本語のrules directory name can be selected and applied", () => {
   }
 });
 
-test("allows a user-owned AGENTS.md and refuses an unmanaged override or hooks file", () => {
+test("allows user-owned AGENTS.md and hooks JSON but refuses an unmanaged override", () => {
   const root = mkdtempSync(join(tmpdir(), "personal-skills-ctl-conflict-test-"));
   try {
     const resourceSource = createManagedResourceSource(root);
@@ -300,7 +300,8 @@ test("allows a user-owned AGENTS.md and refuses an unmanaged override or hooks f
     rmSync(join(codexHome, "AGENTS.override.md"));
 
     writeFileSync(join(codexHome, "hooks.json"), "{}\n");
-    assert.throws(() => runCli(["plan", "guarded"], root), /既存の通常fileまたはdirectoryが導入を妨げています/);
+    assert.match(runCli(["plan", "guarded"], root), /hook追加 hook-config/);
+    assert.equal(readFileSync(join(codexHome, "hooks.json"), "utf8"), "{}\n");
     assert.equal(readFileSync(join(codexHome, "AGENTS.md"), "utf8"), "user owned\n");
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -514,7 +515,7 @@ test("reports and refuses a managed hooks file replaced by another installer", (
     assert.match(runCli(["status"], root), /drifted\thook-config/);
     assert.throws(
       () => runCli(["apply", "guarded", "--yes"], root),
-      /既存の通常fileまたはdirectoryが導入を妨げています/,
+      /管理対象Codex hookが見つかりません/,
     );
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -540,7 +541,7 @@ test("restores the previous links when the atomic state write fails", () => {
     chmodSync(root, 0o700);
 
     assert.equal(realpathSync(target), join(repoRoot, "skills", "review-maintainability"));
-    assert.match(runCli(["status"], root), /有効なprofile: selected/);
+    assert.match(runCli(["status"], root), /有効なprofile \[codex\]: selected/);
   } finally {
     chmodSync(root, 0o700);
     rmSync(root, { recursive: true, force: true });
@@ -755,7 +756,7 @@ test("state保存失敗時はClaude settingsと管理symlinkを直前の状態�
 
     assert.equal(readFileSync(settingsPath, "utf8"), beforeFailedApply);
     assert.equal(realpathSync(join(claudeHome, "skills", "review-maintainability")), join(repoRoot, "skills", "review-maintainability"));
-    assert.match(runCli(["status"], root, cliEnv), /有効なprofile: claude/);
+    assert.match(runCli(["status"], root, cliEnv), /有効なprofile \[claude\]: claude/);
     assert.match(runCli(["status"], root, cliEnv), /ok\tclaude-hook-config/);
   } finally {
     chmodSync(stateDirectory, 0o700);
@@ -783,7 +784,7 @@ test("Codex専用hookをClaude profileで適用せずplanに対象外理由を�
     assert.match(plan, /対応対象はcodexです/);
     runCli(["apply", "claudeOnly", "--yes"], root);
     assert.equal(existsSync(join(root, "claude", "settings.json")), false);
-    assert.match(runCli(["status"], root), /有効なprofile: claudeOnly/);
+    assert.match(runCli(["status"], root), /有効なprofile \[claude\]: claudeOnly/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
