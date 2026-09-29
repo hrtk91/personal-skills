@@ -35,7 +35,7 @@ description: 実装を Codex や pi に振るとき、herdr のタブでエー�
 
 実装とレビューを別の種類にすると（例 `IMPL_AGENT=pi REV_AGENT=codex`）、同じ癖の見落としを避けられる。
 
-- **Codex:** `/goal` で依頼を渡し、Codex のセッション記録（`~/.codex/sessions`）に目標が載ったかで確かめる。既定は `gpt-6-luna`・fast（`service_tier=priority`）・念入りさ `max`。設計の重い仕事は `CODEX_MODEL=gpt-6-astra CODEX_TIER=default`（fast は切る）。`-s danger-full-access -a never` で動かすので、書いてよい場所は依頼文で絞る。
+- **Codex:** `/goal` で依頼を渡し、Codex のセッション記録（`~/.codex/sessions`）に目標が載ったかで確かめる。実装もレビューも、既定は `gpt-6-luna`・fast（`service_tier=priority`）・念入りさ `max`。実装は `CODEX_MODEL`・`CODEX_TIER`・`CODEX_EFFORT`、レビューは `CODEX_REV_MODEL`・`CODEX_REV_TIER`・`CODEX_REV_EFFORT` で変える（レビューは、指定がなければ実装と同じ）。**`gpt-6-astra` は設計だけに使う型で、この台本では起動を断る。** 設計の重い仕事は、台本の外で別のタブに Codex を立てて（`herdr agent start <名> --kind codex --pane <ペイン> -- -m gpt-6-astra -c 'service_tier="default"' -c model_reasoning_effort=max`。fast は切る）設計の下見や案を書かせ、その指示を luna が実装する。`-s danger-full-access -a never` で動かすので、書いてよい場所は依頼文で絞る。
 - **pi:** 通常のプロンプトで依頼を渡す（`/goal` はない）。既定は `openai-codex/gpt-6-luna`・thinking `high`（`PI_PROVIDER`・`PI_MODEL`・`PI_THINKING`）。pi は `~/.pi/agent/SYSTEM.md` の「変更の前に提案して同意を取る」で止まるので、自動実行用の `agents/pi-system.md` を `--system-prompt` に渡して外す（ユーザーの SYSTEM.md は変えない）。ローカルモデルを使うときは、先に llama-server を起動しておく。
 
 ## 設定（プロジェクトごと）
