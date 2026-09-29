@@ -66,6 +66,7 @@ AIエージェントに、作業の進め方や判断基準を追加するため
 | `codex` | Codexを第二意見を得る相手として使います。 |
 | `codex-handoff` | Codexタスクの引継ぎ資料と新タスクの継続を、承認範囲・証拠つきで整理します。 |
 | `grok-second-opinion` | Grokへ前提と論点を渡し、別の角度から意見を得ます。 |
+| `herdr` | herdrのタブでCodexやpiに実装させ、別のエージェントのレビューまで自動でつなぎます。 |
 | `personal-skills-auto-update` | WindowsとWSLのruntime cloneを安全に更新します。skillの導入は`harnessctl apply`で行います。 |
 | `personal-skills-ctl-daemon` | このリポジトリとローカルのスキルを同期するCLIやdaemonを設計します。 |
 | `retlaude` | Claudeセッションの振り返りを非同期で保存します。 |
