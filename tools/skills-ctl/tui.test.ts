@@ -146,7 +146,7 @@ test("適用するを選ぶと保存したprofileをそのまま適用する", a
       lstatSync(join(cliOptions.codexHome, "AGENTS.override.md")).isSymbolicLink(),
       true,
     );
-    assert.equal(lstatSync(join(cliOptions.codexHome, "hooks.json")).isSymbolicLink(), true);
+    assert.equal(lstatSync(join(cliOptions.codexHome, "hooks.json")).isFile(), true);
     const agents = readFileSync(join(cliOptions.codexHome, "AGENTS.override.md"), "utf8");
     assert.ok(agents.indexOf("# base") < agents.indexOf("# fixture"));
     assert.ok(agents.indexOf("# fixture") < agents.indexOf("# second fixture"));

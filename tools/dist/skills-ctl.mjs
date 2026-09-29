@@ -1,8 +1,5 @@
 #!/usr/bin/env node
 
-// tools/skills-ctl.ts
-import { resolve as resolve4 } from "node:path";
-
 // tools/skills-ctl/model.ts
 import {
   existsSync,
@@ -142,6 +139,7 @@ function emptyState(targetDir, codexHome, claudeHome) {
     targetDir,
     activeProfile: null,
     targets: [],
+    profiles: {},
     managed: [],
     history: []
   };
@@ -180,30 +178,51 @@ function readState(path, targetDir, codexHome, claudeHome) {
   const version = Number(state.version ?? 1);
   if (version > 4) throw new Error(`\u672A\u5BFE\u5FDC\u306Estate version\u3067\u3059: ${version}`);
   const managed = (state.managed ?? []).map((entry) => normalizeManagedEntry(entry));
-  const history = (state.history ?? []).map((backup) => ({
-    timestamp: backup.timestamp,
-    activeProfile: backup.activeProfile ?? null,
-    targets: normalizeHarnessTargets(
+  const history = (state.history ?? []).map((backup) => {
+    const targets2 = normalizeHarnessTargets(
       backup.targets ?? inferredTargets(backup.managed ?? []),
       "state history"
-    ),
-    managed: (backup.managed ?? []).map((entry) => normalizeManagedEntry(entry))
-  }));
+    );
+    return {
+      timestamp: backup.timestamp,
+      activeProfile: backup.activeProfile ?? null,
+      targets: targets2,
+      profiles: normalizeActiveProfiles(backup.profiles, backup.activeProfile ?? null, targets2),
+      managed: (backup.managed ?? []).map((entry) => normalizeManagedEntry(entry))
+    };
+  });
+  const targets = normalizeHarnessTargets(
+    state.targets ?? inferredTargets(state.managed ?? []),
+    "state"
+  );
   const migrated = {
     version: 4,
     codexHome: state.codexHome ?? codexHome,
     claudeHome: state.claudeHome ?? claudeHome,
     targetDir: state.targetDir ?? targetDir,
     activeProfile: state.activeProfile ?? null,
-    targets: normalizeHarnessTargets(
-      state.targets ?? inferredTargets(state.managed ?? []),
-      "state"
-    ),
+    targets,
+    profiles: normalizeActiveProfiles(state.profiles, state.activeProfile ?? null, targets),
     managed,
     history
   };
   if (shouldPersistMigration && version < 4) writeJsonAtomic(path, migrated);
   return migrated;
+}
+function normalizeActiveProfiles(profiles, activeProfile, targets) {
+  if (profiles === void 0) {
+    return activeProfile === null ? {} : Object.fromEntries(targets.map((target) => [target, activeProfile]));
+  }
+  if (!profiles || typeof profiles !== "object" || Array.isArray(profiles)) {
+    throw new Error("state\u306Eprofiles\u306Fobject\u3067\u3042\u308B\u5FC5\u8981\u304C\u3042\u308A\u307E\u3059");
+  }
+  const normalized = {};
+  for (const [harness, name] of Object.entries(profiles)) {
+    const target = normalizeHarness(harness, "state profiles");
+    if (typeof name !== "string" || !name) throw new Error(`state\u306Eprofile\u540D\u304C\u4E0D\u6B63\u3067\u3059: ${harness}`);
+    normalized[target] = name;
+  }
+  return normalized;
 }
 function inferredTargets(entries) {
   const targets = [...new Set(entries.map((entry) => entry.harness === "claude" ? "claude" : "codex"))];
@@ -659,6 +678,7 @@ function desiredPlan(profile, targetDir, codexHome, claudeHome, statePath, confi
 
 // tools/skills-ctl/activation.ts
 import {
+  chmodSync,
   existsSync as existsSync4,
   mkdirSync as mkdirSync2,
   readFileSync as readFileSync4,
@@ -668,7 +688,7 @@ import {
   unlinkSync,
   writeFileSync as writeFileSync2
 } from "node:fs";
-import { dirname as dirname4, join as join4, resolve as resolve3 } from "node:path";
+import { basename as basename3, dirname as dirname4, join as join4, resolve as resolve3 } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
@@ -685,16 +705,41 @@ function isSymlinkTo(path, source) {
 function managedEntryFor(state, target) {
   return state.managed.find((entry) => resolve3(entry.target) === resolve3(target));
 }
-function isClaudeHookConfig(entry) {
-  return entry.harness === "claude" && entry.kind === "claude-hook-config";
+function isHookConfig(entry) {
+  return entry.harness === "codex" && entry.kind === "hook-config" || entry.harness === "claude" && entry.kind === "claude-hook-config";
 }
 function linkEntries(entries) {
-  return entries.filter((entry) => !isClaudeHookConfig(entry));
+  return entries.filter((entry) => !isHookConfig(entry));
 }
-function claudeHookEntry(entries) {
-  return entries.find(isClaudeHookConfig);
+function hookConfigChanges(current, desired) {
+  const changes = /* @__PURE__ */ new Map();
+  for (const entry of current.filter(isHookConfig)) {
+    changes.set(resolve3(entry.target), { previous: entry });
+  }
+  for (const entry of desired.filter(isHookConfig)) {
+    const target = resolve3(entry.target);
+    changes.set(target, { ...changes.get(target), desired: entry });
+  }
+  return [...changes.values()];
 }
-function detachLegacyRulesEntries(state) {
+function profileScope(profileName, profile, state) {
+  return [.../* @__PURE__ */ new Set([
+    ...profile.targets,
+    ...["codex", "claude"].filter((harness) => state.profiles[harness] === profileName)
+  ])];
+}
+function prepareScopedState(state, scope, options, selectedTargets) {
+  return detachLegacyRulesEntries({
+    ...state,
+    ...selectedTargets.includes("codex") ? {
+      targetDir: resolve3(options.targetDir),
+      codexHome: resolve3(options.codexHome)
+    } : {},
+    ...selectedTargets.includes("claude") ? { claudeHome: resolve3(options.claudeHome) } : {}
+  }, scope);
+}
+function detachLegacyRulesEntries(state, scope = ["codex", "claude"]) {
+  if (!scope.includes("codex")) return state;
   const legacyTarget = join4(resolve3(state.codexHome), "AGENTS.md");
   const isLegacyRulesEntry = (entry) => entry.harness === "codex" && entry.kind === "rules" && resolve3(entry.target) === legacyTarget;
   const hasLegacyEntry = state.managed.some(isLegacyRulesEntry) || state.history.some((backup) => backup.managed.some(isLegacyRulesEntry));
@@ -716,27 +761,30 @@ function detachLegacyRulesEntries(state) {
     }))
   };
 }
-function validatePlan(desired, state, targetDir, artifacts = []) {
-  if (desired.some((entry) => entry.kind === "skill" && entry.name === ".system")) {
-    throw new Error(".system\u306F\u4FDD\u8B77\u5BFE\u8C61\u306E\u305F\u3081\u7BA1\u7406\u3067\u304D\u307E\u305B\u3093");
-  }
+function assertDistinctTargets(entries) {
   const targetOwners = /* @__PURE__ */ new Map();
-  for (const entry of desired) {
-    validateManagedTarget(entry, state, targetDir);
+  for (const entry of entries) {
     const target = resolve3(entry.target);
     const previous = targetOwners.get(target);
-    if (previous && (previous.ref !== entry.ref || previous.harness !== entry.harness)) {
+    if (previous && (previous.ref !== entry.ref || previous.harness !== entry.harness || previous.kind !== entry.kind || resolve3(previous.source) !== resolve3(entry.source))) {
       throw new Error(
         `\u5C0E\u5165\u5148\u304C\u885D\u7A81\u3057\u3066\u3044\u307E\u3059: ${previous.ref}\u3068${entry.ref}\u304C\u540C\u3058${entry.target}\u3092\u8981\u6C42\u3057\u3066\u3044\u307E\u3059`
       );
     }
     targetOwners.set(target, entry);
   }
+}
+function validatePlan(desired, state, targetDir, artifacts = [], scope = ["codex", "claude"]) {
+  if (desired.some((entry) => entry.kind === "skill" && entry.name === ".system")) {
+    throw new Error(".system\u306F\u4FDD\u8B77\u5BFE\u8C61\u306E\u305F\u3081\u7BA1\u7406\u3067\u304D\u307E\u305B\u3093");
+  }
+  const current = state.managed.filter((entry) => scope.includes(entry.harness));
+  const preserved = state.managed.filter((entry) => !scope.includes(entry.harness));
+  assertDistinctTargets(state.managed);
+  assertDistinctTargets([...desired, ...preserved]);
   for (const entry of desired) {
-    if (isClaudeHookConfig(entry)) {
-      readClaudeSettings(entry.target);
-      continue;
-    }
+    validateManagedTarget(entry, state, targetDir);
+    if (isHookConfig(entry)) continue;
     const stat = safeLstat(entry.target);
     if (!stat) continue;
     if (stat.isSymbolicLink()) {
@@ -748,53 +796,17 @@ function validatePlan(desired, state, targetDir, artifacts = []) {
     }
     throw new Error(`\u65E2\u5B58\u306E\u901A\u5E38file\u307E\u305F\u306Fdirectory\u304C\u5C0E\u5165\u3092\u59A8\u3052\u3066\u3044\u307E\u3059: ${entry.target}`);
   }
-  for (const entry of state.managed) {
+  for (const entry of current) {
     validateManagedTarget(entry, state, targetDir);
-    if (isClaudeHookConfig(entry)) {
-      assertClaudeHooksPresent(entry);
-      continue;
-    }
+    if (isHookConfig(entry)) continue;
     const stat = safeLstat(entry.target);
     if (stat && !stat.isSymbolicLink()) {
       throw new Error(`\u7BA1\u7406\u5BFE\u8C61\u304C\u901A\u5E38file\u307E\u305F\u306Fdirectory\u3078\u7F6E\u304D\u63DB\u3048\u3089\u308C\u3066\u3044\u307E\u3059: ${entry.target}`);
     }
   }
   const artifactContent = new Map(artifacts.map((artifact) => [resolve3(artifact.path), artifact.content]));
-  const previousClaudeHooks = claudeHookEntry(state.managed);
-  for (const entry of desired) {
-    if (!isClaudeHookConfig(entry)) continue;
-    const settings = readClaudeSettings(entry.target);
-    const hooks = { ...settings.hooks ?? {} };
-    if (previousClaudeHooks) {
-      const previousGroups = readHookArtifact(previousClaudeHooks);
-      for (const [event, groups] of Object.entries(previousGroups)) {
-        const current = hooks[event];
-        if (!Array.isArray(current)) {
-          throw new Error(`\u7BA1\u7406\u5BFE\u8C61Claude hook\u304C\u898B\u3064\u304B\u308A\u307E\u305B\u3093: ${event} (${entry.target})`);
-        }
-        const remaining = [...current];
-        for (const group of groups) {
-          const index = remaining.findIndex((candidate) => isDeepStrictEqual(candidate, group));
-          if (index === -1) {
-            throw new Error(`\u7BA1\u7406\u5BFE\u8C61Claude hook\u304C\u5909\u66F4\u307E\u305F\u306F\u524A\u9664\u3055\u308C\u3066\u3044\u307E\u3059: ${event} (${entry.target})`);
-          }
-          remaining.splice(index, 1);
-        }
-        if (remaining.length === 0) delete hooks[event];
-        else hooks[event] = remaining;
-      }
-    }
-    const desiredGroups = readHookArtifact(
-      entry,
-      artifactContent.get(resolve3(entry.source))
-    );
-    for (const [event, groups] of Object.entries(desiredGroups)) {
-      const current = hooks[event] ?? [];
-      if (!Array.isArray(current)) throw new Error(`Claude hook event\u306F\u914D\u5217\u3067\u3042\u308B\u5FC5\u8981\u304C\u3042\u308A\u307E\u3059: ${event}`);
-      if (groups.some((group) => current.some((candidate) => isDeepStrictEqual(candidate, group)))) {
-        throw new Error(`\u65E2\u5B58hook\u3068\u540C\u3058Claude hook group\u3092\u5B89\u5168\u306B\u533A\u5225\u3067\u304D\u307E\u305B\u3093: ${event} (${entry.target})`);
-      }
-    }
+  for (const { previous, desired: entry } of hookConfigChanges(current, desired)) {
+    mergedSettingsHooks(previous, entry, entry ? artifactContent.get(resolve3(entry.source)) : void 0);
   }
 }
 function validateManagedTarget(entry, state, targetDir) {
@@ -812,7 +824,7 @@ function validateManagedTarget(entry, state, targetDir) {
   throw new Error(`state entry\u304C${entry.kind}\u306E\u8A31\u53EF\u7BC4\u56F2\u5916\u3067\u3059: ${entry.target}`);
 }
 function planAction(entry) {
-  return isClaudeHookConfig(entry) ? "hook" : "link";
+  return isHookConfig(entry) ? "hook" : "link";
 }
 function planLines(desired, state, selectedTargets = [...new Set(desired.map((entry) => entry.harness))]) {
   const lines = [
@@ -822,7 +834,8 @@ function planLines(desired, state, selectedTargets = [...new Set(desired.map((en
     `Claude home: ${resolve3(state.claudeHome)}`,
     `\u5C0E\u5165\u4E88\u5B9Aresource: ${desired.length}\u4EF6`
   ];
-  const current = new Map(state.managed.map((entry) => [resolve3(entry.target), entry]));
+  const scopedEntries = state.managed.filter((entry) => selectedTargets.includes(entry.harness));
+  const current = new Map(scopedEntries.map((entry) => [resolve3(entry.target), entry]));
   const next = new Map(desired.map((entry) => [resolve3(entry.target), entry]));
   for (const entry of desired) {
     const previous = current.get(resolve3(entry.target));
@@ -835,12 +848,17 @@ function planLines(desired, state, selectedTargets = [...new Set(desired.map((en
       lines.push(`= \u7DAD\u6301 ${entry.kind} ${entry.ref} [${entry.harness}]`);
     }
   }
-  for (const entry of state.managed) {
+  for (const entry of scopedEntries) {
     if (!next.has(resolve3(entry.target))) {
       lines.push(`- ${planAction(entry)}\u524A\u9664 ${entry.kind} ${entry.ref} [${entry.harness}] (${entry.target})`);
     }
   }
-  if (desired.length === 0 && state.managed.length === 0) {
+  for (const harness of ["codex", "claude"]) {
+    if (selectedTargets.includes(harness)) continue;
+    const count = state.managed.filter((entry) => entry.harness === harness).length;
+    lines.push(`= ${harness}: \u5909\u66F4\u3057\u306A\u3044\uFF08${count} \u4EF6\uFF09`);
+  }
+  if (desired.length === 0 && scopedEntries.length === 0) {
     lines.push("= \u7BA1\u7406\u5BFE\u8C61resource\u306A\u3057");
   }
   return lines;
@@ -850,7 +868,7 @@ function printPlan(desired, state, notices = [], selectedTargets = [...new Set(d
   for (const notice of notices) console.log(`! ${notice}`);
 }
 function unlinkIfManaged(entry, state) {
-  if (isClaudeHookConfig(entry)) return;
+  if (isHookConfig(entry)) return;
   const stat = safeLstat(entry.target);
   if (!stat) return;
   if (!stat.isSymbolicLink()) {
@@ -895,51 +913,63 @@ function applyEntries(desired, state) {
     throw error;
   }
 }
+function harnessLabel(entry) {
+  return entry.harness === "codex" ? "Codex" : "Claude";
+}
 function readHookArtifact(entry, artifactContent) {
+  const label = harnessLabel(entry);
   let parsed;
   try {
     parsed = JSON.parse(artifactContent ?? readFileSync4(entry.source, "utf8"));
   } catch (error) {
-    throw new Error(`Claude hook artifact\u3092\u8AAD\u307F\u8FBC\u3081\u307E\u305B\u3093 ${entry.source}: ${String(error)}`);
+    throw new Error(`${label} hook artifact\u3092\u8AAD\u307F\u8FBC\u3081\u307E\u305B\u3093 ${entry.source}: ${String(error)}`);
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error(`Claude hook artifact\u306Fobject\u3067\u3042\u308B\u5FC5\u8981\u304C\u3042\u308A\u307E\u3059: ${entry.source}`);
+    throw new Error(`${label} hook artifact\u306Fobject\u3067\u3042\u308B\u5FC5\u8981\u304C\u3042\u308A\u307E\u3059: ${entry.source}`);
   }
   const hooks = parsed.hooks;
   if (!hooks || typeof hooks !== "object" || Array.isArray(hooks)) {
-    throw new Error(`Claude hook artifact\u306Bhooks object\u304C\u3042\u308A\u307E\u305B\u3093: ${entry.source}`);
+    throw new Error(`${label} hook artifact\u306Bhooks object\u304C\u3042\u308A\u307E\u305B\u3093: ${entry.source}`);
   }
   for (const [event, groups] of Object.entries(hooks)) {
-    if (!Array.isArray(groups)) throw new Error(`Claude hook event\u306F\u914D\u5217\u3067\u3042\u308B\u5FC5\u8981\u304C\u3042\u308A\u307E\u3059: ${event}`);
+    if (!Array.isArray(groups)) throw new Error(`${label} hook event\u306F\u914D\u5217\u3067\u3042\u308B\u5FC5\u8981\u304C\u3042\u308A\u307E\u3059: ${event}`);
   }
   return hooks;
 }
-function readClaudeSettings(path) {
+function settingsStat(path, previous) {
   const stat = safeLstat(path);
-  if (stat?.isSymbolicLink()) throw new Error(`settings.json\u304Csymlink\u306E\u305F\u3081\u5909\u66F4\u3067\u304D\u307E\u305B\u3093: ${path}`);
-  if (stat && !stat.isFile()) throw new Error(`settings.json\u306F\u901A\u5E38file\u3067\u3042\u308B\u5FC5\u8981\u304C\u3042\u308A\u307E\u3059: ${path}`);
-  if (!stat) return {};
+  if (stat?.isSymbolicLink()) {
+    if (previous?.harness === "codex" && previous.kind === "hook-config" && isSymlinkTo(path, previous.source)) {
+      return stat;
+    }
+    throw new Error(`${basename3(path)}\u304C\u7BA1\u7406\u5916symlink\u306E\u305F\u3081\u5909\u66F4\u3067\u304D\u307E\u305B\u3093: ${path}`);
+  }
+  if (stat && !stat.isFile()) throw new Error(`${basename3(path)}\u306F\u901A\u5E38file\u3067\u3042\u308B\u5FC5\u8981\u304C\u3042\u308A\u307E\u3059: ${path}`);
+  return stat;
+}
+function readHookSettings(path, previous) {
+  if (!settingsStat(path, previous)) return {};
   let parsed;
   try {
     parsed = JSON.parse(readFileSync4(path, "utf8"));
   } catch (error) {
-    throw new Error(`Claude settings.json\u3092\u8AAD\u307F\u8FBC\u3081\u307E\u305B\u3093 ${path}: ${String(error)}`);
+    throw new Error(`${basename3(path)}\u3092\u8AAD\u307F\u8FBC\u3081\u307E\u305B\u3093 ${path}: ${String(error)}`);
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error(`Claude settings.json\u306Fobject\u3067\u3042\u308B\u5FC5\u8981\u304C\u3042\u308A\u307E\u3059: ${path}`);
+    throw new Error(`${basename3(path)}\u306Fobject\u3067\u3042\u308B\u5FC5\u8981\u304C\u3042\u308A\u307E\u3059: ${path}`);
   }
   const settings = parsed;
   if (settings.hooks !== void 0 && (!settings.hooks || typeof settings.hooks !== "object" || Array.isArray(settings.hooks))) {
-    throw new Error(`Claude settings.json\u306Ehooks\u306Fobject\u3067\u3042\u308B\u5FC5\u8981\u304C\u3042\u308A\u307E\u3059: ${path}`);
+    throw new Error(`${basename3(path)}\u306Ehooks\u306Fobject\u3067\u3042\u308B\u5FC5\u8981\u304C\u3042\u308A\u307E\u3059: ${path}`);
   }
   return settings;
 }
-function assertClaudeHooksPresent(entry) {
+function assertHooksPresent(entry, actual = readHookSettings(entry.target, entry).hooks ?? {}) {
   const expected = readHookArtifact(entry);
-  const actual = readClaudeSettings(entry.target).hooks ?? {};
+  const label = harnessLabel(entry);
   for (const [event, groups] of Object.entries(expected)) {
     const current = actual[event];
-    if (!Array.isArray(current)) throw new Error(`\u7BA1\u7406\u5BFE\u8C61Claude hook\u304C\u898B\u3064\u304B\u308A\u307E\u305B\u3093: ${event} (${entry.target})`);
+    if (!Array.isArray(current)) throw new Error(`\u7BA1\u7406\u5BFE\u8C61${label} hook\u304C\u898B\u3064\u304B\u308A\u307E\u305B\u3093: ${event} (${entry.target})`);
     const distinctGroups = [];
     for (const group of groups) {
       if (!distinctGroups.some((candidate) => isDeepStrictEqual(candidate, group))) {
@@ -950,57 +980,55 @@ function assertClaudeHooksPresent(entry) {
       const expectedCount = groups.filter((candidate) => isDeepStrictEqual(candidate, group)).length;
       const actualCount = current.filter((candidate) => isDeepStrictEqual(candidate, group)).length;
       if (actualCount !== expectedCount) {
-        throw new Error(`\u7BA1\u7406\u5BFE\u8C61Claude hook\u304C\u5909\u66F4\u30FB\u524A\u9664\u30FB\u91CD\u8907\u3057\u3066\u3044\u307E\u3059: ${event} (${entry.target})`);
+        throw new Error(`\u7BA1\u7406\u5BFE\u8C61${label} hook\u304C\u5909\u66F4\u30FB\u524A\u9664\u30FB\u91CD\u8907\u3057\u3066\u3044\u307E\u3059: ${event} (${entry.target})`);
       }
     }
   }
 }
-function snapshotSettings(path) {
-  const stat = safeLstat(path);
-  if (stat?.isSymbolicLink()) throw new Error(`settings.json\u304Csymlink\u306E\u305F\u3081\u5909\u66F4\u3067\u304D\u307E\u305B\u3093: ${path}`);
-  if (stat && !stat.isFile()) throw new Error(`settings.json\u306F\u901A\u5E38file\u3067\u3042\u308B\u5FC5\u8981\u304C\u3042\u308A\u307E\u3059: ${path}`);
-  return {
-    path,
-    existed: Boolean(stat),
-    content: stat ? readFileSync4(path, "utf8") : "",
-    mode: stat ? stat.mode & 511 : 384
-  };
+function snapshotSettings(path, previous) {
+  const stat = settingsStat(path, previous);
+  if (!stat) return { path, kind: "missing" };
+  if (stat.isSymbolicLink()) return { path, kind: "symlink", link: readlinkSync(path) };
+  return { path, kind: "file", content: readFileSync4(path, "utf8"), mode: stat.mode & 511 };
 }
 function restoreSettingsSnapshot(snapshot) {
   const current = safeLstat(snapshot.path);
+  if (snapshot.kind === "symlink" && current?.isSymbolicLink() && readlinkSync(snapshot.path) === snapshot.link) return;
   if (current?.isSymbolicLink() || current && !current.isFile()) {
-    throw new Error(`settings.json\u304C\u901A\u5E38file\u3067\u306F\u306A\u304F\u306A\u3063\u305F\u305F\u3081\u5FA9\u5143\u3067\u304D\u307E\u305B\u3093: ${snapshot.path}`);
+    throw new Error(`${basename3(snapshot.path)}\u304C\u901A\u5E38file\u3067\u306F\u306A\u304F\u306A\u3063\u305F\u305F\u3081\u5FA9\u5143\u3067\u304D\u307E\u305B\u3093: ${snapshot.path}`);
   }
-  if (!snapshot.existed) {
+  if (snapshot.kind === "missing") {
     if (current) unlinkSync(snapshot.path);
-    return;
+  } else if (snapshot.kind === "symlink") {
+    if (current) unlinkSync(snapshot.path);
+    symlinkSync(snapshot.link, snapshot.path, "file");
+  } else {
+    if (current && readFileSync4(snapshot.path, "utf8") === snapshot.content && (current.mode & 511) === snapshot.mode) return;
+    writeSettingsFile(snapshot.path, snapshot.content, snapshot.mode);
   }
-  writeSettingsFile(snapshot.path, snapshot.content, snapshot.mode);
 }
 function writeSettingsFile(path, content, mode) {
   mkdirSync2(dirname4(path), { recursive: true });
   const temporary = `${path}.${process.pid}.tmp`;
-  writeFileSync2(temporary, content, { mode });
-  renameSync2(temporary, path);
+  try {
+    writeFileSync2(temporary, content, { mode });
+    chmodSync(temporary, mode);
+    renameSync2(temporary, path);
+  } finally {
+    if (safeLstat(temporary)) unlinkSync(temporary);
+  }
 }
-function updateClaudeSettingsHooks(previous, desired) {
-  if (!previous && !desired) return;
-  const path = (desired ?? previous).target;
-  const settings = readClaudeSettings(path);
+function mergedSettingsHooks(previous, desired, artifactContent) {
+  const entry = desired ?? previous;
+  const path = entry.target;
+  const settings = readHookSettings(path, previous);
   const hooks = { ...settings.hooks ?? {} };
   if (previous) {
-    const managedHooks = readHookArtifact(previous);
-    for (const [event, groups] of Object.entries(managedHooks)) {
-      const current = hooks[event];
-      if (!Array.isArray(current)) {
-        throw new Error(`\u7BA1\u7406\u5BFE\u8C61Claude hook\u304C\u898B\u3064\u304B\u308A\u307E\u305B\u3093: ${event} (${path})`);
-      }
-      const remaining = [...current];
+    assertHooksPresent(previous, hooks);
+    for (const [event, groups] of Object.entries(readHookArtifact(previous))) {
+      const remaining = [...hooks[event]];
       for (const group of groups) {
         const index = remaining.findIndex((candidate) => isDeepStrictEqual(candidate, group));
-        if (index === -1) {
-          throw new Error(`\u7BA1\u7406\u5BFE\u8C61Claude hook\u304C\u5909\u66F4\u307E\u305F\u306F\u524A\u9664\u3055\u308C\u3066\u3044\u307E\u3059: ${event} (${path})`);
-        }
         remaining.splice(index, 1);
       }
       if (remaining.length === 0) delete hooks[event];
@@ -1008,14 +1036,12 @@ function updateClaudeSettingsHooks(previous, desired) {
     }
   }
   if (desired) {
-    const managedHooks = readHookArtifact(desired);
+    const managedHooks = readHookArtifact(desired, artifactContent);
     for (const [event, groups] of Object.entries(managedHooks)) {
       const current = hooks[event] ?? [];
-      if (!Array.isArray(current)) throw new Error(`Claude hook event\u306F\u914D\u5217\u3067\u3042\u308B\u5FC5\u8981\u304C\u3042\u308A\u307E\u3059: ${event}`);
-      for (const group of groups) {
-        if (current.some((candidate) => isDeepStrictEqual(candidate, group))) {
-          throw new Error(`\u65E2\u5B58hook\u3068\u540C\u3058Claude hook group\u3092\u5B89\u5168\u306B\u533A\u5225\u3067\u304D\u307E\u305B\u3093: ${event} (${path})`);
-        }
+      if (!Array.isArray(current)) throw new Error(`${harnessLabel(entry)} hook event\u306F\u914D\u5217\u3067\u3042\u308B\u5FC5\u8981\u304C\u3042\u308A\u307E\u3059: ${event}`);
+      if (groups.some((group) => current.some((candidate) => isDeepStrictEqual(candidate, group)))) {
+        throw new Error(`\u65E2\u5B58hook\u3068\u540C\u3058${harnessLabel(entry)} hook group\u3092\u5B89\u5168\u306B\u533A\u5225\u3067\u304D\u307E\u305B\u3093: ${event} (${path})`);
       }
       hooks[event] = [...current, ...groups];
     }
@@ -1023,51 +1049,41 @@ function updateClaudeSettingsHooks(previous, desired) {
   const nextSettings = { ...settings };
   if (Object.keys(hooks).length === 0) delete nextSettings.hooks;
   else nextSettings.hooks = hooks;
-  const snapshot = snapshotSettings(path);
-  writeSettingsFile(path, `${JSON.stringify(nextSettings, null, 2)}
-`, snapshot.mode);
+  return nextSettings;
+}
+function updateSettingsHooks(previous, desired, snapshot) {
+  const settings = mergedSettingsHooks(previous, desired);
+  writeSettingsFile(snapshot.path, `${JSON.stringify(settings, null, 2)}
+`, snapshot.kind === "file" ? snapshot.mode : 384);
 }
 function applyManagedResources(desired, state) {
-  const previousHooks = claudeHookEntry(state.managed);
-  const desiredHooks = claudeHookEntry(desired);
-  const settingsPath = desiredHooks?.target ?? previousHooks?.target;
-  const settingsSnapshot = settingsPath ? snapshotSettings(settingsPath) : null;
-  const currentLinks = linkEntries(state.managed);
-  const desiredLinks = linkEntries(desired);
+  const changes = hookConfigChanges(state.managed, desired);
+  const snapshots = changes.map(({ previous, desired: desired2 }) => snapshotSettings((desired2 ?? previous).target, previous));
   try {
-    applyEntries(desiredLinks, { ...state, managed: currentLinks });
-    updateClaudeSettingsHooks(previousHooks, desiredHooks);
+    applyEntries(desired, state);
+    for (const [index, { previous, desired: entry }] of changes.entries()) {
+      updateSettingsHooks(previous, entry, snapshots[index]);
+    }
   } catch (error) {
-    const restorationErrors = [];
     try {
-      applyEntries(currentLinks, { ...state, managed: desiredLinks });
+      restoreAfterStateFailure(desired, state, snapshots);
     } catch (rollbackError) {
-      restorationErrors.push(`symlink\u5FA9\u5143: ${String(rollbackError)}`);
-    }
-    if (settingsSnapshot) {
-      try {
-        restoreSettingsSnapshot(settingsSnapshot);
-      } catch (rollbackError) {
-        restorationErrors.push(`settings\u5FA9\u5143: ${String(rollbackError)}`);
-      }
-    }
-    if (restorationErrors.length > 0) {
-      throw new Error(`${String(error)} (${restorationErrors.join("; ")})`);
+      throw new Error(`${String(error)} (resource\u5FA9\u5143\u306B\u5931\u6557\u3057\u307E\u3057\u305F: ${String(rollbackError)})`);
     }
     throw error;
   }
-  return settingsSnapshot;
+  return snapshots;
 }
-function restoreAfterStateFailure(desired, state, settingsSnapshot) {
+function restoreAfterStateFailure(desired, state, settingsSnapshots) {
   const errors = [];
   try {
     applyEntries(linkEntries(state.managed), { ...state, managed: linkEntries(desired) });
   } catch (error) {
     errors.push(`symlink\u5FA9\u5143: ${String(error)}`);
   }
-  if (settingsSnapshot) {
+  for (const snapshot of [...settingsSnapshots].reverse()) {
     try {
-      restoreSettingsSnapshot(settingsSnapshot);
+      restoreSettingsSnapshot(snapshot);
     } catch (error) {
       errors.push(`settings\u5FA9\u5143: ${String(error)}`);
     }
@@ -1076,10 +1092,8 @@ function restoreAfterStateFailure(desired, state, settingsSnapshot) {
 }
 async function applyProfile(profileName, profile, config, options) {
   let state = readState(options.statePath, options.targetDir, options.codexHome, options.claudeHome);
-  state.targetDir = resolve3(options.targetDir);
-  state.codexHome = resolve3(options.codexHome);
-  state.claudeHome = resolve3(options.claudeHome);
-  state = detachLegacyRulesEntries(state);
+  const scope = profileScope(profileName, profile, state);
+  state = prepareScopedState(state, scope, options, profile.targets);
   const plan = desiredPlan(
     profile,
     state.targetDir,
@@ -1089,8 +1103,8 @@ async function applyProfile(profileName, profile, config, options) {
     config
   );
   const desired = plan.entries;
-  validatePlan(desired, state, state.targetDir, plan.artifacts);
-  printPlan(desired, state, plan.notices, profile.targets);
+  validatePlan(desired, state, state.targetDir, plan.artifacts, scope);
+  printPlan(desired, state, plan.notices, scope);
   if (options.dryRun) return;
   if (!options.yes) {
     const rl = createInterface({ input, output });
@@ -1105,12 +1119,17 @@ async function applyProfile(profileName, profile, config, options) {
     timestamp: (/* @__PURE__ */ new Date()).toISOString(),
     activeProfile: state.activeProfile,
     targets: state.targets,
+    profiles: state.profiles,
     managed: state.managed
   };
   for (const artifact of plan.artifacts) {
     if (!existsSync4(artifact.path)) writeArtifact(artifact);
   }
-  const settingsSnapshot = applyManagedResources(desired, state);
+  const scopedState = { ...state, managed: state.managed.filter((entry) => scope.includes(entry.harness)) };
+  const settingsSnapshots = applyManagedResources(desired, scopedState);
+  const profiles = { ...state.profiles };
+  for (const harness of scope) delete profiles[harness];
+  for (const harness of profile.targets) profiles[harness] = profileName;
   const nextState = {
     version: 4,
     codexHome: state.codexHome,
@@ -1118,14 +1137,15 @@ async function applyProfile(profileName, profile, config, options) {
     targetDir: state.targetDir,
     activeProfile: profileName,
     targets: profile.targets,
-    managed: desired,
+    profiles,
+    managed: [...state.managed.filter((entry) => !scope.includes(entry.harness)), ...desired],
     history: [...state.history, backup].slice(-20)
   };
   try {
     writeJsonAtomic(options.statePath, nextState);
   } catch (error) {
     try {
-      restoreAfterStateFailure(desired, state, settingsSnapshot);
+      restoreAfterStateFailure(desired, scopedState, settingsSnapshots);
     } catch (rollbackError) {
       throw new Error(`${String(error)} (resource\u5FA9\u5143\u306B\u5931\u6557\u3057\u307E\u3057\u305F: ${String(rollbackError)})`);
     }
@@ -1143,10 +1163,10 @@ function writeArtifact(artifact) {
   writeFileSync2(temporary, artifact.content, { mode: 384 });
   renameSync2(temporary, artifact.path);
 }
-function claudeHookStatus(entry) {
+function hookConfigStatus(entry) {
   if (!existsSync4(entry.source) || !existsSync4(entry.target)) return "missing";
   try {
-    assertClaudeHooksPresent(entry);
+    assertHooksPresent(entry);
     return "ok";
   } catch {
     return "drifted";
@@ -1156,29 +1176,32 @@ function inspectStatus(state) {
   console.log(`skill\u5C0E\u5165\u5148 (Codex): ${resolve3(state.targetDir)}`);
   console.log(`Codex home: ${resolve3(state.codexHome)}`);
   console.log(`Claude home: ${resolve3(state.claudeHome)}`);
-  console.log(`\u6709\u52B9\u306Aprofile: ${state.activeProfile ?? "(\u306A\u3057)"}`);
-  console.log(`\u5BFE\u8C61\u30CF\u30FC\u30CD\u30B9: ${state.targets.join(", ") || "(\u306A\u3057)"}`);
+  for (const harness of ["codex", "claude"]) {
+    console.log(`\u6709\u52B9\u306Aprofile [${harness}]: ${state.profiles[harness] ?? "(\u306A\u3057)"}`);
+  }
   if (state.managed.length === 0) {
     console.log("\u7BA1\u7406\u5BFE\u8C61resource: \u306A\u3057");
     return;
   }
   for (const entry of state.managed) {
-    const status = !existsSync4(entry.source) ? "source-missing" : isClaudeHookConfig(entry) ? claudeHookStatus(entry) : isSymlinkTo(entry.target, entry.source) ? "ok" : safeLstat(entry.target) ? "drifted" : "missing";
+    const status = !existsSync4(entry.source) ? "source-missing" : isHookConfig(entry) ? hookConfigStatus(entry) : isSymlinkTo(entry.target, entry.source) ? "ok" : safeLstat(entry.target) ? "drifted" : "missing";
     console.log(`${status}	${entry.kind}	${entry.ref}	${entry.target} -> ${entry.source}	${entry.harness}`);
   }
 }
 async function rollback(options) {
   let state = readState(options.statePath, options.targetDir, options.codexHome, options.claudeHome);
-  state.targetDir = resolve3(options.targetDir);
-  state.codexHome = resolve3(options.codexHome);
-  state.claudeHome = resolve3(options.claudeHome);
-  state = detachLegacyRulesEntries(state);
-  const backup = state.history.at(-1);
+  let backup = state.history.at(-1);
   if (!backup) throw new Error("rollback\u5C65\u6B74\u304C\u3042\u308A\u307E\u305B\u3093");
-  const desired = backup.managed;
-  validatePlan(desired, state, state.targetDir);
+  const scope = ["codex", "claude"].filter((harness) => state.profiles[harness] !== backup.profiles[harness] || !isDeepStrictEqual(
+    state.managed.filter((entry) => entry.harness === harness),
+    backup.managed.filter((entry) => entry.harness === harness)
+  ));
+  state = prepareScopedState(state, scope, options, []);
+  backup = state.history.at(-1);
+  const desired = backup.managed.filter((entry) => scope.includes(entry.harness));
+  validatePlan(desired, state, state.targetDir, [], scope);
   console.log(`rollback\u5148: ${backup.activeProfile ?? "(\u306A\u3057)"}`);
-  printPlan(desired, state, [], backup.targets);
+  printPlan(desired, state, [], scope);
   if (!options.yes) {
     const rl = createInterface({ input, output });
     const confirmation = await rl.question("rollback\u3092\u5B9F\u884C\u3057\u307E\u3059\u304B\uFF1F [y/N] ");
@@ -1192,9 +1215,11 @@ async function rollback(options) {
     timestamp: (/* @__PURE__ */ new Date()).toISOString(),
     activeProfile: state.activeProfile,
     targets: state.targets,
+    profiles: state.profiles,
     managed: state.managed
   };
-  const settingsSnapshot = applyManagedResources(desired, state);
+  const scopedState = { ...state, managed: state.managed.filter((entry) => scope.includes(entry.harness)) };
+  const settingsSnapshots = applyManagedResources(desired, scopedState);
   const restoredState = {
     version: 4,
     codexHome: state.codexHome,
@@ -1202,14 +1227,15 @@ async function rollback(options) {
     targetDir: state.targetDir,
     activeProfile: backup.activeProfile,
     targets: backup.targets,
-    managed: desired,
+    profiles: backup.profiles,
+    managed: backup.managed,
     history: [...state.history.slice(0, -1), currentBackup].slice(-20)
   };
   try {
     writeJsonAtomic(options.statePath, restoredState);
   } catch (error) {
     try {
-      restoreAfterStateFailure(desired, state, settingsSnapshot);
+      restoreAfterStateFailure(desired, scopedState, settingsSnapshots);
     } catch (rollbackError) {
       throw new Error(`${String(error)} (resource\u5FA9\u5143\u306B\u5931\u6557\u3057\u307E\u3057\u305F: ${String(rollbackError)})`);
     }
@@ -1545,10 +1571,8 @@ async function main() {
       const profile = getProfile(config, name);
       if (command === "plan") {
         const state = readState(options.statePath, options.targetDir, options.codexHome, options.claudeHome);
-        state.targetDir = resolve4(options.targetDir);
-        state.codexHome = resolve4(options.codexHome);
-        state.claudeHome = resolve4(options.claudeHome);
-        const migratedState = detachLegacyRulesEntries(state);
+        const scope = profileScope(name, profile, state);
+        const migratedState = prepareScopedState(state, scope, options, profile.targets);
         const plan = desiredPlan(
           profile,
           migratedState.targetDir,
@@ -1557,8 +1581,8 @@ async function main() {
           options.statePath,
           config
         );
-        validatePlan(plan.entries, migratedState, migratedState.targetDir, plan.artifacts);
-        printPlan(plan.entries, migratedState, plan.notices, profile.targets);
+        validatePlan(plan.entries, migratedState, migratedState.targetDir, plan.artifacts, scope);
+        printPlan(plan.entries, migratedState, plan.notices, scope);
         return;
       }
       await applyProfile(name, profile, config, options);

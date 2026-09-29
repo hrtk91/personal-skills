@@ -83,6 +83,7 @@ export interface Backup {
   timestamp: string;
   activeProfile: string | null;
   targets: HarnessTarget[];
+  profiles: Partial<Record<HarnessTarget, string>>;
   managed: ManagedEntry[];
 }
 
@@ -93,6 +94,7 @@ export interface State {
   targetDir: string;
   activeProfile: string | null;
   targets: HarnessTarget[];
+  profiles: Partial<Record<HarnessTarget, string>>;
   managed: ManagedEntry[];
   history: Backup[];
 }
@@ -252,6 +254,7 @@ export function emptyState(targetDir: string, codexHome: string, claudeHome: str
     targetDir,
     activeProfile: null,
     targets: [],
+    profiles: {},
     managed: [],
     history: [],
   };
@@ -297,30 +300,56 @@ export function readState(
   const version = Number(state.version ?? 1);
   if (version > 4) throw new Error(`未対応のstate versionです: ${version}`);
   const managed = (state.managed ?? []).map((entry) => normalizeManagedEntry(entry));
-  const history = (state.history ?? []).map((backup) => ({
-    timestamp: backup.timestamp,
-    activeProfile: backup.activeProfile ?? null,
-    targets: normalizeHarnessTargets(
+  const history = (state.history ?? []).map((backup) => {
+    const targets = normalizeHarnessTargets(
       backup.targets ?? inferredTargets(backup.managed ?? []),
       "state history",
-    ),
-    managed: (backup.managed ?? []).map((entry) => normalizeManagedEntry(entry)),
-  }));
+    );
+    return {
+      timestamp: backup.timestamp,
+      activeProfile: backup.activeProfile ?? null,
+      targets,
+      profiles: normalizeActiveProfiles(backup.profiles, backup.activeProfile ?? null, targets),
+      managed: (backup.managed ?? []).map((entry) => normalizeManagedEntry(entry)),
+    };
+  });
+  const targets = normalizeHarnessTargets(
+    state.targets ?? inferredTargets(state.managed ?? []),
+    "state",
+  );
   const migrated: State = {
     version: 4,
     codexHome: state.codexHome ?? codexHome,
     claudeHome: state.claudeHome ?? claudeHome,
     targetDir: state.targetDir ?? targetDir,
     activeProfile: state.activeProfile ?? null,
-    targets: normalizeHarnessTargets(
-      state.targets ?? inferredTargets(state.managed ?? []),
-      "state",
-    ),
+    targets,
+    profiles: normalizeActiveProfiles(state.profiles, state.activeProfile ?? null, targets),
     managed,
     history,
   };
   if (shouldPersistMigration && version < 4) writeJsonAtomic(path, migrated);
   return migrated;
+}
+
+function normalizeActiveProfiles(
+  profiles: unknown,
+  activeProfile: string | null,
+  targets: HarnessTarget[],
+): Partial<Record<HarnessTarget, string>> {
+  if (profiles === undefined) {
+    return activeProfile === null ? {} : Object.fromEntries(targets.map((target) => [target, activeProfile]));
+  }
+  if (!profiles || typeof profiles !== "object" || Array.isArray(profiles)) {
+    throw new Error("stateのprofilesはobjectである必要があります");
+  }
+  const normalized: Partial<Record<HarnessTarget, string>> = {};
+  for (const [harness, name] of Object.entries(profiles)) {
+    const target = normalizeHarness(harness, "state profiles");
+    if (typeof name !== "string" || !name) throw new Error(`stateのprofile名が不正です: ${harness}`);
+    normalized[target] = name;
+  }
+  return normalized;
 }
 
 function inferredTargets(entries: Partial<ManagedEntry>[]): HarnessTarget[] {

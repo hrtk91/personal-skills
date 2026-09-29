@@ -1,4 +1,5 @@
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -8,7 +9,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
@@ -26,16 +27,15 @@ import {
 } from "./model.ts";
 import { type GeneratedArtifact, desiredPlan } from "./profile-plan.ts";
 
-type ClaudeSettings = Record<string, unknown> & {
+type HookSettings = Record<string, unknown> & {
   hooks?: Record<string, unknown[]>;
 };
 
-interface SettingsSnapshot {
-  path: string;
-  existed: boolean;
-  content: string;
-  mode: number;
-}
+type SettingsSnapshot = { path: string } & (
+  | { kind: "missing" }
+  | { kind: "file"; content: string; mode: number }
+  | { kind: "symlink"; link: string }
+);
 
 export function isSymlinkTo(path: string, source: string): boolean {
   const stat = safeLstat(path);
@@ -52,19 +52,53 @@ export function managedEntryFor(state: State, target: string): ManagedEntry | un
   return state.managed.find((entry) => resolve(entry.target) === resolve(target));
 }
 
-function isClaudeHookConfig(entry: ManagedEntry): boolean {
-  return entry.harness === "claude" && entry.kind === "claude-hook-config";
+function isHookConfig(entry: ManagedEntry): boolean {
+  return (entry.harness === "codex" && entry.kind === "hook-config")
+    || (entry.harness === "claude" && entry.kind === "claude-hook-config");
 }
 
 function linkEntries(entries: ManagedEntry[]): ManagedEntry[] {
-  return entries.filter((entry) => !isClaudeHookConfig(entry));
+  return entries.filter((entry) => !isHookConfig(entry));
 }
 
-function claudeHookEntry(entries: ManagedEntry[]): ManagedEntry | undefined {
-  return entries.find(isClaudeHookConfig);
+function hookConfigChanges(current: ManagedEntry[], desired: ManagedEntry[]) {
+  const changes = new Map<string, { previous?: ManagedEntry; desired?: ManagedEntry }>();
+  for (const entry of current.filter(isHookConfig)) {
+    changes.set(resolve(entry.target), { previous: entry });
+  }
+  for (const entry of desired.filter(isHookConfig)) {
+    const target = resolve(entry.target);
+    changes.set(target, { ...changes.get(target), desired: entry });
+  }
+  return [...changes.values()];
 }
 
-export function detachLegacyRulesEntries(state: State): State {
+export function profileScope(profileName: string, profile: Profile, state: State): HarnessTarget[] {
+  return [...new Set([
+    ...profile.targets,
+    ...(["codex", "claude"] as const).filter((harness) => state.profiles[harness] === profileName),
+  ])];
+}
+
+export function prepareScopedState(
+  state: State,
+  scope: HarnessTarget[],
+  options: Options,
+  selectedTargets: HarnessTarget[],
+): State {
+  // 解除するハーネスとrollbackの導入先は、現在のoptionではなくstateを使う。
+  return detachLegacyRulesEntries({
+    ...state,
+    ...(selectedTargets.includes("codex") ? {
+      targetDir: resolve(options.targetDir),
+      codexHome: resolve(options.codexHome),
+    } : {}),
+    ...(selectedTargets.includes("claude") ? { claudeHome: resolve(options.claudeHome) } : {}),
+  }, scope);
+}
+
+export function detachLegacyRulesEntries(state: State, scope: HarnessTarget[] = ["codex", "claude"]): State {
+  if (!scope.includes("codex")) return state;
   const legacyTarget = join(resolve(state.codexHome), "AGENTS.md");
   const isLegacyRulesEntry = (entry: ManagedEntry): boolean =>
     entry.harness === "codex" && entry.kind === "rules" && resolve(entry.target) === legacyTarget;
@@ -92,34 +126,40 @@ export function detachLegacyRulesEntries(state: State): State {
   };
 }
 
-export function validatePlan(
-  desired: ManagedEntry[],
-  state: State,
-  targetDir: string,
-  artifacts: GeneratedArtifact[] = [],
-): void {
-  if (desired.some((entry) => entry.kind === "skill" && entry.name === ".system")) {
-    throw new Error(".systemは保護対象のため管理できません");
-  }
-
+function assertDistinctTargets(entries: ManagedEntry[]): void {
   const targetOwners = new Map<string, ManagedEntry>();
-  for (const entry of desired) {
-    validateManagedTarget(entry, state, targetDir);
+  for (const entry of entries) {
     const target = resolve(entry.target);
     const previous = targetOwners.get(target);
-    if (previous && (previous.ref !== entry.ref || previous.harness !== entry.harness)) {
+    if (previous && (previous.ref !== entry.ref || previous.harness !== entry.harness
+      || previous.kind !== entry.kind || resolve(previous.source) !== resolve(entry.source))) {
       throw new Error(
         `導入先が衝突しています: ${previous.ref}と${entry.ref}が同じ${entry.target}を要求しています`,
       );
     }
     targetOwners.set(target, entry);
   }
+}
+
+export function validatePlan(
+  desired: ManagedEntry[],
+  state: State,
+  targetDir: string,
+  artifacts: GeneratedArtifact[] = [],
+  scope: HarnessTarget[] = ["codex", "claude"],
+): void {
+  if (desired.some((entry) => entry.kind === "skill" && entry.name === ".system")) {
+    throw new Error(".systemは保護対象のため管理できません");
+  }
+
+  const current = state.managed.filter((entry) => scope.includes(entry.harness));
+  const preserved = state.managed.filter((entry) => !scope.includes(entry.harness));
+  assertDistinctTargets(state.managed);
+  assertDistinctTargets([...desired, ...preserved]);
 
   for (const entry of desired) {
-    if (isClaudeHookConfig(entry)) {
-      readClaudeSettings(entry.target);
-      continue;
-    }
+    validateManagedTarget(entry, state, targetDir);
+    if (isHookConfig(entry)) continue;
     const stat = safeLstat(entry.target);
     if (!stat) continue;
     if (stat.isSymbolicLink()) {
@@ -132,12 +172,9 @@ export function validatePlan(
     throw new Error(`既存の通常fileまたはdirectoryが導入を妨げています: ${entry.target}`);
   }
 
-  for (const entry of state.managed) {
+  for (const entry of current) {
     validateManagedTarget(entry, state, targetDir);
-    if (isClaudeHookConfig(entry)) {
-      assertClaudeHooksPresent(entry);
-      continue;
-    }
+    if (isHookConfig(entry)) continue;
     const stat = safeLstat(entry.target);
     if (stat && !stat.isSymbolicLink()) {
       throw new Error(`管理対象が通常fileまたはdirectoryへ置き換えられています: ${entry.target}`);
@@ -145,42 +182,8 @@ export function validatePlan(
   }
 
   const artifactContent = new Map(artifacts.map((artifact) => [resolve(artifact.path), artifact.content]));
-  const previousClaudeHooks = claudeHookEntry(state.managed);
-  for (const entry of desired) {
-    if (!isClaudeHookConfig(entry)) continue;
-    const settings = readClaudeSettings(entry.target);
-    const hooks: Record<string, unknown[]> = { ...(settings.hooks ?? {}) };
-    if (previousClaudeHooks) {
-      const previousGroups = readHookArtifact(previousClaudeHooks);
-      for (const [event, groups] of Object.entries(previousGroups)) {
-        const current = hooks[event];
-        if (!Array.isArray(current)) {
-          throw new Error(`管理対象Claude hookが見つかりません: ${event} (${entry.target})`);
-        }
-        const remaining = [...current];
-        for (const group of groups) {
-          const index = remaining.findIndex((candidate) => isDeepStrictEqual(candidate, group));
-          if (index === -1) {
-            throw new Error(`管理対象Claude hookが変更または削除されています: ${event} (${entry.target})`);
-          }
-          remaining.splice(index, 1);
-        }
-        if (remaining.length === 0) delete hooks[event];
-        else hooks[event] = remaining;
-      }
-    }
-
-    const desiredGroups = readHookArtifact(
-      entry,
-      artifactContent.get(resolve(entry.source)),
-    );
-    for (const [event, groups] of Object.entries(desiredGroups)) {
-      const current = hooks[event] ?? [];
-      if (!Array.isArray(current)) throw new Error(`Claude hook eventは配列である必要があります: ${event}`);
-      if (groups.some((group) => current.some((candidate) => isDeepStrictEqual(candidate, group)))) {
-        throw new Error(`既存hookと同じClaude hook groupを安全に区別できません: ${event} (${entry.target})`);
-      }
-    }
+  for (const { previous, desired: entry } of hookConfigChanges(current, desired)) {
+    mergedSettingsHooks(previous, entry, entry ? artifactContent.get(resolve(entry.source)) : undefined);
   }
 }
 
@@ -200,7 +203,7 @@ export function validateManagedTarget(entry: ManagedEntry, state: State, targetD
 }
 
 function planAction(entry: ManagedEntry): string {
-  return isClaudeHookConfig(entry) ? "hook" : "link";
+  return isHookConfig(entry) ? "hook" : "link";
 }
 
 export function planLines(
@@ -215,7 +218,8 @@ export function planLines(
     `Claude home: ${resolve(state.claudeHome)}`,
     `導入予定resource: ${desired.length}件`,
   ];
-  const current = new Map(state.managed.map((entry) => [resolve(entry.target), entry]));
+  const scopedEntries = state.managed.filter((entry) => selectedTargets.includes(entry.harness));
+  const current = new Map(scopedEntries.map((entry) => [resolve(entry.target), entry]));
   const next = new Map(desired.map((entry) => [resolve(entry.target), entry]));
 
   for (const entry of desired) {
@@ -230,13 +234,19 @@ export function planLines(
     }
   }
 
-  for (const entry of state.managed) {
+  for (const entry of scopedEntries) {
     if (!next.has(resolve(entry.target))) {
       lines.push(`- ${planAction(entry)}削除 ${entry.kind} ${entry.ref} [${entry.harness}] (${entry.target})`);
     }
   }
 
-  if (desired.length === 0 && state.managed.length === 0) {
+  for (const harness of ["codex", "claude"] as const) {
+    if (selectedTargets.includes(harness)) continue;
+    const count = state.managed.filter((entry) => entry.harness === harness).length;
+    lines.push(`= ${harness}: 変更しない（${count} 件）`);
+  }
+
+  if (desired.length === 0 && scopedEntries.length === 0) {
     lines.push("= 管理対象resourceなし");
   }
   return lines;
@@ -253,7 +263,7 @@ export function printPlan(
 }
 
 export function unlinkIfManaged(entry: ManagedEntry, state: State): void {
-  if (isClaudeHookConfig(entry)) return;
+  if (isHookConfig(entry)) return;
   const stat = safeLstat(entry.target);
   if (!stat) return;
   if (!stat.isSymbolicLink()) {
@@ -305,54 +315,67 @@ export function applyEntries(
   }
 }
 
+function harnessLabel(entry: ManagedEntry): string {
+  return entry.harness === "codex" ? "Codex" : "Claude";
+}
+
 function readHookArtifact(entry: ManagedEntry, artifactContent?: string): Record<string, unknown[]> {
+  const label = harnessLabel(entry);
   let parsed: unknown;
   try {
     parsed = JSON.parse(artifactContent ?? readFileSync(entry.source, "utf8"));
   } catch (error) {
-    throw new Error(`Claude hook artifactを読み込めません ${entry.source}: ${String(error)}`);
+    throw new Error(`${label} hook artifactを読み込めません ${entry.source}: ${String(error)}`);
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error(`Claude hook artifactはobjectである必要があります: ${entry.source}`);
+    throw new Error(`${label} hook artifactはobjectである必要があります: ${entry.source}`);
   }
   const hooks = (parsed as Record<string, unknown>).hooks;
   if (!hooks || typeof hooks !== "object" || Array.isArray(hooks)) {
-    throw new Error(`Claude hook artifactにhooks objectがありません: ${entry.source}`);
+    throw new Error(`${label} hook artifactにhooks objectがありません: ${entry.source}`);
   }
   for (const [event, groups] of Object.entries(hooks)) {
-    if (!Array.isArray(groups)) throw new Error(`Claude hook eventは配列である必要があります: ${event}`);
+    if (!Array.isArray(groups)) throw new Error(`${label} hook eventは配列である必要があります: ${event}`);
   }
   return hooks as Record<string, unknown[]>;
 }
 
-function readClaudeSettings(path: string): ClaudeSettings {
+function settingsStat(path: string, previous?: ManagedEntry) {
   const stat = safeLstat(path);
-  if (stat?.isSymbolicLink()) throw new Error(`settings.jsonがsymlinkのため変更できません: ${path}`);
-  if (stat && !stat.isFile()) throw new Error(`settings.jsonは通常fileである必要があります: ${path}`);
-  if (!stat) return {};
+  if (stat?.isSymbolicLink()) {
+    if (previous?.harness === "codex" && previous.kind === "hook-config" && isSymlinkTo(path, previous.source)) {
+      return stat;
+    }
+    throw new Error(`${basename(path)}が管理外symlinkのため変更できません: ${path}`);
+  }
+  if (stat && !stat.isFile()) throw new Error(`${basename(path)}は通常fileである必要があります: ${path}`);
+  return stat;
+}
 
+function readHookSettings(path: string, previous?: ManagedEntry): HookSettings {
+  if (!settingsStat(path, previous)) return {};
   let parsed: unknown;
   try {
     parsed = JSON.parse(readFileSync(path, "utf8"));
   } catch (error) {
-    throw new Error(`Claude settings.jsonを読み込めません ${path}: ${String(error)}`);
+    throw new Error(`${basename(path)}を読み込めません ${path}: ${String(error)}`);
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error(`Claude settings.jsonはobjectである必要があります: ${path}`);
+    throw new Error(`${basename(path)}はobjectである必要があります: ${path}`);
   }
-  const settings = parsed as ClaudeSettings;
+  const settings = parsed as HookSettings;
   if (settings.hooks !== undefined && (!settings.hooks || typeof settings.hooks !== "object" || Array.isArray(settings.hooks))) {
-    throw new Error(`Claude settings.jsonのhooksはobjectである必要があります: ${path}`);
+    throw new Error(`${basename(path)}のhooksはobjectである必要があります: ${path}`);
   }
   return settings;
 }
 
-function assertClaudeHooksPresent(entry: ManagedEntry): void {
+function assertHooksPresent(entry: ManagedEntry, actual = readHookSettings(entry.target, entry).hooks ?? {}): void {
   const expected = readHookArtifact(entry);
-  const actual = readClaudeSettings(entry.target).hooks ?? {};
+  const label = harnessLabel(entry);
   for (const [event, groups] of Object.entries(expected)) {
     const current = actual[event];
-    if (!Array.isArray(current)) throw new Error(`管理対象Claude hookが見つかりません: ${event} (${entry.target})`);
+    if (!Array.isArray(current)) throw new Error(`管理対象${label} hookが見つかりません: ${event} (${entry.target})`);
     const distinctGroups: unknown[] = [];
     for (const group of groups) {
       if (!distinctGroups.some((candidate) => isDeepStrictEqual(candidate, group))) {
@@ -363,62 +386,61 @@ function assertClaudeHooksPresent(entry: ManagedEntry): void {
       const expectedCount = groups.filter((candidate) => isDeepStrictEqual(candidate, group)).length;
       const actualCount = current.filter((candidate) => isDeepStrictEqual(candidate, group)).length;
       if (actualCount !== expectedCount) {
-        throw new Error(`管理対象Claude hookが変更・削除・重複しています: ${event} (${entry.target})`);
+        throw new Error(`管理対象${label} hookが変更・削除・重複しています: ${event} (${entry.target})`);
       }
     }
   }
 }
 
-function snapshotSettings(path: string): SettingsSnapshot {
-  const stat = safeLstat(path);
-  if (stat?.isSymbolicLink()) throw new Error(`settings.jsonがsymlinkのため変更できません: ${path}`);
-  if (stat && !stat.isFile()) throw new Error(`settings.jsonは通常fileである必要があります: ${path}`);
-  return {
-    path,
-    existed: Boolean(stat),
-    content: stat ? readFileSync(path, "utf8") : "",
-    mode: stat ? stat.mode & 0o777 : 0o600,
-  };
+function snapshotSettings(path: string, previous?: ManagedEntry): SettingsSnapshot {
+  const stat = settingsStat(path, previous);
+  if (!stat) return { path, kind: "missing" };
+  if (stat.isSymbolicLink()) return { path, kind: "symlink", link: readlinkSync(path) };
+  return { path, kind: "file", content: readFileSync(path, "utf8"), mode: stat.mode & 0o777 };
 }
 
 function restoreSettingsSnapshot(snapshot: SettingsSnapshot): void {
   const current = safeLstat(snapshot.path);
+  if (snapshot.kind === "symlink" && current?.isSymbolicLink() && readlinkSync(snapshot.path) === snapshot.link) return;
   if (current?.isSymbolicLink() || (current && !current.isFile())) {
-    throw new Error(`settings.jsonが通常fileではなくなったため復元できません: ${snapshot.path}`);
+    throw new Error(`${basename(snapshot.path)}が通常fileではなくなったため復元できません: ${snapshot.path}`);
   }
-  if (!snapshot.existed) {
+  if (snapshot.kind === "missing") {
     if (current) unlinkSync(snapshot.path);
-    return;
+  } else if (snapshot.kind === "symlink") {
+    if (current) unlinkSync(snapshot.path);
+    symlinkSync(snapshot.link, snapshot.path, "file");
+  } else {
+    if (current && readFileSync(snapshot.path, "utf8") === snapshot.content && (current.mode & 0o777) === snapshot.mode) return;
+    writeSettingsFile(snapshot.path, snapshot.content, snapshot.mode);
   }
-  writeSettingsFile(snapshot.path, snapshot.content, snapshot.mode);
 }
 
 function writeSettingsFile(path: string, content: string, mode: number): void {
   mkdirSync(dirname(path), { recursive: true });
   const temporary = `${path}.${process.pid}.tmp`;
-  writeFileSync(temporary, content, { mode });
-  renameSync(temporary, path);
+  try {
+    writeFileSync(temporary, content, { mode });
+    // 既存fileのmodeはプロセスのumaskで狭めない。
+    chmodSync(temporary, mode);
+    renameSync(temporary, path);
+  } finally {
+    if (safeLstat(temporary)) unlinkSync(temporary);
+  }
 }
 
-function updateClaudeSettingsHooks(previous?: ManagedEntry, desired?: ManagedEntry): void {
-  if (!previous && !desired) return;
-  const path = (desired ?? previous)!.target;
-  const settings = readClaudeSettings(path);
+function mergedSettingsHooks(previous?: ManagedEntry, desired?: ManagedEntry, artifactContent?: string): HookSettings {
+  const entry = (desired ?? previous)!;
+  const path = entry.target;
+  const settings = readHookSettings(path, previous);
   const hooks: Record<string, unknown[]> = { ...(settings.hooks ?? {}) };
 
   if (previous) {
-    const managedHooks = readHookArtifact(previous);
-    for (const [event, groups] of Object.entries(managedHooks)) {
-      const current = hooks[event];
-      if (!Array.isArray(current)) {
-        throw new Error(`管理対象Claude hookが見つかりません: ${event} (${path})`);
-      }
-      const remaining = [...current];
+    assertHooksPresent(previous, hooks);
+    for (const [event, groups] of Object.entries(readHookArtifact(previous))) {
+      const remaining = [...hooks[event]];
       for (const group of groups) {
         const index = remaining.findIndex((candidate) => isDeepStrictEqual(candidate, group));
-        if (index === -1) {
-          throw new Error(`管理対象Claude hookが変更または削除されています: ${event} (${path})`);
-        }
         remaining.splice(index, 1);
       }
       if (remaining.length === 0) delete hooks[event];
@@ -427,62 +449,52 @@ function updateClaudeSettingsHooks(previous?: ManagedEntry, desired?: ManagedEnt
   }
 
   if (desired) {
-    const managedHooks = readHookArtifact(desired);
+    const managedHooks = readHookArtifact(desired, artifactContent);
     for (const [event, groups] of Object.entries(managedHooks)) {
       const current = hooks[event] ?? [];
-      if (!Array.isArray(current)) throw new Error(`Claude hook eventは配列である必要があります: ${event}`);
-      for (const group of groups) {
-        if (current.some((candidate) => isDeepStrictEqual(candidate, group))) {
-          throw new Error(`既存hookと同じClaude hook groupを安全に区別できません: ${event} (${path})`);
-        }
+      if (!Array.isArray(current)) throw new Error(`${harnessLabel(entry)} hook eventは配列である必要があります: ${event}`);
+      if (groups.some((group) => current.some((candidate) => isDeepStrictEqual(candidate, group)))) {
+        throw new Error(`既存hookと同じ${harnessLabel(entry)} hook groupを安全に区別できません: ${event} (${path})`);
       }
       hooks[event] = [...current, ...groups];
     }
   }
 
-  const nextSettings: ClaudeSettings = { ...settings };
+  const nextSettings: HookSettings = { ...settings };
   if (Object.keys(hooks).length === 0) delete nextSettings.hooks;
   else nextSettings.hooks = hooks;
-  const snapshot = snapshotSettings(path);
-  writeSettingsFile(path, `${JSON.stringify(nextSettings, null, 2)}\n`, snapshot.mode);
+  return nextSettings;
 }
 
-function applyManagedResources(desired: ManagedEntry[], state: State): SettingsSnapshot | null {
-  const previousHooks = claudeHookEntry(state.managed);
-  const desiredHooks = claudeHookEntry(desired);
-  const settingsPath = desiredHooks?.target ?? previousHooks?.target;
-  const settingsSnapshot = settingsPath ? snapshotSettings(settingsPath) : null;
-  const currentLinks = linkEntries(state.managed);
-  const desiredLinks = linkEntries(desired);
+function updateSettingsHooks(previous: ManagedEntry | undefined, desired: ManagedEntry | undefined, snapshot: SettingsSnapshot): void {
+  const settings = mergedSettingsHooks(previous, desired);
+  // 旧Codex symlinkもrenameで通常fileへ置換し、参照先artifactは変更しない。
+  writeSettingsFile(snapshot.path, `${JSON.stringify(settings, null, 2)}\n`, snapshot.kind === "file" ? snapshot.mode : 0o600);
+}
+
+function applyManagedResources(desired: ManagedEntry[], state: State): SettingsSnapshot[] {
+  const changes = hookConfigChanges(state.managed, desired);
+  const snapshots = changes.map(({ previous, desired }) => snapshotSettings((desired ?? previous)!.target, previous));
   try {
-    applyEntries(desiredLinks, { ...state, managed: currentLinks });
-    updateClaudeSettingsHooks(previousHooks, desiredHooks);
+    applyEntries(desired, state);
+    for (const [index, { previous, desired: entry }] of changes.entries()) {
+      updateSettingsHooks(previous, entry, snapshots[index]);
+    }
   } catch (error) {
-    const restorationErrors: string[] = [];
     try {
-      applyEntries(currentLinks, { ...state, managed: desiredLinks });
+      restoreAfterStateFailure(desired, state, snapshots);
     } catch (rollbackError) {
-      restorationErrors.push(`symlink復元: ${String(rollbackError)}`);
-    }
-    if (settingsSnapshot) {
-      try {
-        restoreSettingsSnapshot(settingsSnapshot);
-      } catch (rollbackError) {
-        restorationErrors.push(`settings復元: ${String(rollbackError)}`);
-      }
-    }
-    if (restorationErrors.length > 0) {
-      throw new Error(`${String(error)} (${restorationErrors.join("; ")})`);
+      throw new Error(`${String(error)} (resource復元に失敗しました: ${String(rollbackError)})`);
     }
     throw error;
   }
-  return settingsSnapshot;
+  return snapshots;
 }
 
 function restoreAfterStateFailure(
   desired: ManagedEntry[],
   state: State,
-  settingsSnapshot: SettingsSnapshot | null,
+  settingsSnapshots: SettingsSnapshot[],
 ): void {
   const errors: string[] = [];
   try {
@@ -490,9 +502,9 @@ function restoreAfterStateFailure(
   } catch (error) {
     errors.push(`symlink復元: ${String(error)}`);
   }
-  if (settingsSnapshot) {
+  for (const snapshot of [...settingsSnapshots].reverse()) {
     try {
-      restoreSettingsSnapshot(settingsSnapshot);
+      restoreSettingsSnapshot(snapshot);
     } catch (error) {
       errors.push(`settings復元: ${String(error)}`);
     }
@@ -507,10 +519,8 @@ export async function applyProfile(
   options: Options,
 ): Promise<void> {
   let state = readState(options.statePath, options.targetDir, options.codexHome, options.claudeHome);
-  state.targetDir = resolve(options.targetDir);
-  state.codexHome = resolve(options.codexHome);
-  state.claudeHome = resolve(options.claudeHome);
-  state = detachLegacyRulesEntries(state);
+  const scope = profileScope(profileName, profile, state);
+  state = prepareScopedState(state, scope, options, profile.targets);
   const plan = desiredPlan(
     profile,
     state.targetDir,
@@ -520,8 +530,8 @@ export async function applyProfile(
     config,
   );
   const desired = plan.entries;
-  validatePlan(desired, state, state.targetDir, plan.artifacts);
-  printPlan(desired, state, plan.notices, profile.targets);
+  validatePlan(desired, state, state.targetDir, plan.artifacts, scope);
+  printPlan(desired, state, plan.notices, scope);
 
   if (options.dryRun) return;
 
@@ -539,12 +549,17 @@ export async function applyProfile(
     timestamp: new Date().toISOString(),
     activeProfile: state.activeProfile,
     targets: state.targets,
+    profiles: state.profiles,
     managed: state.managed,
   };
   for (const artifact of plan.artifacts) {
     if (!existsSync(artifact.path)) writeArtifact(artifact);
   }
-  const settingsSnapshot = applyManagedResources(desired, state);
+  const scopedState = { ...state, managed: state.managed.filter((entry) => scope.includes(entry.harness)) };
+  const settingsSnapshots = applyManagedResources(desired, scopedState);
+  const profiles = { ...state.profiles };
+  for (const harness of scope) delete profiles[harness];
+  for (const harness of profile.targets) profiles[harness] = profileName;
   const nextState: State = {
     version: 4,
     codexHome: state.codexHome,
@@ -552,14 +567,15 @@ export async function applyProfile(
     targetDir: state.targetDir,
     activeProfile: profileName,
     targets: profile.targets,
-    managed: desired,
+    profiles,
+    managed: [...state.managed.filter((entry) => !scope.includes(entry.harness)), ...desired],
     history: [...state.history, backup].slice(-20),
   };
   try {
     writeJsonAtomic(options.statePath, nextState);
   } catch (error) {
     try {
-      restoreAfterStateFailure(desired, state, settingsSnapshot);
+      restoreAfterStateFailure(desired, scopedState, settingsSnapshots);
     } catch (rollbackError) {
       throw new Error(`${String(error)} (resource復元に失敗しました: ${String(rollbackError)})`);
     }
@@ -579,10 +595,10 @@ export function writeArtifact(artifact: GeneratedArtifact): void {
   renameSync(temporary, artifact.path);
 }
 
-function claudeHookStatus(entry: ManagedEntry): "ok" | "drifted" | "missing" {
+function hookConfigStatus(entry: ManagedEntry): "ok" | "drifted" | "missing" {
   if (!existsSync(entry.source) || !existsSync(entry.target)) return "missing";
   try {
-    assertClaudeHooksPresent(entry);
+    assertHooksPresent(entry);
     return "ok";
   } catch {
     return "drifted";
@@ -593,8 +609,9 @@ export function inspectStatus(state: State): void {
   console.log(`skill導入先 (Codex): ${resolve(state.targetDir)}`);
   console.log(`Codex home: ${resolve(state.codexHome)}`);
   console.log(`Claude home: ${resolve(state.claudeHome)}`);
-  console.log(`有効なprofile: ${state.activeProfile ?? "(なし)"}`);
-  console.log(`対象ハーネス: ${state.targets.join(", ") || "(なし)"}`);
+  for (const harness of ["codex", "claude"] as const) {
+    console.log(`有効なprofile [${harness}]: ${state.profiles[harness] ?? "(なし)"}`);
+  }
   if (state.managed.length === 0) {
     console.log("管理対象resource: なし");
     return;
@@ -602,8 +619,8 @@ export function inspectStatus(state: State): void {
   for (const entry of state.managed) {
     const status = !existsSync(entry.source)
       ? "source-missing"
-      : isClaudeHookConfig(entry)
-      ? claudeHookStatus(entry)
+      : isHookConfig(entry)
+      ? hookConfigStatus(entry)
       : isSymlinkTo(entry.target, entry.source)
       ? "ok"
       : safeLstat(entry.target)
@@ -615,17 +632,21 @@ export function inspectStatus(state: State): void {
 
 export async function rollback(options: Options): Promise<void> {
   let state = readState(options.statePath, options.targetDir, options.codexHome, options.claudeHome);
-  state.targetDir = resolve(options.targetDir);
-  state.codexHome = resolve(options.codexHome);
-  state.claudeHome = resolve(options.claudeHome);
-  state = detachLegacyRulesEntries(state);
-  const backup = state.history.at(-1);
+  let backup = state.history.at(-1);
   if (!backup) throw new Error("rollback履歴がありません");
 
-  const desired = backup.managed;
-  validatePlan(desired, state, state.targetDir);
+  const scope = (["codex", "claude"] as const).filter((harness) =>
+    state.profiles[harness] !== backup!.profiles[harness]
+    || !isDeepStrictEqual(
+      state.managed.filter((entry) => entry.harness === harness),
+      backup!.managed.filter((entry) => entry.harness === harness),
+    ));
+  state = prepareScopedState(state, scope, options, []);
+  backup = state.history.at(-1)!;
+  const desired = backup.managed.filter((entry) => scope.includes(entry.harness));
+  validatePlan(desired, state, state.targetDir, [], scope);
   console.log(`rollback先: ${backup.activeProfile ?? "(なし)"}`);
-  printPlan(desired, state, [], backup.targets);
+  printPlan(desired, state, [], scope);
   if (!options.yes) {
     const rl = createInterface({ input, output });
     const confirmation = await rl.question("rollbackを実行しますか？ [y/N] ");
@@ -640,9 +661,11 @@ export async function rollback(options: Options): Promise<void> {
     timestamp: new Date().toISOString(),
     activeProfile: state.activeProfile,
     targets: state.targets,
+    profiles: state.profiles,
     managed: state.managed,
   };
-  const settingsSnapshot = applyManagedResources(desired, state);
+  const scopedState = { ...state, managed: state.managed.filter((entry) => scope.includes(entry.harness)) };
+  const settingsSnapshots = applyManagedResources(desired, scopedState);
   const restoredState = {
     version: 4,
     codexHome: state.codexHome,
@@ -650,14 +673,15 @@ export async function rollback(options: Options): Promise<void> {
     targetDir: state.targetDir,
     activeProfile: backup.activeProfile,
     targets: backup.targets,
-    managed: desired,
+    profiles: backup.profiles,
+    managed: backup.managed,
     history: [...state.history.slice(0, -1), currentBackup].slice(-20),
   } satisfies State;
   try {
     writeJsonAtomic(options.statePath, restoredState);
   } catch (error) {
     try {
-      restoreAfterStateFailure(desired, state, settingsSnapshot);
+      restoreAfterStateFailure(desired, scopedState, settingsSnapshots);
     } catch (rollbackError) {
       throw new Error(`${String(error)} (resource復元に失敗しました: ${String(rollbackError)})`);
     }
