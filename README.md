@@ -74,6 +74,7 @@ AIエージェントに、作業の進め方や判断基準を追加するため
 | `skill-benchmark` | 実運用の失敗や観測から原因仮説とeval caseを作り、介入前後の効果と回帰を比較します。 |
 | `skill-observation-recorder` | Codexで受けたユーザー訂正をセッション終了後に非同期で抽出・蓄積します。 |
 | `skill-usage-analytics` | Codexセッションで各スキルが使われた回数を集計します。 |
+| `usage-limits` | Claude/Codexの使用量をローカル記録で確認し、監督交代をプロジェクト設定から準備します。 |
 
 ### UI・日々の振り返り
 
