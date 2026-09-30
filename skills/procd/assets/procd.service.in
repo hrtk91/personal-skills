@@ -1,0 +1,15 @@
+[Unit]
+Description=Process keeper and completion journal
+
+[Service]
+Type=simple
+ExecStart=@PYTHON@ @PROCD_SCRIPT@ --socket @SOCKET@ serve --state-dir @STATE_DIR@
+Restart=on-failure
+RestartSec=2
+# Per-job runners must survive a daemon restart.
+KillMode=process
+TimeoutStopSec=10
+UMask=0077
+
+[Install]
+WantedBy=default.target

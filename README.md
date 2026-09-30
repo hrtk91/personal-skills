@@ -69,6 +69,7 @@ AIエージェントに、作業の進め方や判断基準を追加するため
 | `herdr` | herdrのタブでCodexやpiに実装させ、別のエージェントのレビューまで自動でつなぎます。 |
 | `personal-skills-auto-update` | WindowsとWSLのruntime cloneを安全に更新します。skillの導入は`harnessctl apply`で行います。 |
 | `personal-skills-ctl-daemon` | このリポジトリとローカルのスキルを同期するCLIやdaemonを設計します。 |
+| `procd` | 長い処理を依頼元から切り離し、ログ・終了コード・未読の完了通知を回収します。 |
 | `retlaude` | Claudeセッションの振り返りを非同期で保存します。 |
 | `skill-benchmark` | 実運用の失敗や観測から原因仮説とeval caseを作り、介入前後の効果と回帰を比較します。 |
 | `skill-observation-recorder` | Codexで受けたユーザー訂正をセッション終了後に非同期で抽出・蓄積します。 |
