@@ -5,8 +5,42 @@
 # --system-prompt にはファイルのパスを渡す（改行を含む文字列は herdr が拒否する）。
 # 送る文は 1 行の通常のプロンプト（pi に /goal はない）。終わりは印で判定する。
 
+# PI_SERVICE_TIER（例: priority＝fast）を指定したときだけ、依頼に service_tier を足す拡張を -e で読ませる。
+# pi に fast を選ぶ設定は無く（1.1.0 で確認）、herdr はペインへ環境変数を渡せないので、値を書き込んだ拡張をその場で作る。
+# 足した記録は <拡張>.log に 1 行ずつ残る（届いたかの確認用）。
+pi_tier_extension() {  # <agent> → 拡張のパス（PI_SERVICE_TIER が空なら何も出さない）
+  [ -n "${PI_SERVICE_TIER:-}" ] || return 0
+  local f="${TMPDIR:-/tmp}/herdr-pi-tier-$1.ts"
+  cat > "$f" <<PI_TIER_EXT
+import { appendFileSync } from "node:fs";
+export default function (pi: any) {
+  pi.on("before_provider_request", (event: any) => {
+    if (!event?.payload || typeof event.payload !== "object") return undefined;
+    try { appendFileSync("$f.log", new Date().toISOString() + " service_tier=$PI_SERVICE_TIER model=" + (event.payload.model ?? "?") + "\\n"); } catch {}
+    return { ...event.payload, service_tier: "$PI_SERVICE_TIER" };
+  });
+}
+PI_TIER_EXT
+  printf '%s' "$f"
+}
+
+# PI_GOAL_EXT（目標を追いかける拡張 goal.ts のパス）を指定したとき、実装役（impl-*）にだけ付ける。
+# 拡張は隣の goal.json を読むので、担当ごとの置き場へ写して設定を書く。止まるたびに外の型が完了条件を確かめ、
+# 足りなければ同じ会話へ差し戻す。先に作られた終わりの印は拡張が消す。差し戻しの上限は PI_GOAL_MAX_ROUNDS（既定なし）。
+pi_goal_extension() {  # <agent> <作業場所> → 拡張のパス（使わないときは何も出さない）
+  [ -n "${PI_GOAL_EXT:-}" ] || return 0
+  case "$1" in impl-*) ;; *) return 0 ;; esac
+  local d="$WORK/pi-goal-$1"
+  mkdir -p "$d" && cp "$PI_GOAL_EXT" "$d/goal.ts" || return 0
+  printf '{"request":"%s","mark":"%s","log":"%s"%s%s}\n' "$2/$REQ" "$WORK/done-$1" "$d/goal-checks.jsonl" \
+    "${PI_GOAL_CHECK_MODEL:+,\"checkModel\":\"$PI_GOAL_CHECK_MODEL\"}" "${PI_GOAL_MAX_ROUNDS:+,\"maxRounds\":$PI_GOAL_MAX_ROUNDS}" > "$d/goal.json"
+  printf '%s' "$d/goal.ts"
+}
+
 pi_start() {  # <agent> <pane> <作業場所>（作業場所はペインの cwd で決まる）
+  local ext goal; ext=$(pi_tier_extension "$1"); goal=$(pi_goal_extension "$1" "$3")
   herdr agent start "$1" --kind pi --pane "$2" --timeout 90000 -- \
+    ${ext:+-e "$ext"} ${goal:+-e "$goal"} \
     --provider "${PI_PROVIDER:-openai-codex}" --model "${PI_MODEL:-gpt-6-luna}" --thinking "${PI_THINKING:-high}" \
     --no-session --system-prompt "${PI_SYSTEM:-$SKILL_DIR/agents/pi-system.md}" >/dev/null
 }
