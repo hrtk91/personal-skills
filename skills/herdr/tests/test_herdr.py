@@ -63,7 +63,8 @@ elif args[:2] == ['agent', 'get']:
 elif args[:2] == ['agent', 'list']:
     emit('agents', [dict(agent, name=key) for key, agent in state['agents'].items()])
 elif args[:2] == ['agent', 'start']:
-    state['agents'][args[2]] = {'pane_id': option('--pane'), 'agent_status': 'idle', 'interactive_ready': True}
+    state['agents'][args[2]] = {'pane_id': option('--pane'), 'agent_status': 'idle', 'interactive_ready': True,
+        'kind': option('--kind')}
     emit('type', 'agent_started')
 elif args[:2] == ['agent', 'read']:
     print('A version-dependent input example')
@@ -71,7 +72,10 @@ elif args[:2] == ['agent', 'read']:
 elif args[:2] == ['agent', 'prompt']:
     text = args[3]
     agent = state['agents'][args[2]]
-    mark = re.search(r'touch (.*?) を実行する', text).group(1)
+    channel_mode = agent.get('kind') == 'pi' and os.environ.get('PI_CHANNEL', '1') != '0' and os.path.isfile(os.environ['PI_CHANNEL_EXT']) and os.path.isfile(os.environ['CHANNEL_BIN'])
+    mark_match = re.search(r'touch (.*?) を実行する', text)
+    mark = mark_match.group(1) if mark_match else None
+    agent['channel_mode'] = channel_mode
     agent['mark'] = mark
     state['prompts'].append([args[2], text])
     session = Path(os.environ['CODEX_HOME']) / 'sessions' / 'fixture.jsonl'
@@ -102,7 +106,13 @@ elif args[:2] == ['agent', 'prompt']:
     else:
         (handoff / (prefix + name + '-review.md')).write_text('Reviewed independently.\n')
     agent['agent_status'] = 'blocked' if mode == 'blocked' else 'working' if mode == 'slow-marker' else 'done'
-    if mode not in ('blocked', 'no-mark', 'no-receipt', 'slow-marker', 'vanished'):
+    if channel_mode and mode not in ('blocked', 'no-mark', 'no-receipt', 'slow-marker', 'vanished', 'old-finish'):
+        channel = Path(os.environ['AGENT_CHANNEL'])
+        channel.parent.mkdir(parents=True, exist_ok=True)
+        rows = [json.loads(line) for line in channel.read_text().splitlines()] if channel.exists() else []
+        row = {'id': str(len(rows) + 1), 'kind': 'finish', 'from': args[2], 'body': 'Fake implementation finished'}
+        channel.open('a').write(json.dumps(row) + '\n')
+    elif mark and mode not in ('blocked', 'no-mark', 'no-receipt', 'slow-marker', 'vanished'):
         Path(mark).touch()
     emit('type', 'agent_prompted')
 elif args[:2] == ['agent', 'wait']:
@@ -122,6 +132,25 @@ else:
     save()
     print('unsupported fake command', args, file=sys.stderr)
     sys.exit(1)
+'''
+
+
+FAKE_CHANNEL = r'''#!/usr/bin/env python3
+import json, sys
+from pathlib import Path
+args = sys.argv[1:]
+log = Path(args[args.index('--log') + 1])
+args = [x for i, x in enumerate(args) if x != '--log' and (i == 0 or args[i - 1] != '--log')]
+rows = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+if args[0] == 'last-id':
+    if rows: print(rows[-1]['id'])
+elif args[0] == 'tail':
+    opts = dict(zip(args[1::2], args[2::2]))
+    after = opts.get('--after')
+    start = next((i + 1 for i, row in enumerate(rows) if row['id'] == after), 0) if after else 0
+    for row in rows[start:]:
+        if row.get('kind') == opts.get('--kind') and row.get('from') == opts.get('--from'):
+            print(json.dumps(row))
 '''
 
 
@@ -148,6 +177,12 @@ class HerdrContractTest(unittest.TestCase):
         }.items():
             path.write_text(source)
             path.chmod(0o755)
+        self.channel_bin = self.bin / "channel"
+        self.channel_bin.write_text(FAKE_CHANNEL)
+        self.channel_bin.chmod(0o755)
+        self.channel_ext = self.root / "channel-extension.ts"
+        self.channel_ext.write_text("export function createChannelExtension() {}\n")
+        self.channel_log = self.root / "channel.jsonl"
         (self.repo / "baseline.txt").write_text("baseline\n")
         (self.repo / "AGENTS.md").write_text("project context\n")
         (self.repo / "CLAUDE.md").write_text("caller context\n")
@@ -169,7 +204,8 @@ class HerdrContractTest(unittest.TestCase):
                 self.env.pop(key)
         self.env.update({"PATH": str(self.bin) + os.pathsep + self.env["PATH"], "HERDR_WORKSPACE_ID": "test-workspace",
             "CODEX_HOME": str(self.home), "FAKE_STATE": str(self.state_path), "FAKE_NAME": self.name,
-            "FAKE_WORK": str(self.work), "FAKE_W": str(self.w)})
+            "FAKE_WORK": str(self.work), "FAKE_W": str(self.w), "PI_CHANNEL_EXT": str(self.channel_ext),
+            "CHANNEL_BIN": str(self.channel_bin), "AGENT_CHANNEL": str(self.channel_log)})
 
     @property
     def w(self):
@@ -197,7 +233,7 @@ class HerdrContractTest(unittest.TestCase):
         return (self.work / ("reviewed-" + self.name)).read_text().strip()
 
     def assert_success(self, result):
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr + (self.work / ("herdr-" + self.name + ".log")).read_text())
         self.assertEqual(self.marker(), "reviewed")
         self.assertFalse(any(self.state()["tabs"].values()))
         self.assertFalse(list(self.work.glob("done-*")))
@@ -218,6 +254,7 @@ class HerdrContractTest(unittest.TestCase):
         self.assertEqual(self.git("rev-parse", "codex/existing").strip(), self.initial_head)
         self.assertTrue((self.w / "handoff/contract-review.md").is_file())
         self.assertEqual(len(self.state()["prompts"]), 2)
+        self.assertFalse(self.channel_log.exists())  # Codex は引き続き印で完了判定
 
     def test_project_style_configuration_and_patch_exclusions(self):
         self.prefix = "codex-example-"
@@ -290,6 +327,45 @@ class HerdrContractTest(unittest.TestCase):
     def test_legacy_work_directory_is_supported(self):
         self.config.pop("HERDR_WORK")
         self.assert_success(self.run_script(CODEX_WORK=str(self.work)))
+
+    def test_pi_channel_finish_advances_and_passes_named_wrapper(self):
+        self.assert_success(self.run_script(IMPL_AGENT="pi", REV_AGENT="codex"))
+        self.assertFalse((self.work / "done-impl-contract").exists())
+        rows = [json.loads(line) for line in self.channel_log.read_text().splitlines()]
+        self.assertEqual(rows[0]["kind"], "finish")
+        self.assertEqual(rows[0]["from"], "impl-contract")
+        self.assertIn("Fake implementation finished", (self.work / "herdr-contract.log").read_text())
+        wrapper = self.work / "pi-channel-impl-contract.ts"
+        self.assertFalse((self.w / "pi-channel-impl-contract.ts").exists())
+        contents = wrapper.read_text()
+        self.assertIn(json.dumps(str(self.channel_ext)), contents)
+        self.assertIn(json.dumps(str(self.channel_log)), contents)
+        self.assertIn(json.dumps("impl-contract"), contents)
+        self.assertEqual(len(contents.splitlines()), 2)
+        self.assertIn(str(wrapper), self.starts()[0])
+        self.assertIn("channel_finish", self.state()["prompts"][0][1])
+        self.assertNotIn("touch ", self.state()["prompts"][0][1])
+
+    def test_old_pi_finish_before_snapshot_does_not_advance(self):
+        self.channel_log.write_text(json.dumps({"id": "old", "kind": "finish", "from": "impl-contract", "body": "stale"}) + "\n")
+        result = self.run_script(mode="old-finish", IMPL_AGENT="pi", REV_AGENT="codex")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(self.marker(), "failed")
+        self.assertEqual(len(self.state()["prompts"]), 3)
+        self.assertTrue(any(self.state()["tabs"].values()))
+
+    def test_pi_channel_can_be_disabled_and_codex_keeps_marker(self):
+        self.assert_success(self.run_script(IMPL_AGENT="pi", REV_AGENT="codex", PI_CHANNEL="0"))
+        self.assertTrue((self.work / "herdr-contract.log").is_file())
+        self.assertFalse(self.channel_log.exists())
+        self.assertIn("touch ", self.state()["prompts"][0][1])
+        self.assertFalse((self.work / "pi-channel-impl-contract.ts").exists())
+
+    def test_pi_missing_channel_cli_falls_back_to_marker(self):
+        self.assert_success(self.run_script(IMPL_AGENT="pi", REV_AGENT="codex", CHANNEL_BIN=str(self.root / "missing-channel")))
+        self.assertIn("touch ", self.state()["prompts"][0][1])
+        self.assertFalse((self.work / "pi-channel-impl-contract.ts").exists())
+        self.assertFalse(self.channel_log.exists())
 
     def test_pi_has_no_astra_restriction(self):
         self.assert_success(self.run_script(IMPL_AGENT="pi", REV_AGENT="codex", PI_MODEL="gpt-6-astra"))

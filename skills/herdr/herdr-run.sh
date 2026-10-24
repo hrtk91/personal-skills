@@ -127,13 +127,40 @@ print(next((a["agent_status"] for a in agents if a.get("name")==sys.argv[1]), "g
   fi
 }
 
-# エージェント（種類 $kind）を立ち上げ、依頼を送り、終わりの印（$WORK/done-<agent>）ができるまで見届ける。
+# エージェント（種類 $kind）を立ち上げ、依頼を送り、印またはチャンネルの完了を見届ける。
 # 依頼は 1 行にする。長い指示はファイルに書いて「読んで従う」と頼む。
-# herdr の状態（idle・done）は仕事の終わりを意味しない（途中で質問して止まっても done になる）ので、終わりは印で判定する。
+# herdr の状態（idle・done）は仕事の終わりを意味しない（途中で質問して止まっても done になる）ので、終わりは印またはチャンネルで判定する。
 run_agent() {
   local kind=$1 agent=$2 pane=$3 task=$4 mark=$WORK/done-$2
-  local goal="$task 途中で質問せず最後までやり切り、全部終わったら最後に touch $mark を実行する（この印で次の段に進む）。"
+  local use_channel=0 channel_bin=${CHANNEL_BIN:-$HOME/repos/pi-extension/channel/bin/channel}
+  local channel_log=${AGENT_CHANNEL:-$HOME/.cache/agent-channel/channel.jsonl} after_id= goal body
   local first=1 existing i s
+  if [ "$kind" = pi ] && [ "${PI_CHANNEL:-1}" != 0 ] && [ -f "${PI_CHANNEL_EXT:-$HOME/repos/pi-extension/channel/pi/extension.ts}" ] && [ -f "$channel_bin" ]; then
+    channel_log=$(python3 -c 'import os,sys; print(os.path.abspath(os.path.expanduser(sys.argv[1])))' "$channel_log")
+    if after_id=$("$channel_bin" --log "$channel_log" last-id 2>/dev/null); then
+      use_channel=1
+      log "$agent: 完了判定=channel_finish（$channel_log、基準 ${after_id:-空}）"
+    else
+      log "$agent: channel last-id に失敗したため完了判定=印"
+    fi
+  else
+    log "$agent: 完了判定=印"
+  fi
+  if [ "$use_channel" = 1 ]; then
+    goal="$task 途中で質問せず最後までやり切り、全部終わったら最後に channel_finish の道具を 1 回呼ぶ（これで次の段に進む）。"
+  else
+    goal="$task 途中で質問せず最後までやり切り、全部終わったら最後に touch $mark を実行する（この印で次の段に進む）。"
+  fi
+  channel_finished() {
+    local rows
+    local -a args=(tail --log "$channel_log" --kind finish --from "$agent")
+    [ -z "$after_id" ] || args+=(--after "$after_id")
+    rows=$("$channel_bin" "${args[@]}" 2>/dev/null) || return 1
+    [ -n "$rows" ] || return 1
+    body=$(printf '%s\n' "$rows" | python3 -c 'import json,sys; rows=[json.loads(x) for x in sys.stdin if x.strip()]; print(" ".join(rows[-1].get("body", "").split()))' 2>/dev/null) || return 1
+    [ -n "$body" ]
+  }
+  completed() { if [ "$use_channel" = 1 ]; then channel_finished; else [ -e "$mark" ]; fi; }
   existing=$(herdr agent get "$agent" 2>/dev/null) || existing=
   if [ -n "$existing" ]; then
     [ "$(echo "$existing" | js result.agent.pane_id)" = "$pane" ] || { log "$agent: 別のペインのエージェントには触らない"; return 1; }
@@ -148,10 +175,10 @@ run_agent() {
     # 送った直後はまだ idle・done のことがあり、そのまま待つとすぐ返った。先に working を待つ。
     # 手番の合間に一瞬 idle になることがある。20 秒おいてまた working なら、渡し直さずに待ち続ける
     while :; do
-      [ -e "$mark" ] && break
+      completed && break
       herdr agent wait "$agent" --until working --timeout 120000 >/dev/null 2>&1
       herdr agent wait "$agent" >/dev/null 2>&1
-      [ -e "$mark" ] && break
+      completed && break
       s=$(status "$agent"); [ "$s" = blocked ] && break
       sleep 20
       s=$(status "$agent")
@@ -160,8 +187,11 @@ run_agent() {
     s=$(status "$agent")
     # 確認の画面で止まったら台本を終える（Claude がこの終わりで起きて、ペインを見て答える）
     [ "$s" = blocked ] && { log "$agent: 確認の画面で止まった"; return 2; }
-    [ -e "$mark" ] && { log "$agent: 終わった"; rm -f "$mark"; return 0; }
-    log "$agent: 印がないまま止まった（状態 $s、$i 回目）→ 同じ目標をもう一度"
+    if completed; then
+      if [ "$use_channel" = 1 ]; then log "$agent: finish: $body"; else rm -f "$mark"; fi
+      log "$agent: 終わった"; return 0
+    fi
+    log "$agent: 完了通知がないまま止まった（状態 $s、$i 回目）→ 同じ目標をもう一度"
     goal="まだ終わっていない。$goal"; first=1
     sleep 5
   done

@@ -3,7 +3,25 @@
 # pi は ~/.pi/agent/SYSTEM.md の「変更の前に提案して同意を取る」で止まるので、自動実行用の agents/pi-system.md を
 # --system-prompt に渡して外す（ユーザーの SYSTEM.md は変えない。2026-09-29 に確かめた）。
 # --system-prompt にはファイルのパスを渡す（改行を含む文字列は herdr が拒否する）。
-# 送る文は 1 行の通常のプロンプト（pi に /goal はない）。終わりは印で判定する。
+# 送る文は 1 行の通常のプロンプト（pi に /goal はない）。終わりは印または channel_finish で判定する。
+
+# 担当名と記録先を固定した包みを作る（herdr はペインへ環境変数を渡せない）。
+pi_channel_extension() {  # <agent> <作業場所> → 拡張のパス（包みは作業場所の外の $WORK に置く。チャンネル無効なら何も出さない）
+  [ "${PI_CHANNEL:-1}" != 0 ] || return 0
+  local ext=${PI_CHANNEL_EXT:-$HOME/repos/pi-extension/channel/pi/extension.ts}
+  [ -f "$ext" ] && [ -f "${CHANNEL_BIN:-$HOME/repos/pi-extension/channel/bin/channel}" ] || return 0
+  local d=$WORK/pi-channel-$1.ts log=${AGENT_CHANNEL:-$HOME/.cache/agent-channel/channel.jsonl}
+  ext=$(python3 -c 'import os,sys; print(os.path.abspath(os.path.expanduser(sys.argv[1])))' "$ext") || return 0
+  log=$(python3 -c 'import os,sys; print(os.path.abspath(os.path.expanduser(sys.argv[1])))' "$log") || return 0
+  python3 - "$d" "$ext" "$log" "$1" <<'PY'
+import json, sys
+path, ext, log, name = sys.argv[1:]
+with open(path, "w") as f:
+    f.write(f'import {{ createChannelExtension }} from {json.dumps(ext)};\n')
+    f.write(f'export default createChannelExtension({{ log: {json.dumps(log)}, name: {json.dumps(name)} }});\n')
+PY
+  [ -f "$d" ] && printf '%s' "$d"
+}
 
 # PI_SERVICE_TIER（例: priority＝fast）を指定したときだけ、依頼に service_tier を足す拡張を -e で読ませる。
 # pi に fast を選ぶ設定は無く（1.1.0 で確認）、herdr はペインへ環境変数を渡せないので、値を書き込んだ拡張をその場で作る。
@@ -38,9 +56,9 @@ pi_goal_extension() {  # <agent> <作業場所> → 拡張のパス（使わな�
 }
 
 pi_start() {  # <agent> <pane> <作業場所>（作業場所はペインの cwd で決まる）
-  local ext goal; ext=$(pi_tier_extension "$1"); goal=$(pi_goal_extension "$1" "$3")
+  local ext goal channel; ext=$(pi_tier_extension "$1"); goal=$(pi_goal_extension "$1" "$3"); channel=$(pi_channel_extension "$1" "$3")
   herdr agent start "$1" --kind pi --pane "$2" --timeout 90000 -- \
-    ${ext:+-e "$ext"} ${goal:+-e "$goal"} \
+    ${ext:+-e "$ext"} ${goal:+-e "$goal"} ${channel:+-e "$channel"} \
     --provider "${PI_PROVIDER:-openai-codex}" --model "${PI_MODEL:-gpt-6-luna}" --thinking "${PI_THINKING:-high}" \
     --no-session --system-prompt "${PI_SYSTEM:-$SKILL_DIR/agents/pi-system.md}" >/dev/null
 }

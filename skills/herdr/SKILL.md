@@ -85,6 +85,9 @@ COMMIT_EMAIL=${COMMIT_EMAIL:-codex@noreply.invalid}
 | `COMMIT_NAME` / `COMMIT_EMAIL` | `Codex <codex@noreply.invalid>` または `Pi <pi@noreply.invalid>`。台本のコミット作者 |
 | `DIRTY_COMMIT_NAME` / `DIRTY_COMMIT_EMAIL` | `Claude <claude@noreply.invalid>`。`COMMIT_DIRTY=1` の事前コミット作者 |
 | `CODEX_HOME` | Codex の標準の設定・セッション置き場。指定時は両ペインに渡し、受信確認も同じ場所で行う |
+| `PI_CHANNEL` | pi の完了をチャンネルで判定する。`0` なら印を使う（既定は有効） |
+| `PI_CHANNEL_EXT` | pi のチャンネル拡張のパス。既定は `$HOME/repos/pi-extension/channel/pi/extension.ts` |
+| `CHANNEL_BIN` | チャンネル CLI のパス。既定は `$HOME/repos/pi-extension/channel/bin/channel` |
 
 文書・追加ファイル・除外 pathspec の一覧は空白区切り。ファイル名そのものに空白は使わない。設定例の `${変数:-既定}` は起動時の環境変数を優先するための書き方。`RULES`・`CONTEXT_FILES`・`CHECKLIST`・`PATCH_EXCLUDE` は空文字で無効にできる。
 
@@ -99,7 +102,7 @@ COMMIT_EMAIL=${COMMIT_EMAIL:-codex@noreply.invalid}
 - `RESUME=newtab`: 既存の写しを残し、タブだけ作り直す。以前のタブとエージェントが無い場合に使う。
 - `SKIP_IMPL=1`: 実装を飛ばしてレビューから進める。通常は `RESUME` と組み合わせる。`BASE` の続きなら `BASE` も再指定する。
 - `herdr agent wait` の観測タイムアウトは担当の終了を意味しない。working 中や状態取得に失敗した場合は同じ担当を待つ。
-- herdr の `done` は仕事の完了を保証しない。担当が最後に `touch` で作る `done-<agent>` を見て次へ進み、確認後に印を消す。印がないまま応答が終わったら同じ目標を3回まで渡す。
+- herdr の `done` は仕事の完了を保証しない。Codex とチャンネル無効時の pi は `touch` で作る `done-<agent>`、チャンネル有効時の pi は控えた ID より後の `channel_finish` で次へ進む。`PI_CHANNEL=0` で pi も印に戻せる。印がない／finish がないまま応答が終わったら同じ目標を3回まで渡す。
 - Codex は herdr の入力準備状態を待ち、セッション記録の `thread_goal_updated` で受信を確かめる。pi は working になったことで受信を確かめる。
 - `blocked` では台本が確認画面に答えず、`reviewed-<名>` に `blocked` と書いて終了コード2で終わる。Claude が該当ペインを読み、依頼文と決まりに照らして対応する。追加の許可が必要な操作はユーザーの許可を得る。
 - 起動・送信・パッチ・コミット・タブの片付けに失敗した場合は `failed`、設計で STOP なら `stopped`、レビューとコミットとタブの片付けが完了した場合だけ `reviewed`。マーカーの存在だけで取り込み可と判断しない。
