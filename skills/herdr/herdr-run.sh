@@ -132,10 +132,10 @@ print(next((a["agent_status"] for a in agents if a.get("name")==sys.argv[1]), "g
 # herdr の状態（idle・done）は仕事の終わりを意味しない（途中で質問して止まっても done になる）ので、終わりは印またはチャンネルで判定する。
 run_agent() {
   local kind=$1 agent=$2 pane=$3 task=$4 mark=$WORK/done-$2
-  local use_channel=0 channel_bin=${CHANNEL_BIN:-$HOME/repos/pi-extension/channel/bin/channel}
+  local use_channel=0 channel_bin=${CHANNEL_BIN:-$SKILL_DIR/channel/bin/channel}
   local channel_log=${AGENT_CHANNEL:-$HOME/.cache/agent-channel/channel.jsonl} after_id= goal body
   local first=1 existing i s
-  if [ "$kind" = pi ] && [ "${PI_CHANNEL:-1}" != 0 ] && [ -f "${PI_CHANNEL_EXT:-$HOME/repos/pi-extension/channel/pi/extension.ts}" ] && [ -f "$channel_bin" ]; then
+  if [ "$kind" = pi ] && [ "${PI_CHANNEL:-1}" != 0 ] && [ -f "${PI_CHANNEL_EXT:-$SKILL_DIR/channel/pi/extension.ts}" ] && [ -f "$channel_bin" ]; then
     channel_log=$(python3 -c 'import os,sys; print(os.path.abspath(os.path.expanduser(sys.argv[1])))' "$channel_log")
     if after_id=$("$channel_bin" --log "$channel_log" last-id 2>/dev/null); then
       use_channel=1

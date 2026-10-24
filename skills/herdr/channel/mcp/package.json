@@ -1,0 +1,8 @@
+{
+  "name": "agent-channel-mcp",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2"
+  }
+}

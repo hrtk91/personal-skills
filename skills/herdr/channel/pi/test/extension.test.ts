@@ -1,0 +1,109 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import extension, { createChannelExtension } from '../extension.ts';
+import { read } from '../../engine/channel.ts';
+
+function setup(log: string, name = 'worker') {
+  const tools = new Map<string, any>();
+  const handlers = new Map<string, Function[]>();
+  const messages: any[] = [];
+  const pi = {
+    registerTool: (tool: any) => tools.set(tool.name, tool),
+    on: (event: string, handler: Function) => handlers.set(event, [...(handlers.get(event) ?? []), handler]),
+    sendMessage: async (...args: any[]) => { messages.push(args); },
+  };
+  createChannelExtension({ log, name })(pi);
+  return { tools, handlers, messages };
+}
+
+test('tools append required channel rows and errors explain a missing configured name', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'channel-pi-'));
+  try {
+    const log = join(dir, 'records.jsonl');
+    const { tools } = setup(log);
+    const finish = await tools.get('channel_finish').execute('id', { summary: '完了', facts: [{ claim: '検査', how: '実行' }] });
+    const post = await tools.get('channel_post').execute('id', { text: '途中' });
+    assert.deepEqual(JSON.parse(finish.content[0].text), { id: finish.details.id });
+    const rows = read(log).rows;
+    assert.deepEqual(rows.map(({ from, to, kind, body }) => ({ from, to, kind, body })), [
+      { from: 'worker', to: 'claude', kind: 'finish', body: '完了' },
+      { from: 'worker', to: 'claude', kind: 'post', body: '途中' },
+    ]);
+    assert.deepEqual(rows[0]?.fields.facts, [{ claim: '検査', how: '実行' }]);
+    const unconfigured = new Map<string, any>();
+    createChannelExtension({ log: join(dir, 'other.jsonl'), name: '' })({ registerTool: (t: any) => unconfigured.set(t.name, t), on() {}, sendMessage() {} });
+    const failure = await unconfigured.get('channel_post').execute('id', { text: 'x' });
+    assert.equal(failure.isError, true);
+    assert.match(failure.content[0].text, /AGENT_CHANNEL_NAME が無いので使えない/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('only messages addressed to self or wildcard are delivered, not own rows', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'channel-pi-'));
+  try {
+    const log = join(dir, 'records.jsonl');
+    const { handlers, messages } = setup(log);
+    handlers.get('session_start')?.[0]?.({});
+    const tool = setup(log);
+    await tool.tools.get('channel_post').execute('id', { text: 'own', to: '*' });
+    // follow() polls immediately; permit its queued callback to run.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(messages.length, 0);
+    const { append } = await import('../../engine/channel.ts');
+    append(log, { kind: 'say', from: 'claude', to: 'worker', body: 'private' });
+    append(log, { kind: 'say', from: 'other', to: '*', body: 'broadcast' });
+    append(log, { kind: 'say', from: 'other', to: 'someone', body: 'not for me' });
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    assert.deepEqual(messages.map((args) => args[0]), [
+      { customType: 'agent-channel', content: '【連絡チャンネル】claude から（say）:\nprivate', display: true, details: read(log).rows[1] },
+      { customType: 'agent-channel', content: '【連絡チャンネル】other から（say）:\nbroadcast', display: true, details: read(log).rows[2] },
+    ]);
+    assert.deepEqual(messages.map((args) => args[1]), [
+      { triggerTurn: true, deliverAs: 'followUp' },
+      { triggerTurn: true, deliverAs: 'followUp' },
+    ]);
+    handlers.get('session_shutdown')?.[0]?.({});
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('stopped is once per user start; custom starts do not reset the start marker', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'channel-pi-'));
+  try {
+    const log = join(dir, 'records.jsonl');
+    const { handlers } = setup(log);
+    const before = handlers.get('before_agent_start')?.[0];
+    const settled = handlers.get('agent_settled')?.[0];
+    before?.({ messageType: 'user' });
+    settled?.({ aborted: true });
+    settled?.({ aborted: false });
+    before?.({ messageType: 'custom' });
+    settled?.({ aborted: false });
+    const stopped = read(log).rows.filter((row) => row.kind === 'stopped');
+    assert.equal(stopped.length, 1);
+    assert.deepEqual({ to: stopped[0]?.to, body: stopped[0]?.body, aborted: stopped[0]?.fields.aborted }, {
+      to: 'claude', body: 'finish を呼ばずに止まりました', aborted: true,
+    });
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('default export resolves environment when invoked, not when module is loaded', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'channel-pi-'));
+  const oldLog = process.env.AGENT_CHANNEL;
+  const oldName = process.env.AGENT_CHANNEL_NAME;
+  try {
+    const log = join(dir, 'deferred.jsonl');
+    process.env.AGENT_CHANNEL = log;
+    process.env.AGENT_CHANNEL_NAME = 'late-name';
+    const tools = new Map<string, any>();
+    extension({ registerTool: (tool: any) => tools.set(tool.name, tool), on() {}, sendMessage() {} });
+    await tools.get('channel_post').execute('id', { text: 'late' });
+    assert.equal(JSON.parse(readFileSync(log, 'utf8')).from, 'late-name');
+  } finally {
+    if (oldLog === undefined) delete process.env.AGENT_CHANNEL; else process.env.AGENT_CHANNEL = oldLog;
+    if (oldName === undefined) delete process.env.AGENT_CHANNEL_NAME; else process.env.AGENT_CHANNEL_NAME = oldName;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

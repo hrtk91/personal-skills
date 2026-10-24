@@ -86,8 +86,8 @@ COMMIT_EMAIL=${COMMIT_EMAIL:-codex@noreply.invalid}
 | `DIRTY_COMMIT_NAME` / `DIRTY_COMMIT_EMAIL` | `Claude <claude@noreply.invalid>`。`COMMIT_DIRTY=1` の事前コミット作者 |
 | `CODEX_HOME` | Codex の標準の設定・セッション置き場。指定時は両ペインに渡し、受信確認も同じ場所で行う |
 | `PI_CHANNEL` | pi の完了をチャンネルで判定する。`0` なら印を使う（既定は有効） |
-| `PI_CHANNEL_EXT` | pi のチャンネル拡張のパス。既定は `$HOME/repos/pi-extension/channel/pi/extension.ts` |
-| `CHANNEL_BIN` | チャンネル CLI のパス。既定は `$HOME/repos/pi-extension/channel/bin/channel` |
+| `PI_CHANNEL_EXT` | pi のチャンネル拡張のパス。既定はスキルに添付した `channel/pi/extension.ts` |
+| `CHANNEL_BIN` | チャンネル CLI のパス。既定はスキルに添付した `channel/bin/channel` |
 
 文書・追加ファイル・除外 pathspec の一覧は空白区切り。ファイル名そのものに空白は使わない。設定例の `${変数:-既定}` は起動時の環境変数を優先するための書き方。`RULES`・`CONTEXT_FILES`・`CHECKLIST`・`PATCH_EXCLUDE` は空文字で無効にできる。
 
@@ -115,4 +115,4 @@ COMMIT_EMAIL=${COMMIT_EMAIL:-codex@noreply.invalid}
 - 確かめた結果と推測を分け、テストの出力と失敗を残すこと。未完了を完了と書かないこと。
 - エージェント自身はコミットしないこと。台本がパッチの対象をコミットする。Claude の取り込み作業は別途承認された範囲で行う。
 
-スキルの変更確認は `python3 -m unittest discover -s skills/herdr/tests -v` と `bash -n` を使う。実 Codex の通し確認は別途許可された使い捨てリポジトリで行う。
+スキルの変更確認は `python3 -m unittest discover -s skills/herdr/tests -v` と `bash -n` を使う。添付の連絡チャンネル（`channel/`）は、`skills/herdr` で `node --test channel/engine/test/*.test.ts channel/pi/test/*.test.ts channel/mcp/test/*.test.ts` を流す（MCP の検査の前に `channel/mcp` で `npm ci`）。実 Codex の通し確認は別途許可された使い捨てリポジトリで行う。

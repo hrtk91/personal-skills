@@ -8,8 +8,8 @@
 # 担当名と記録先を固定した包みを作る（herdr はペインへ環境変数を渡せない）。
 pi_channel_extension() {  # <agent> <作業場所> → 拡張のパス（包みは作業場所の外の $WORK に置く。チャンネル無効なら何も出さない）
   [ "${PI_CHANNEL:-1}" != 0 ] || return 0
-  local ext=${PI_CHANNEL_EXT:-$HOME/repos/pi-extension/channel/pi/extension.ts}
-  [ -f "$ext" ] && [ -f "${CHANNEL_BIN:-$HOME/repos/pi-extension/channel/bin/channel}" ] || return 0
+  local ext=${PI_CHANNEL_EXT:-$SKILL_DIR/channel/pi/extension.ts}
+  [ -f "$ext" ] && [ -f "${CHANNEL_BIN:-$SKILL_DIR/channel/bin/channel}" ] || return 0
   local d=$WORK/pi-channel-$1.ts log=${AGENT_CHANNEL:-$HOME/.cache/agent-channel/channel.jsonl}
   ext=$(python3 -c 'import os,sys; print(os.path.abspath(os.path.expanduser(sys.argv[1])))' "$ext") || return 0
   log=$(python3 -c 'import os,sys; print(os.path.abspath(os.path.expanduser(sys.argv[1])))' "$log") || return 0
