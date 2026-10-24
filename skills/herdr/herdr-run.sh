@@ -133,13 +133,15 @@ print(next((a["agent_status"] for a in agents if a.get("name")==sys.argv[1]), "g
 run_agent() {
   local kind=$1 agent=$2 pane=$3 task=$4 mark=$WORK/done-$2
   local use_channel=0 channel_bin=${CHANNEL_BIN:-$SKILL_DIR/channel/bin/channel}
-  local channel_log=${AGENT_CHANNEL:-$HOME/.cache/agent-channel/channel.jsonl} after_id= goal body
+  local channel_log=${AGENT_CHANNEL:-$HOME/.cache/agent-channel/channel.jsonl} after_id= goal body supervisor=${AGENT_CHANNEL_SUPERVISOR:-}
   local first=1 existing i s
   if [ "$kind" = pi ] && [ "${PI_CHANNEL:-1}" != 0 ] && [ -f "${PI_CHANNEL_EXT:-$SKILL_DIR/channel/pi/extension.ts}" ] && [ -f "$channel_bin" ]; then
     channel_log=$(python3 -c 'import os,sys; print(os.path.abspath(os.path.expanduser(sys.argv[1])))' "$channel_log")
     if after_id=$("$channel_bin" --log "$channel_log" last-id 2>/dev/null); then
       use_channel=1
-      log "$agent: 完了判定=channel_finish（$channel_log、基準 ${after_id:-空}）"
+      if [ -z "$supervisor" ]; then supervisor=$("$channel_bin" supervisor 2>/dev/null) || supervisor=claude; fi
+      [ -n "$supervisor" ] || supervisor=claude
+      log "$agent: 完了判定=channel_finish（宛先 $supervisor、$channel_log、基準 ${after_id:-空}）"
     else
       log "$agent: channel last-id に失敗したため完了判定=印"
     fi

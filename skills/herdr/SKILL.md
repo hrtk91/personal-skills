@@ -86,6 +86,7 @@ COMMIT_EMAIL=${COMMIT_EMAIL:-codex@noreply.invalid}
 | `DIRTY_COMMIT_NAME` / `DIRTY_COMMIT_EMAIL` | `Claude <claude@noreply.invalid>`。`COMMIT_DIRTY=1` の事前コミット作者 |
 | `CODEX_HOME` | Codex の標準の設定・セッション置き場。指定時は両ペインに渡し、受信確認も同じ場所で行う |
 | `PI_CHANNEL` | pi の完了をチャンネルで判定する。`0` なら印を使う（既定は有効） |
+| `AGENT_CHANNEL_SUPERVISOR` | pi の finish/post/stopped の宛先。未設定なら親の Claude Code を `claude-<PID>` として特定し、見つからなければ `claude` |
 | `PI_CHANNEL_EXT` | pi のチャンネル拡張のパス。既定はスキルに添付した `channel/pi/extension.ts` |
 | `CHANNEL_BIN` | チャンネル CLI のパス。既定はスキルに添付した `channel/bin/channel` |
 

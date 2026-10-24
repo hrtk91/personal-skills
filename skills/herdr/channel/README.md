@@ -1,8 +1,8 @@
 # 作業チャンネル
 
-`channel/bin/channel` と Pi 拡張は `AGENT_CHANNEL`（JSONL の保存先）と `AGENT_CHANNEL_NAME`（送信者名）を使います。`AGENT_CHANNEL` が無い場合は `~/.cache/agent-channel/channel.jsonl` を使います。必要ならコマンドの `--log` と `--from` で上書きできます。拡張で `AGENT_CHANNEL_NAME` が無い場合、記録を伴う道具呼び出しはエラーになります。
+`channel/bin/channel` と Pi 拡張は `AGENT_CHANNEL`（JSONL の保存先）と `AGENT_CHANNEL_NAME`（送信者名）を使います。`AGENT_CHANNEL` が無い場合は `~/.cache/agent-channel/channel.jsonl` を使います。必要ならコマンドの `--log` と `--from` で上書きできます。拡張で `AGENT_CHANNEL_NAME` が無い場合、記録を伴う道具呼び出しはエラーになります。宛先の既定は、依頼元 Claude Code の親プロセスから検出した `claude-<PID>`（未検出なら `claude`）です。MCP は自分宛てと `*` の行だけを届け、汎用 `claude` 宛ては除外します。Pi の finish/post/stopped は `AGENT_CHANNEL_SUPERVISOR` 宛て（未設定なら `claude`）です。
 
-Pi では `pi -e channel/pi/extension.ts` で読み込みます。担当別の包みを生成する場合は、拡張から `createChannelExtension({ log, name })` を import して呼び出してください。既定 export は拡張の呼び出し時に環境変数を読み、設定付きの関数を呼ぶ薄い入口です。
+Pi では `pi -e channel/pi/extension.ts` で読み込みます。担当別の包みを生成する場合は、拡張から `createChannelExtension({ log, name, supervisor })` を import して呼び出してください。既定 export は拡張の呼び出し時に環境変数を読み、設定付きの関数を呼ぶ薄い入口です。herdr は `AGENT_CHANNEL_SUPERVISOR` または `channel supervisor` の出力を包みに記録します。
 
 Claude Code では `channel/mcp/server.ts` を MCP サーバーとして登録します。`.mcp.json` などに次を設定してください（`<絶対パス>` は実際の配置先に置き換えます）。
 

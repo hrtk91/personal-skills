@@ -11,14 +11,17 @@ pi_channel_extension() {  # <agent> <作業場所> → 拡張のパス（包み�
   local ext=${PI_CHANNEL_EXT:-$SKILL_DIR/channel/pi/extension.ts}
   [ -f "$ext" ] && [ -f "${CHANNEL_BIN:-$SKILL_DIR/channel/bin/channel}" ] || return 0
   local d=$WORK/pi-channel-$1.ts log=${AGENT_CHANNEL:-$HOME/.cache/agent-channel/channel.jsonl}
+  local supervisor=${AGENT_CHANNEL_SUPERVISOR:-}
   ext=$(python3 -c 'import os,sys; print(os.path.abspath(os.path.expanduser(sys.argv[1])))' "$ext") || return 0
   log=$(python3 -c 'import os,sys; print(os.path.abspath(os.path.expanduser(sys.argv[1])))' "$log") || return 0
-  python3 - "$d" "$ext" "$log" "$1" <<'PY'
+  if [ -z "$supervisor" ]; then supervisor=$("${CHANNEL_BIN:-$SKILL_DIR/channel/bin/channel}" supervisor 2>/dev/null) || supervisor=claude; fi
+  [ -n "$supervisor" ] || supervisor=claude
+  python3 - "$d" "$ext" "$log" "$1" "$supervisor" <<'PY'
 import json, sys
-path, ext, log, name = sys.argv[1:]
+path, ext, log, name, supervisor = sys.argv[1:]
 with open(path, "w") as f:
     f.write(f'import {{ createChannelExtension }} from {json.dumps(ext)};\n')
-    f.write(f'export default createChannelExtension({{ log: {json.dumps(log)}, name: {json.dumps(name)} }});\n')
+    f.write(f'export default createChannelExtension({{ log: {json.dumps(log)}, name: {json.dumps(name)}, supervisor: {json.dumps(supervisor)} }});\n')
 PY
   [ -f "$d" ] && printf '%s' "$d"
 }

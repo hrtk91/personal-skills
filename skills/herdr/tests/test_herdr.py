@@ -341,10 +341,18 @@ class HerdrContractTest(unittest.TestCase):
         self.assertIn(json.dumps(str(self.channel_ext)), contents)
         self.assertIn(json.dumps(str(self.channel_log)), contents)
         self.assertIn(json.dumps("impl-contract"), contents)
+        self.assertIn(json.dumps("claude"), contents)
         self.assertEqual(len(contents.splitlines()), 2)
+        self.assertIn("宛先 claude", (self.work / "herdr-contract.log").read_text())
         self.assertIn(str(wrapper), self.starts()[0])
         self.assertIn("channel_finish", self.state()["prompts"][0][1])
         self.assertNotIn("touch ", self.state()["prompts"][0][1])
+
+    def test_pi_supervisor_override_is_written_to_wrapper_and_logged(self):
+        self.assert_success(self.run_script(IMPL_AGENT="pi", REV_AGENT="codex", AGENT_CHANNEL_SUPERVISOR="claude-314"))
+        wrapper = (self.work / "pi-channel-impl-contract.ts").read_text()
+        self.assertIn(json.dumps("claude-314"), wrapper)
+        self.assertIn("宛先 claude-314", (self.work / "herdr-contract.log").read_text())
 
     def test_old_pi_finish_before_snapshot_does_not_advance(self):
         self.channel_log.write_text(json.dumps({"id": "old", "kind": "finish", "from": "impl-contract", "body": "stale"}) + "\n")

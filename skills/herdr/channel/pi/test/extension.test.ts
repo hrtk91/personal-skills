@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import extension, { createChannelExtension } from '../extension.ts';
 import { read } from '../../engine/channel.ts';
 
-function setup(log: string, name = 'worker') {
+function setup(log: string, name = 'worker', supervisor?: string) {
   const tools = new Map<string, any>();
   const handlers = new Map<string, Function[]>();
   const messages: any[] = [];
@@ -15,7 +15,7 @@ function setup(log: string, name = 'worker') {
     on: (event: string, handler: Function) => handlers.set(event, [...(handlers.get(event) ?? []), handler]),
     sendMessage: async (...args: any[]) => { messages.push(args); },
   };
-  createChannelExtension({ log, name })(pi);
+  createChannelExtension({ log, name, supervisor })(pi);
   return { tools, handlers, messages };
 }
 
@@ -23,14 +23,14 @@ test('tools append required channel rows and errors explain a missing configured
   const dir = mkdtempSync(join(tmpdir(), 'channel-pi-'));
   try {
     const log = join(dir, 'records.jsonl');
-    const { tools } = setup(log);
+    const { tools } = setup(log, 'worker', 'claude-42');
     const finish = await tools.get('channel_finish').execute('id', { summary: '完了', facts: [{ claim: '検査', how: '実行' }] });
     const post = await tools.get('channel_post').execute('id', { text: '途中' });
     assert.deepEqual(JSON.parse(finish.content[0].text), { id: finish.details.id });
     const rows = read(log).rows;
     assert.deepEqual(rows.map(({ from, to, kind, body }) => ({ from, to, kind, body })), [
-      { from: 'worker', to: 'claude', kind: 'finish', body: '完了' },
-      { from: 'worker', to: 'claude', kind: 'post', body: '途中' },
+      { from: 'worker', to: 'claude-42', kind: 'finish', body: '完了' },
+      { from: 'worker', to: 'claude-42', kind: 'post', body: '途中' },
     ]);
     assert.deepEqual(rows[0]?.fields.facts, [{ claim: '検査', how: '実行' }]);
     const unconfigured = new Map<string, any>();
@@ -73,7 +73,7 @@ test('stopped is once per user start; custom starts do not reset the start marke
   const dir = mkdtempSync(join(tmpdir(), 'channel-pi-'));
   try {
     const log = join(dir, 'records.jsonl');
-    const { handlers } = setup(log);
+    const { handlers } = setup(log, 'worker', 'claude-88');
     const before = handlers.get('before_agent_start')?.[0];
     const settled = handlers.get('agent_settled')?.[0];
     before?.({ messageType: 'user' });
@@ -84,7 +84,7 @@ test('stopped is once per user start; custom starts do not reset the start marke
     const stopped = read(log).rows.filter((row) => row.kind === 'stopped');
     assert.equal(stopped.length, 1);
     assert.deepEqual({ to: stopped[0]?.to, body: stopped[0]?.body, aborted: stopped[0]?.fields.aborted }, {
-      to: 'claude', body: 'finish を呼ばずに止まりました', aborted: true,
+      to: 'claude-88', body: 'finish を呼ばずに止まりました', aborted: true,
     });
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
@@ -93,17 +93,22 @@ test('default export resolves environment when invoked, not when module is loade
   const dir = mkdtempSync(join(tmpdir(), 'channel-pi-'));
   const oldLog = process.env.AGENT_CHANNEL;
   const oldName = process.env.AGENT_CHANNEL_NAME;
+  const oldSupervisor = process.env.AGENT_CHANNEL_SUPERVISOR;
   try {
     const log = join(dir, 'deferred.jsonl');
     process.env.AGENT_CHANNEL = log;
     process.env.AGENT_CHANNEL_NAME = 'late-name';
+    process.env.AGENT_CHANNEL_SUPERVISOR = 'claude-77';
     const tools = new Map<string, any>();
     extension({ registerTool: (tool: any) => tools.set(tool.name, tool), on() {}, sendMessage() {} });
     await tools.get('channel_post').execute('id', { text: 'late' });
-    assert.equal(JSON.parse(readFileSync(log, 'utf8')).from, 'late-name');
+    const row = JSON.parse(readFileSync(log, 'utf8'));
+    assert.equal(row.from, 'late-name');
+    assert.equal(row.to, 'claude-77');
   } finally {
     if (oldLog === undefined) delete process.env.AGENT_CHANNEL; else process.env.AGENT_CHANNEL = oldLog;
     if (oldName === undefined) delete process.env.AGENT_CHANNEL_NAME; else process.env.AGENT_CHANNEL_NAME = oldName;
+    if (oldSupervisor === undefined) delete process.env.AGENT_CHANNEL_SUPERVISOR; else process.env.AGENT_CHANNEL_SUPERVISOR = oldSupervisor;
     rmSync(dir, { recursive: true, force: true });
   }
 });

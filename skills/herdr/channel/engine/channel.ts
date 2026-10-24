@@ -2,6 +2,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, watch } from 'node
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { randomBytes } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 
 export type Kind = 'finish' | 'post' | 'say' | 'stopped';
 export type Fact = { claim: string; how: string };
@@ -19,6 +20,53 @@ export type ReadResult = { rows: Row[]; skipped: number };
 let lastTimestamp = 0;
 let sequence = 0;
 const kinds = new Set<Kind>(['finish', 'post', 'say', 'stopped']);
+
+export function supervisorName(
+  parentPid: (pid: number) => number | null = procParentPid,
+  processInfo: (pid: number) => { comm: string; args: string[] } | null = procProcessInfo,
+): string {
+  let pid = processInfo(process.pid) ? parentPid(process.pid) : null;
+  const visited = new Set<number>();
+  while (pid && pid > 1 && !visited.has(pid)) {
+    visited.add(pid);
+    const info = processInfo(pid);
+    if (!info) break;
+    const executable = info.args[0]?.split('/').at(-1) ?? '';
+    if (/^claude/i.test(info.comm) || /^claude/i.test(executable)) return `claude-${pid}`;
+    pid = parentPid(pid);
+  }
+  return 'claude';
+}
+
+function procParentPid(pid: number): number | null {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+    const close = stat.lastIndexOf(')');
+    const fields = stat.slice(close + 2).trim().split(/\s+/);
+    const parent = Number(fields[1]);
+    return Number.isInteger(parent) ? parent : null;
+  } catch {
+    try {
+      const output = execFileSync('ps', ['-o', 'ppid=', '-p', String(pid)], { encoding: 'utf8' }).trim();
+      const parent = Number(output);
+      return Number.isInteger(parent) ? parent : null;
+    } catch { return null; }
+  }
+}
+
+function procProcessInfo(pid: number): { comm: string; args: string[] } | null {
+  try {
+    const comm = readFileSync(`/proc/${pid}/comm`, 'utf8').trim();
+    const args = readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').filter(Boolean);
+    return { comm, args };
+  } catch {
+    try {
+      const output = execFileSync('ps', ['-o', 'comm=,args=', '-p', String(pid)], { encoding: 'utf8' }).trim();
+      const [comm = '', ...args] = output.split(/\s+/);
+      return { comm, args };
+    } catch { return null; }
+  }
+}
 
 export function logPath(): string {
   return process.env.AGENT_CHANNEL || join(homedir(), '.cache', 'agent-channel', 'channel.jsonl');
@@ -86,7 +134,6 @@ export function read(log: string, filter: Filter = {}): ReadResult {
   let afterRows = rows;
   if (filter.after) {
     const anchorIndex = rows.findIndex((row) => row.id === filter.after);
-    // If the anchor is absent, replay from the beginning rather than silently dropping rows.
     if (anchorIndex >= 0) afterRows = rows.slice(anchorIndex + 1);
   }
   return { rows: afterRows.filter((row) => matches(row, filter)), skipped };

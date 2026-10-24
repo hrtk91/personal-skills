@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { append, lastId, logPath, read, wait as waitFor, type Filter, type Kind } from './channel.ts';
+import { append, lastId, logPath, read, supervisorName, wait as waitFor, type Filter, type Kind } from './channel.ts';
 
 function usage(message: string): never { console.error(message); process.exitCode = 2; throw new Error('usage'); }
 function args(argv: string[]): { positionals: string[]; options: Map<string, string[]>; flags: Set<string> } {
@@ -21,6 +21,7 @@ function run(): void {
   const log = get(parsed.options, '--log') ?? logPath();
   const from = get(parsed.options, '--from') ?? process.env.AGENT_CHANNEL_NAME;
   if (!command) usage('コマンドが必要です');
+  if (command === 'supervisor') { console.log(supervisorName()); return; }
   if (command === 'last-id') {
     if (!log) usage('AGENT_CHANNEL または --log が必要です');
     const id = lastId(log); if (id) console.log(id); return;

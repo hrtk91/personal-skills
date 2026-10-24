@@ -4,7 +4,7 @@ import { appendFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
-import { append, follow, hasFinished, lastId, read, wait } from '../channel.ts';
+import { append, follow, hasFinished, lastId, read, supervisorName, wait } from '../channel.ts';
 
 function temp() { return mkdtempSync(join(tmpdir(), 'channel-test-')); }
 test('row defaults, filters, malformed and incomplete lines, ordered ids, finish check', () => {
@@ -30,6 +30,14 @@ test('row defaults, filters, malformed and incomplete lines, ordered ids, finish
     assert.equal(read(log).rows.length, 6); assert.equal(read(log).skipped, 2);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+test('supervisorName finds the nearest Claude ancestor and falls back when absent', () => {
+  const current = process.pid;
+  const parents = new Map([[current, 30], [30, 20], [20, 10], [10, 1]]);
+  const infos = new Map([[current, { comm: 'node', args: ['node'] }], [30, { comm: 'node', args: ['node'] }], [20, { comm: 'bash', args: ['bash'] }], [10, { comm: 'claude', args: ['claude', '-p'] }]]);
+  assert.equal(supervisorName((pid) => parents.get(pid) ?? null, (pid) => infos.get(pid) ?? null), 'claude-10');
+  assert.equal(supervisorName((pid) => parents.get(pid) ?? null, () => ({ comm: 'node', args: ['node'] })), 'claude');
+});
+
 test('wait times out', async () => {
   const dir = temp();
   try { assert.equal(await wait(join(dir, 'missing'), { kind: 'finish' }, { timeoutMs: 35 }), null); }
