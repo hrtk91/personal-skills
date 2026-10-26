@@ -63,7 +63,7 @@ pi_start() {  # <agent> <pane> <作業場所>（作業場所はペインの cwd 
   herdr agent start "$1" --kind pi --pane "$2" --timeout 90000 -- \
     ${ext:+-e "$ext"} ${goal:+-e "$goal"} ${channel:+-e "$channel"} \
     --provider "${PI_PROVIDER:-openai-codex}" --model "${PI_MODEL:-gpt-6-luna}" --thinking "${PI_THINKING:-high}" \
-    --no-session --system-prompt "${PI_SYSTEM:-$SKILL_DIR/agents/pi-system.md}" >/dev/null
+    --system-prompt "${PI_SYSTEM:-$SKILL_DIR/agents/pi-system.md}" >/dev/null
 }
 
 pi_send() {  # <agent> <text> <印のパス>
