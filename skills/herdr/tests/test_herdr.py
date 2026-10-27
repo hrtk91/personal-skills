@@ -136,14 +136,18 @@ else:
 
 
 FAKE_CHANNEL = r'''#!/usr/bin/env python3
-import json, sys
+import json, os, sys
 from pathlib import Path
 args = sys.argv[1:]
-log = Path(args[args.index('--log') + 1])
+log = Path(args[args.index('--log') + 1]) if '--log' in args else Path(os.environ['AGENT_CHANNEL'])
 args = [x for i, x in enumerate(args) if x != '--log' and (i == 0 or args[i - 1] != '--log')]
 rows = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
 if args[0] == 'last-id':
     if rows: print(rows[-1]['id'])
+elif args[0] == 'supervisor':
+    if os.environ.get('FAKE_SUPERVISOR_FAIL') == '1': sys.exit(1)
+    supervisor = os.environ.get('FAKE_SUPERVISOR', '')
+    if supervisor: print(supervisor)
 elif args[0] == 'tail':
     opts = dict(zip(args[1::2], args[2::2]))
     after = opts.get('--after')
@@ -329,7 +333,7 @@ class HerdrContractTest(unittest.TestCase):
         self.assert_success(self.run_script(CODEX_WORK=str(self.work)))
 
     def test_pi_channel_finish_advances_and_passes_named_wrapper(self):
-        self.assert_success(self.run_script(IMPL_AGENT="pi", REV_AGENT="codex"))
+        self.assert_success(self.run_script(IMPL_AGENT="pi", REV_AGENT="codex", FAKE_SUPERVISOR="claude-271"))
         self.assertFalse((self.work / "done-impl-contract").exists())
         rows = [json.loads(line) for line in self.channel_log.read_text().splitlines()]
         self.assertEqual(rows[0]["kind"], "finish")
@@ -341,22 +345,44 @@ class HerdrContractTest(unittest.TestCase):
         self.assertIn(json.dumps(str(self.channel_ext)), contents)
         self.assertIn(json.dumps(str(self.channel_log)), contents)
         self.assertIn(json.dumps("impl-contract"), contents)
-        self.assertIn(json.dumps("claude"), contents)
+        self.assertIn(json.dumps("claude-271"), contents)
         self.assertEqual(len(contents.splitlines()), 2)
-        self.assertIn("宛先 claude", (self.work / "herdr-contract.log").read_text())
+        self.assertIn("宛先 claude-271", (self.work / "herdr-contract.log").read_text())
         self.assertIn(str(wrapper), self.starts()[0])
         self.assertIn("channel_finish", self.state()["prompts"][0][1])
         self.assertNotIn("touch ", self.state()["prompts"][0][1])
 
     def test_pi_supervisor_override_is_written_to_wrapper_and_logged(self):
-        self.assert_success(self.run_script(IMPL_AGENT="pi", REV_AGENT="codex", AGENT_CHANNEL_SUPERVISOR="claude-314"))
+        self.assert_success(self.run_script(IMPL_AGENT="pi", REV_AGENT="codex", AGENT_CHANNEL_SUPERVISOR="claude-314", FAKE_SUPERVISOR="claude-271"))
         wrapper = (self.work / "pi-channel-impl-contract.ts").read_text()
         self.assertIn(json.dumps("claude-314"), wrapper)
         self.assertIn("宛先 claude-314", (self.work / "herdr-contract.log").read_text())
 
+    def test_pi_missing_supervisor_stops_before_worktree_or_tab_creation(self):
+        result = self.run_script(IMPL_AGENT="pi", REV_AGENT="codex")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(self.marker(), "failed")
+        self.assertIn("宛先の Claude が見つからない。AGENT_CHANNEL_SUPERVISOR=claude-<PID> を付けて起動し直す", result.stderr)
+        self.assertIn("channel supervisor の出力が空", self.log_text())
+        self.assertIn("channel supervisor の出力が空", result.stderr)
+        self.assertFalse(self.w.exists())
+        self.assertEqual(self.state()["serial"], 0)
+        self.assertEqual(self.state()["calls"], [])
+
+    def test_pi_failed_supervisor_command_stops_before_worktree_or_tab_creation(self):
+        result = self.run_script(IMPL_AGENT="pi", REV_AGENT="codex", FAKE_SUPERVISOR_FAIL="1")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(self.marker(), "failed")
+        self.assertIn("宛先の Claude が見つからない。AGENT_CHANNEL_SUPERVISOR=claude-<PID> を付けて起動し直す", result.stderr)
+        self.assertIn("channel supervisor が失敗", self.log_text())
+        self.assertIn("channel supervisor が失敗", result.stderr)
+        self.assertFalse(self.w.exists())
+        self.assertEqual(self.state()["serial"], 0)
+        self.assertEqual(self.state()["calls"], [])
+
     def test_old_pi_finish_before_snapshot_does_not_advance(self):
         self.channel_log.write_text(json.dumps({"id": "old", "kind": "finish", "from": "impl-contract", "body": "stale"}) + "\n")
-        result = self.run_script(mode="old-finish", IMPL_AGENT="pi", REV_AGENT="codex")
+        result = self.run_script(mode="old-finish", IMPL_AGENT="pi", REV_AGENT="codex", FAKE_SUPERVISOR="claude-271")
         self.assertEqual(result.returncode, 1)
         self.assertEqual(self.marker(), "failed")
         self.assertEqual(len(self.state()["prompts"]), 3)
@@ -376,7 +402,7 @@ class HerdrContractTest(unittest.TestCase):
         self.assertFalse(self.channel_log.exists())
 
     def test_pi_has_no_astra_restriction(self):
-        self.assert_success(self.run_script(IMPL_AGENT="pi", REV_AGENT="codex", PI_MODEL="gpt-6-astra"))
+        self.assert_success(self.run_script(IMPL_AGENT="pi", REV_AGENT="codex", PI_MODEL="gpt-6-astra", FAKE_SUPERVISOR="claude-271"))
         self.assertIn("gpt-6-astra", self.starts()[0])
         self.assertIn("pi", self.starts()[0])
         self.assertIn("gpt-6.1-sol", self.starts()[1])

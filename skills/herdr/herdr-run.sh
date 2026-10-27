@@ -214,6 +214,31 @@ print(next((a["agent_status"] for a in agents if a.get("name")==sys.argv[1]), "g
   fi
 }
 
+# Pi のチャンネル完了判定を使う場合、親への宛先は作業場所やタブを作る前に確定する。
+pi_channel_enabled() {
+  [ "${PI_CHANNEL:-1}" != 0 ] &&
+    [ -f "${PI_CHANNEL_EXT:-$SKILL_DIR/channel/pi/extension.ts}" ] &&
+    [ -f "${CHANNEL_BIN:-$SKILL_DIR/channel/bin/channel}" ]
+}
+resolve_pi_supervisor() {
+  local channel_bin=${CHANNEL_BIN:-$SKILL_DIR/channel/bin/channel}
+  local supervisor=${AGENT_CHANNEL_SUPERVISOR:-} reason detail
+  reason='宛先の Claude が見つからない。AGENT_CHANNEL_SUPERVISOR=claude-<PID> を付けて起動し直す'
+  if [ -z "$supervisor" ]; then
+    if supervisor=$("$channel_bin" supervisor 2>/dev/null); then
+      [ -n "$supervisor" ] || detail='channel supervisor の出力が空'
+    else
+      detail='channel supervisor が失敗'
+    fi
+    if [ -n "${detail:-}" ]; then
+      log "$reason（$detail）"
+      echo "$reason（$detail）" >&2
+      return 1
+    fi
+  fi
+  AGENT_CHANNEL_SUPERVISOR=$supervisor
+}
+
 # エージェント（種類 $kind）を立ち上げ、依頼を送り、印またはチャンネルの完了を見届ける。
 # 依頼は 1 行にする。長い指示はファイルに書いて「読んで従う」と頼む。
 # herdr の状態（idle・done）は仕事の終わりを意味しない（途中で質問して止まっても done になる）ので、終わりは印またはチャンネルで判定する。
@@ -226,8 +251,12 @@ run_agent() {
     channel_log=$(python3 -c 'import os,sys; print(os.path.abspath(os.path.expanduser(sys.argv[1])))' "$channel_log")
     if after_id=$("$channel_bin" --log "$channel_log" last-id 2>/dev/null); then
       use_channel=1
-      if [ -z "$supervisor" ]; then supervisor=$("$channel_bin" supervisor 2>/dev/null) || supervisor=claude; fi
-      [ -n "$supervisor" ] || supervisor=claude
+      if [ -z "$supervisor" ]; then
+        local reason='宛先の Claude が見つからない。AGENT_CHANNEL_SUPERVISOR=claude-<PID> を付けて起動し直す'
+        log "$agent: $reason（宛先が未解決）"
+        echo "$reason（宛先が未解決）" >&2
+        return 1
+      fi
       log "$agent: 完了判定=channel_finish（宛先 $supervisor、$channel_log、基準 ${after_id:-空}）"
     else
       log "$agent: channel last-id に失敗したため完了判定=印"
@@ -296,6 +325,10 @@ main() {
   done
   git check-ref-format "$BRANCH" >/dev/null || { log "不正なブランチ名: $BRANCH"; return 1; }
   rm -f "$WORK/reviewed-$name"
+  # Pi のチャンネルを使う構成では、宛先の解決に失敗したら worktree/tab の作成前に止める。
+  if { [ "$IMPL_AGENT" = pi ] || [ "$REV_AGENT" = pi ]; } && pi_channel_enabled; then
+    if ! resolve_pi_supervisor; then echo failed > "$WORK/reviewed-$name"; return 1; fi
+  fi
   # RESUME=newtab: 写しは残っているがタブが無い（PC や herdr の再起動のあと）。タブだけ作り直す
   if [ -n "${RESUME:-}" ]; then
     [ -d "$W" ] || { log "再開する写しがない"; echo failed > "$WORK/reviewed-$name"; return 1; }
