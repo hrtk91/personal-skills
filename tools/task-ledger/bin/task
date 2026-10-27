@@ -1,0 +1,2 @@
+#!/bin/sh
+exec node --no-warnings=ExperimentalWarning "$(dirname "$(readlink -f "$0")")/../cli.ts" "$@"
