@@ -12,6 +12,8 @@
 # プロジェクトごとの設定は $REPO/.herdr.env（bash。SKILL.md の「設定」を参照）。
 #   herdr-run.sh --cleanup <名> [--discard]   使い終わった写し・ブランチ・タブを片付ける（--discard は取り込んでいない仕事を捨てる）
 #   herdr-run.sh --stale                      24 時間より古く、台本の動いていない写しを並べる
+# TASK_ID=<台帳の id> を付けると、台帳（tools/task-ledger）に始まりと終わりを書く。そのときは作業役どうしのレビューを
+#   飛ばし、実装をブランチにコミットして「確かめ中」にする（確かめとレビューはハーネスの次の段がやる）。
 set -uo pipefail
 mode=run discard=0
 case ${1:-} in
@@ -52,6 +54,7 @@ d=json.load(sys.stdin)
 for k in sys.argv[1].split("."): d=d[k]
 print(d)' "$1"; }
 for f in "$SKILL_DIR"/agents/*.sh; do . "$f"; done   # codex_start・codex_send・pi_start・pi_send ...
+TASK_BIN=${TASK_BIN:-$SKILL_DIR/../../tools/task-ledger/bin/task}
 
 # 写しに入れる文書（本体の作業ツリーにある今の版。未コミットでもよい）
 docs() { for f in $REQ $RULES $CONTEXT_FILES $CHECKLIST $DESIGN_RULES; do [ -f "$REPO/$f" ] && echo "$f"; done; }
@@ -316,6 +319,32 @@ run_agent() {
   log "$agent: 3 回目標を渡しても終わらなかった"; return 1
 }
 
+# worktree ならブランチにコミットする（作者は実装のエージェント）。取り込みは Claude かハーネスがやる。そのあとタブを閉じる
+commit_and_close() {
+  if [ -z "${BASE:-}" ]; then
+    if ! git -C "$W" diff --cached --quiet; then
+      git -C "$W" -c "user.name=$COMMIT_NAME" -c "user.email=$COMMIT_EMAIL" commit -q -m "$1" || {
+        echo failed > "$WORK/reviewed-$name"; log "コミットできなかった"; return 1;
+      }
+      log "ブランチ $BRANCH にコミットした（作者 $COMMIT_NAME <$COMMIT_EMAIL>）"
+    fi
+  fi
+  herdr tab close "$tab_id" >/dev/null 2>&1 || { echo failed > "$WORK/reviewed-$name"; log "タブを閉じられなかった"; return 1; }
+}
+
+# 台帳の仕事の終わりを書き、次の仕事を出させる
+ledger_end() {
+  local outcome commit=
+  outcome=$(cat "$WORK/reviewed-$name" 2>/dev/null) || outcome=failed
+  case $outcome in implemented|stopped|blocked|failed) ;; *) outcome=failed ;; esac
+  [ "$outcome" = implemented ] && [ -z "${BASE:-}" ] && commit=$(git -C "$W" rev-parse HEAD 2>/dev/null)
+  "$TASK_BIN" ended "$TASK_ID" "$outcome" ${commit:+--commit "$commit"} --log "$L" >> "$L" 2>&1 ||
+    log "台帳に終わり（$outcome）を書けなかった"
+  log "台帳の $TASK_ID: $outcome"
+  # 終わりがきっかけで 1 回まわす（待っている次の仕事を出す）。この台本の終わりを待たせない
+  [ "${TASK_RUN_AFTER:-1}" = 0 ] || setsid "$TASK_BIN" run >> "$L" 2>&1 < /dev/null &
+}
+
 main() {
   local short rules_read design_instruction checklist_line RT rc
   for kind in "$IMPL_AGENT" "$REV_AGENT"; do
@@ -325,6 +354,13 @@ main() {
   done
   git check-ref-format "$BRANCH" >/dev/null || { log "不正なブランチ名: $BRANCH"; return 1; }
   rm -f "$WORK/reviewed-$name"
+  if [ -n "${TASK_ID:-}" ]; then
+    # 台帳に無い・出せない状態の仕事は始めない（台帳が「走行中」にした後でないと、終わりを書けない）
+    "$TASK_BIN" started "$TASK_ID" --agent "impl-$(echo "$name" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-' | cut -c1-24)" --runner $$ >> "$L" 2>&1 || {
+      log "台帳の $TASK_ID を走行中にできなかったので始めない"; ledger_refused=1; return 1;
+    }
+    log "台帳の $TASK_ID を走行中にした"
+  fi
   # Pi のチャンネルを使う構成では、宛先の解決に失敗したら worktree/tab の作成前に止める。
   if { [ "$IMPL_AGENT" = pi ] || [ "$REV_AGENT" = pi ]; } && pi_channel_enabled; then
     if ! resolve_pi_supervisor; then echo failed > "$WORK/reviewed-$name"; return 1; fi
@@ -361,6 +397,11 @@ if grep -q '^結論: *STOP' "$W/$DESIGN" 2>/dev/null; then
   echo stopped > "$WORK/reviewed-$name"; log "設計の下見で STOP: $W/$DESIGN を読んで判断する"; return 0
 fi
 herdr pane close "$p_impl" >/dev/null 2>&1   # 使い終わったペインは閉じる
+# 台帳の仕事は、作業役どうしのレビューをしない（確かめと Opus のレビューはハーネスがやる。10/27「レビューはあなたやるようにしてね」）
+if [ -n "${TASK_ID:-}" ]; then
+  commit_and_close "$name（$IMPL_AGENT の実装。台帳 $TASK_ID）" || return 1
+  echo implemented > "$WORK/reviewed-$name"; log "実装まで終わった（レビューはハーネスの次の段）"; return 0
+fi
 
 # 4. レビュー（別のエージェント）。指示は写しの外のファイルに置く（パッチに入れない）
 RT=$WORK/review-task-$name.md
@@ -382,16 +423,7 @@ if [ "$rc" != 0 ]; then
   log "レビューで止まった"; return "$rc"
 fi
 make_patch || { echo failed > "$WORK/reviewed-$name"; log "レビューのパッチを作れなかった"; return 1; }
-# worktree ならブランチにコミットする（作者は実装のエージェント）。Claude は最終チェックのあと本体へマージする
-if [ -z "${BASE:-}" ]; then
-  if ! git -C "$W" diff --cached --quiet; then
-    git -C "$W" -c "user.name=$COMMIT_NAME" -c "user.email=$COMMIT_EMAIL" commit -q -m "$name（$IMPL_AGENT の実装と$REV_AGENT のレビュー）" || {
-      echo failed > "$WORK/reviewed-$name"; log "コミットできなかった"; return 1;
-    }
-    log "ブランチ $BRANCH にコミットした（作者 $COMMIT_NAME <$COMMIT_EMAIL>）"
-  fi
-fi
-herdr tab close "$tab_id" >/dev/null 2>&1 || { echo failed > "$WORK/reviewed-$name"; log "タブを閉じられなかった"; return 1; }
+commit_and_close "$name（$IMPL_AGENT の実装と$REV_AGENT のレビュー）" || return 1
 echo reviewed > "$WORK/reviewed-$name"
 log "レビューまで終わった"
 }
@@ -400,4 +432,7 @@ case $mode in
   cleanup) cleanup_task; exit ;;
   stale) stale_tasks; exit ;;
 esac
-main "$@"; exit
+ledger_refused=0
+main "$@"; rc=$?
+[ -z "${TASK_ID:-}" ] || [ "$ledger_refused" = 1 ] || ledger_end
+exit "$rc"

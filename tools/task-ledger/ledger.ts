@@ -19,7 +19,7 @@ export type Task = {
   id: string; repo: string; title: string; why: string; brief: string | null;
   check: string | null; after: string[]; files: string[]; kind: Kind; deploy: boolean;
   status: Status; note: string | null; attempts: number; agent: string | null; commit: string | null;
-  created_at: string; updated_at: string;
+  runner: number | null; created_at: string; updated_at: string;
 };
 export type NewTask = {
   repo: string; title: string; why: string; brief?: string | null; check?: string | null;
@@ -45,12 +45,15 @@ export class Ledger {
         id TEXT PRIMARY KEY, repo TEXT NOT NULL, title TEXT NOT NULL, why TEXT NOT NULL, brief TEXT,
         "check" TEXT, after_json TEXT NOT NULL DEFAULT '[]', files_json TEXT NOT NULL DEFAULT '[]',
         kind TEXT NOT NULL DEFAULT '処理', deploy INTEGER NOT NULL DEFAULT 0,
-        status TEXT NOT NULL, note TEXT, attempts INTEGER NOT NULL DEFAULT 0, agent TEXT, "commit" TEXT,
+        status TEXT NOT NULL, note TEXT, attempts INTEGER NOT NULL DEFAULT 0, agent TEXT, "commit" TEXT, runner INTEGER,
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL) STRICT;
       CREATE TABLE IF NOT EXISTS events(
         task_id TEXT NOT NULL REFERENCES tasks(id), at TEXT NOT NULL,
         from_status TEXT, to_status TEXT NOT NULL, note TEXT) STRICT;
       CREATE INDEX IF NOT EXISTS events_task ON events(task_id, at);`);
+    // Ledgers made before the harness started tasks itself have no runner column.
+    const columns = this.db.prepare('PRAGMA table_info(tasks)').all() as { name: string }[];
+    if (!columns.some((column) => column.name === 'runner')) this.db.exec('ALTER TABLE tasks ADD COLUMN runner INTEGER');
   }
 
   close(): void { this.db.close(); }
@@ -93,7 +96,7 @@ export class Ledger {
   }
 
   /** Changes a task's status, records it, and pushes tasks that depend on a dead end to 判断待ち. */
-  setStatus(id: string, status: Status, note: string | null = null, fields: { agent?: string | null; commit?: string | null; attempts?: number } = {}): Task {
+  setStatus(id: string, status: Status, note: string | null = null, fields: { agent?: string | null; commit?: string | null; attempts?: number; runner?: number | null } = {}): Task {
     if (!STATUSES.includes(status)) throw new Error(`status が不正: ${status}`);
     const task = this.get(id);
     if (!task) throw new Error(`台帳にありません: ${id}`);
@@ -101,12 +104,19 @@ export class Ledger {
     const at = this.now().toISOString();
     this.db.exec('BEGIN IMMEDIATE');
     try {
-      this.db.prepare(`UPDATE tasks SET status=?, note=?, agent=COALESCE(?,agent), "commit"=COALESCE(?,"commit"), attempts=COALESCE(?,attempts), updated_at=? WHERE id=?`)
-        .run(status, note, fields.agent ?? null, fields.commit ?? null, fields.attempts ?? null, at, id);
+      this.db.prepare(`UPDATE tasks SET status=?, note=?, agent=COALESCE(?,agent), "commit"=COALESCE(?,"commit"), attempts=COALESCE(?,attempts), runner=COALESCE(?,runner), updated_at=? WHERE id=?`)
+        .run(status, note, fields.agent ?? null, fields.commit ?? null, fields.attempts ?? null, fields.runner ?? null, at, id);
       this.event(id, task.status, status, note, at);
       if (status === 'やめ' || status === '判断待ち') this.blockDependents(id, at);
       this.db.exec('COMMIT');
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
+    return this.get(id)!;
+  }
+
+  /** Records who is doing a running task, without a status change. */
+  setRunner(id: string, fields: { agent?: string | null; runner?: number | null }): Task {
+    this.db.prepare('UPDATE tasks SET agent=COALESCE(?,agent), runner=COALESCE(?,runner), updated_at=? WHERE id=?')
+      .run(fields.agent ?? null, fields.runner ?? null, this.now().toISOString(), id);
     return this.get(id)!;
   }
 
@@ -134,6 +144,24 @@ export class Ledger {
       picked.push(task);
     }
     return picked;
+  }
+
+  /**
+   * Takes the oldest task that may start now and marks it 走行中, inside one write transaction so that two
+   * harness passes running at the same moment never start the same task or two tasks on the same files.
+   * `skip` leaves a ready task where it is (for example, look-and-feel work that Claude does by hand).
+   */
+  claimNext(skip: (task: Task) => boolean = () => false, note: string | null = null): Task | null {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const task = this.ready().find((candidate) => !skip(candidate));
+      if (!task) { this.db.exec('COMMIT'); return null; }
+      const at = this.now().toISOString();
+      this.db.prepare(`UPDATE tasks SET status='走行中', note=?, attempts=attempts+1, updated_at=? WHERE id=?`).run(note, at, task.id);
+      this.event(task.id, task.status, '走行中', note, at);
+      this.db.exec('COMMIT');
+      return this.get(task.id)!;
+    } catch (error) { this.db.exec('ROLLBACK'); throw error; }
   }
 
   private blockDependents(id: string, at: string): void {
@@ -176,6 +204,6 @@ function toTask(row: Record<string, unknown>): Task {
     kind: String(row.kind) as Kind, deploy: row.deploy === 1, status: String(row.status) as Status,
     note: row.note === null ? null : String(row.note), attempts: Number(row.attempts),
     agent: row.agent === null ? null : String(row.agent), commit: row.commit === null ? null : String(row.commit),
-    created_at: String(row.created_at), updated_at: String(row.updated_at),
+    runner: row.runner === null ? null : Number(row.runner), created_at: String(row.created_at), updated_at: String(row.updated_at),
   };
 }

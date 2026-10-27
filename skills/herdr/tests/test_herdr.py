@@ -12,6 +12,7 @@ import unittest
 
 SKILL = Path(__file__).resolve().parents[1]
 GIT = shutil.which("git")
+TASK_BIN = SKILL.parents[1] / "tools/task-ledger/bin/task"
 
 FAKE_HERDR = r'''#!/usr/bin/env python3
 import json, os, re, sys
@@ -406,6 +407,46 @@ class HerdrContractTest(unittest.TestCase):
         self.assertIn("gpt-6-astra", self.starts()[0])
         self.assertIn("pi", self.starts()[0])
         self.assertIn("gpt-6.1-sol", self.starts()[1])
+
+    def ledger(self, *args):
+        env = self.env | {"TASK_LEDGER_DB": str(self.root / "ledger.sqlite")}
+        return subprocess.run([str(TASK_BIN), *args], env=env, text=True, capture_output=True, timeout=30)
+
+    def ledger_task(self):
+        added = self.ledger("add", "--repo", str(self.repo), "--title", "契約", "--why", "test", "--brief", f"handoff/{self.name}.md")
+        self.assertEqual(added.returncode, 0, added.stderr)
+        return added.stdout.split("\t")[0]
+
+    def ledger_show(self, task_id):
+        return json.loads(self.ledger("show", task_id).stdout.split("\n}")[0] + "}")
+
+    def test_ledger_task_skips_peer_review_commits_and_waits_for_checks(self):
+        task_id = self.ledger_task()
+        result = self.run_script(TASK_ID=task_id, TASK_LEDGER_DB=str(self.root / "ledger.sqlite"), TASK_RUN_AFTER="0")
+        self.assertEqual(result.returncode, 0, (self.work / "herdr-contract.log").read_text())
+        self.assertEqual(self.marker(), "implemented")
+        self.assertEqual(len(self.starts()), 1)
+        self.assertFalse(any(self.state()["tabs"].values()))
+        task = self.ledger_show(task_id)
+        self.assertEqual(task["status"], "確かめ中")
+        self.assertEqual(task["agent"], "impl-contract")
+        self.assertEqual(task["commit"], self.git("rev-parse", "HEAD", cwd=self.w).strip())
+        self.assertNotEqual(task["commit"], self.initial_head)
+
+    def test_ledger_task_stopped_by_design_waits_for_a_decision(self):
+        task_id = self.ledger_task()
+        result = self.run_script(mode="stop", TASK_ID=task_id, TASK_LEDGER_DB=str(self.root / "ledger.sqlite"), TASK_RUN_AFTER="0")
+        self.assertEqual(result.returncode, 0)
+        task = self.ledger_show(task_id)
+        self.assertEqual(task["status"], "判断待ち")
+        self.assertIn("STOP", task["note"])
+
+    def test_task_missing_from_ledger_is_refused_before_anything_starts(self):
+        result = self.run_script(TASK_ID="nothing-1", TASK_LEDGER_DB=str(self.root / "ledger.sqlite"))
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(self.w.exists())
+        self.assertEqual(self.starts(), [])
+        self.assertIn("走行中にできなかった", (self.work / "herdr-contract.log").read_text())
 
     def test_stop_does_not_start_review_or_close_tab(self):
         result = self.run_script(mode="stop")

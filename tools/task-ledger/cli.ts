@@ -5,6 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { isAbsolute, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { KINDS, Ledger, STATUSES, type Kind, type Status, type Task } from './ledger.ts';
+import { realDeps, runOnce, type RunDeps } from './run.ts';
 
 const USAGE = `使い方:
   task add --title <題> --why <ユーザーの言葉と日付> [--brief <依頼文のパス>] [--check <確かめのコマンド>]
@@ -16,7 +17,19 @@ const USAGE = `使い方:
   task hold <id> <理由といつ見直すか>
   task drop <id> <理由>
   task answer <id> <答え> [--to 待ち|やめ|保留]          判断待ちに答える（既定は 待ち に戻す）
-  task export [--repo <パス>]                           ROADMAP 用の一覧（読む用の写し）`;
+  task export [--repo <パス>]                           ROADMAP 用の一覧（読む用の写し）
+  task run                                              1 回まわす（消えた台本を見つけ、次の仕事を 1 つ出す）
+ハーネスの中で使うもの（herdr-run.sh が呼ぶ）:
+  task started <id> --agent <名> --runner <PID>         台本が動き始めた
+  task ended <id> implemented|stopped|blocked|failed [--commit <sha>] [--log <パス>]`;
+
+// What herdr-run.sh's end marker means for the ledger.
+const ENDED: Record<string, { status: Status; note: string }> = {
+  implemented: { status: '確かめ中', note: '作業役が終わった' },
+  stopped: { status: '判断待ち', note: '作業役が設計の下見で STOP と書いた' },
+  blocked: { status: '判断待ち', note: '作業役が確認の画面で止まった' },
+  failed: { status: '判断待ち', note: '作業役を回す台本が失敗した' },
+};
 
 function repoRoot(path: string): string {
   try { return execFileSync('git', ['-C', path, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); }
@@ -34,12 +47,13 @@ function line(task: Task): string {
   return `${task.id}\t${task.status}\t${task.title}${extra ? `\t(${extra})` : ''}`;
 }
 
-export function main(argv: string[], out: (text: string) => void = console.log): number {
+export function main(argv: string[], out: (text: string) => void = console.log, deps: RunDeps = realDeps): number {
   const [command, ...rest] = argv;
   const { values, positionals } = parseArgs({ args: rest, allowPositionals: true, options: {
     title: { type: 'string' }, why: { type: 'string' }, brief: { type: 'string' }, check: { type: 'string' },
     after: { type: 'string' }, files: { type: 'string' }, kind: { type: 'string' }, deploy: { type: 'boolean' },
     repo: { type: 'string' }, all: { type: 'boolean' }, status: { type: 'string' }, to: { type: 'string' },
+    agent: { type: 'string' }, runner: { type: 'string' }, commit: { type: 'string' }, log: { type: 'string' },
   } });
   const ledger = new Ledger();
   try {
@@ -106,6 +120,30 @@ export function main(argv: string[], out: (text: string) => void = console.log):
           for (const task of group) out(`- ${task.title}（${task.id}）${task.note ? ` — ${task.note}` : ''}`);
           out('');
         }
+        return 0;
+      }
+      case 'run':
+        for (const said of runOnce(ledger, deps)) out(said);
+        return 0;
+      case 'started': {
+        const task = ledger.get(positionals[0] ?? '');
+        if (!task) throw new Error(`台帳にありません: ${positionals[0] ?? ''}`);
+        const runner = values.runner ? Number(values.runner) : null;
+        if (task.status === '待ち') ledger.setStatus(task.id, '走行中', '手で出した', { agent: values.agent ?? null, runner, attempts: task.attempts + 1 });
+        else if (task.status === '走行中') ledger.setRunner(task.id, { agent: values.agent ?? null, runner });
+        else throw new Error(`${task.id} は ${task.status} なので出せません（待ち・走行中だけ）`);
+        out(line(ledger.get(task.id)!));
+        return 0;
+      }
+      case 'ended': {
+        const [id, outcome] = positionals;
+        const task = ledger.get(id ?? '');
+        if (!task) throw new Error(`台帳にありません: ${id ?? ''}`);
+        const end = ENDED[outcome ?? ''];
+        if (!end) throw new Error(`終わり方は ${Object.keys(ENDED).join('・')}`);
+        if (task.status !== '走行中') throw new Error(`${task.id} は ${task.status} です（走行中のはず）`);
+        const note = values.log ? `${end.note}。ログ: ${values.log}` : end.note;
+        out(line(ledger.setStatus(task.id, end.status, note, { commit: values.commit ?? null })));
         return 0;
       }
       default:
