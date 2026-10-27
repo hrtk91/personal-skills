@@ -1,4 +1,4 @@
-import { append, follow, hasFinished, hasStopped, lastId, logPath, type Row } from "../engine/channel.ts";
+import { append, follow, hasFinished, hasStopped, lastId, logPath, supersededBy, type Row } from "../engine/channel.ts";
 
 const finishDescription = "頼まれた仕事が全部終わったときに、最後に 1 回だけ呼ぶ。summary に何をしたかを短く、facts に確かめた事実（claim: 何が正しいか、how: どう確かめたか）を書く。確かめていないことは facts に入れない。呼んでも受け入れが決まるわけではなく、レビューが続く。";
 const postDescription = "途中の知らせを送る。詰まった理由、大きな方針の変更、時間がかかっている作業など、監督に知っておいてほしいときに使う。返事は待たずに仕事を続ける。";
@@ -44,20 +44,39 @@ export function createChannelExtension(config: { log: string; name: string; supe
     },
   });
 
+  // 知らせは Pi の followUp の列に入れると取り消せないので、番の間はここで持っておき、番が終わったときに 1 通にまとめて渡す。
+  // 持っている間に supersedes で取り消された知らせは渡さない（2026-10-26: 取り消しが番の後に届き、作った物を消しにかかった）
+  let pending: Row[] = [];
+  let busy = false;
+  const line = (row: Row) => `【連絡チャンネル】${row.from} から（${row.kind}）:\n${row.body}`;
+  const flush = () => {
+    if (busy || !pending.length) return;
+    const rows = pending; pending = [];
+    const content = rows.length === 1 ? line(rows[0]!) : `（番の間に ${rows.length} 通届いた。届いた順に並べる。食い違うときは後の知らせに従う）\n\n${rows.map(line).join("\n\n")}`;
+    busy = true;
+    void pi.sendMessage({ customType: "agent-channel", content, display: true, details: rows.length === 1 ? rows[0] : rows }, { triggerTurn: true, deliverAs: "followUp" })
+      .catch(() => { busy = false; pending = [...rows, ...pending]; });
+  };
   pi.on("session_start", () => {
     if (!name) return;
     cursor = lastId(log) ?? undefined;
     stopFollowing?.();
     stopFollowing = follow(log, { to: name }, (row) => {
       if (row.from === name) return;
-      void pi.sendMessage({ customType: "agent-channel", content: `【連絡チャンネル】${row.from} から（${row.kind}）:\n${row.body}`, display: true, details: row }, { triggerTurn: true, deliverAs: "followUp" });
+      const cancelled = new Set(supersededBy(row));
+      if (cancelled.size) pending = pending.filter((held) => !cancelled.has(held.id));
+      pending.push(row);
+      flush();
     }, { after: cursor });
   });
   pi.on("session_shutdown", () => { stopFollowing?.(); stopFollowing = undefined; });
   pi.on("before_agent_start", (event: { messageType: string }) => {
+    busy = true;
     if (event.messageType === "user") { workStart = lastId(log); workActive = true; }
   });
   pi.on("agent_settled", (event: { aborted: boolean }) => {
+    busy = false;
+    setTimeout(flush, 0);
     if (!name || !workActive || hasFinished(log, name, workStart) || hasStopped(log, name, workStart)) return;
     append(log, { kind: "stopped", from: name, to: supervisor, body: "finish を呼ばずに止まりました", fields: { aborted: event.aborted, started_after: workStart } });
     workActive = false;

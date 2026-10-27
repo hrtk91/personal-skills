@@ -80,3 +80,20 @@ test('real CLI processes wait/finish, timeout, and concurrent append integrity',
     const result = read(log); assert.equal(result.skipped, 0); assert.equal(result.rows.length, 401);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('openSays leaves out superseded says', async () => {
+  const { mkdtempSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { append, openSays } = await import('../channel.ts');
+  const dir = mkdtempSync(join(tmpdir(), 'channel-open-'));
+  try {
+    const log = join(dir, 'c.jsonl');
+    const a = append(log, { kind: 'say', from: 'claude', to: 'impl-a', body: 'A' });
+    append(log, { kind: 'say', from: 'claude', to: 'impl-b', body: 'B' });
+    append(log, { kind: 'say', from: 'claude', to: 'impl-a', body: 'A を取り消す', fields: { supersedes: [a.id] } });
+    const { default: assert } = await import('node:assert/strict');
+    assert.deepEqual(openSays(log).map((r) => r.body), ['B', 'A を取り消す']);
+    assert.deepEqual(openSays(log, 'impl-b').map((r) => r.body), ['B']);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

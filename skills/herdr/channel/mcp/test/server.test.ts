@@ -63,3 +63,22 @@ test('real stdio MCP routes only its own and wildcard destinations, excluding ot
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('channel_say supersedes only known says to the same worker, and channel_read open lists what is still asked', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'channel-mcp-open-'));
+  const log = join(dir, 'events.jsonl');
+  const transport = new StdioClientTransport({ command: process.execPath, args: [resolve('channel/mcp/server.ts')], env: { ...process.env, AGENT_CHANNEL: log, AGENT_CHANNEL_NAME: 'claude-321' } });
+  const client = new Client({ name: 'open-test', version: '1.0.0' });
+  try {
+    await client.connect(transport);
+    const first = await client.callTool({ name: 'channel_say', arguments: { to: 'impl-a', text: 'ログも作って' } });
+    await client.callTool({ name: 'channel_say', arguments: { to: 'impl-b', text: '別の頼み' } });
+    await assert.rejects(client.callTool({ name: 'channel_say', arguments: { to: 'impl-b', text: 'x', supersedes: [first.content?.[0]?.text] } }), /impl-b 宛ての知らせに無い/);
+    await client.callTool({ name: 'channel_say', arguments: { to: 'impl-a', text: '作らないで', supersedes: [first.content?.[0]?.text] } });
+    const open = await client.callTool({ name: 'channel_read', arguments: { open: true } });
+    assert.deepEqual(JSON.parse(open.content?.[0]?.text ?? '[]').map((row: any) => `${row.to}:${row.body}`), ['impl-b:別の頼み', 'impl-a:作らないで']);
+  } finally {
+    await client.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

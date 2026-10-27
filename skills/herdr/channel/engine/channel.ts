@@ -139,6 +139,19 @@ export function read(log: string, filter: Filter = {}): ReadResult {
   return { rows: afterRows.filter((row) => matches(row, filter)), skipped };
 }
 
+// 知らせは fields.supersedes（id の配列）で、前の知らせを取り消せる。取り消された知らせは、まだ届けていなければ届けない
+export function supersededBy(row: Row): string[] {
+  const ids = row.fields.supersedes;
+  return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string') : [];
+}
+
+// まだ効いている頼み: 取り消されていない say。to を渡すとその宛先だけ
+export function openSays(log: string, to?: string): Row[] {
+  const rows = read(log).rows;
+  const cancelled = new Set(rows.flatMap(supersededBy));
+  return rows.filter((row) => row.kind === 'say' && !cancelled.has(row.id) && (!to || row.to === to));
+}
+
 export function lastId(log: string): string | null { return read(log).rows.at(-1)?.id ?? null; }
 
 export async function wait(log: string, filter: Filter = {}, options: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<Row | null> {

@@ -57,6 +57,10 @@ test('only messages addressed to self or wildcard are delivered, not own rows', 
     append(log, { kind: 'say', from: 'other', to: '*', body: 'broadcast' });
     append(log, { kind: 'say', from: 'other', to: 'someone', body: 'not for me' });
     await new Promise((resolve) => setTimeout(resolve, 600));
+    // 1 通目で番が始まるので、2 通目は番が終わってから届く
+    assert.equal(messages.length, 1);
+    handlers.get('agent_settled')?.[0]?.({ aborted: false });
+    await new Promise((resolve) => setTimeout(resolve, 20));
     assert.deepEqual(messages.map((args) => args[0]), [
       { customType: 'agent-channel', content: '【連絡チャンネル】claude から（say）:\nprivate', display: true, details: read(log).rows[1] },
       { customType: 'agent-channel', content: '【連絡チャンネル】other から（say）:\nbroadcast', display: true, details: read(log).rows[2] },
@@ -111,4 +115,34 @@ test('default export resolves environment when invoked, not when module is loade
     if (oldSupervisor === undefined) delete process.env.AGENT_CHANNEL_SUPERVISOR; else process.env.AGENT_CHANNEL_SUPERVISOR = oldSupervisor;
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('messages that arrive during a turn are held, superseded ones are dropped, and the rest arrive as one message', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'channel-pi-'));
+  try {
+    const log = join(dir, 'records.jsonl');
+    const { handlers, messages } = setup(log);
+    handlers.get('session_start')?.[0]?.({});
+    handlers.get('before_agent_start')?.[0]?.({ messageType: 'user' });
+    const { append } = await import('../../engine/channel.ts');
+    const ask = append(log, { kind: 'say', from: 'claude', to: 'worker', body: 'ログも作って' });
+    append(log, { kind: 'say', from: 'claude', to: 'worker', body: 'やっぱり作らないで', fields: { supersedes: [ask.id] } });
+    append(log, { kind: 'say', from: 'claude', to: 'worker', body: '急いで' });
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    assert.equal(messages.length, 0);
+    handlers.get('agent_settled')?.[0]?.({ aborted: false });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(messages.length, 1);
+    const content = messages[0][0].content as string;
+    assert.doesNotMatch(content, /ログも作って/);
+    assert.match(content, /番の間に 2 通届いた[\s\S]*やっぱり作らないで[\s\S]*急いで/);
+    // 渡した後は次の番が終わるまで、また持っておく
+    append(log, { kind: 'say', from: 'claude', to: 'worker', body: '次' });
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    assert.equal(messages.length, 1);
+    handlers.get('agent_settled')?.[0]?.({ aborted: false });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(messages.length, 2);
+    handlers.get('session_shutdown')?.[0]?.({});
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

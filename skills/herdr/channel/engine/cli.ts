@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { append, lastId, logPath, read, supervisorName, wait as waitFor, type Filter, type Kind } from './channel.ts';
+import { append, lastId, logPath, openSays, read, supervisorName, wait as waitFor, type Filter, type Kind } from './channel.ts';
 
 function usage(message: string): never { console.error(message); process.exitCode = 2; throw new Error('usage'); }
 function args(argv: string[]): { positionals: string[]; options: Map<string, string[]>; flags: Set<string> } {
@@ -37,7 +37,8 @@ function run(): void {
       const split = f.indexOf('::'); if (split < 0) usage('--fact は「何が正しいか::どう確かめたか」形式です');
       return { claim: f.slice(0, split), how: f.slice(split + 2) };
     });
-    const row = append(log, { kind: command, from, ...(to ? { to } : {}), body, ...(command === 'finish' ? { facts } : {}) });
+    const supersedes = parsed.options.get('--supersedes') ?? [];
+    const row = append(log, { kind: command, from, ...(to ? { to } : {}), body, ...(command === 'finish' ? { facts } : {}), ...(supersedes.length ? { fields: { supersedes } } : {}) });
     console.log(JSON.stringify(row)); return;
   }
   const filter: Filter = {
@@ -46,6 +47,10 @@ function run(): void {
     ...(get(parsed.options, '--to') ? { to: get(parsed.options, '--to') } : {}),
     ...(get(parsed.options, '--after') ? { after: get(parsed.options, '--after') } : {}),
   };
+  if (command === 'open') {
+    for (const row of openSays(log, get(parsed.options, '--to'))) console.log(JSON.stringify(row));
+    return;
+  }
   if (command === 'wait') {
     const seconds = get(parsed.options, '--timeout');
     const timeoutMs = seconds === undefined ? undefined : Number(seconds) * 1000;

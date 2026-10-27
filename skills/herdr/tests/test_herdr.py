@@ -542,6 +542,70 @@ class HerdrContractTest(unittest.TestCase):
         self.assertEqual(self.state()["agents"]["impl-contract"]["pane_id"], "unrelated-pane")
         self.assertEqual(len(self.state()["prompts"]), 0)
 
+    def log_text(self):
+        return (self.work / ("herdr-" + self.name + ".log")).read_text()
+
+    def test_preflight_copies_an_uncommitted_handoff_doc_the_request_names(self):
+        (self.repo / "handoff" / "other-notes.md").write_text("notes\n")
+        (self.repo / "handoff" / "contract.md").write_text("Read `handoff/other-notes.md` and write handoff/contract-report.md\n")
+        self.assert_success(self.run_script())
+        self.assertTrue((self.w / "handoff/other-notes.md").is_file())
+
+    def test_preflight_stops_when_a_named_handoff_doc_exists_nowhere(self):
+        (self.repo / "handoff" / "contract.md").write_text("Read handoff/missing-brief.md\n")
+        result = self.run_script()
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(self.marker(), "failed")
+        self.assertIn("handoff/missing-brief.md が本体にも写しにも無い", self.log_text())
+        self.assertEqual(len(self.state()["prompts"]), 0)
+
+    def test_preflight_stops_a_task_marked_waiting_in_state(self):
+        (self.repo / "STATE.md").write_text("- 待ち: contract は other の取り込み後に出す\n")
+        result = self.run_script()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("「待ち」がある", self.log_text())
+        self.assertEqual(len(self.state()["prompts"]), 0)
+        self.git("worktree", "remove", "--force", str(self.w)); self.git("branch", "-D", "herdr/contract")
+        self.assert_success(self.run_script(WAIT_OK="1"))
+
+    def cleanup(self, *flags):
+        return subprocess.run(["bash", str(SKILL / "herdr-run.sh"), "--cleanup", self.name, *flags], cwd=self.repo, env=self.env,
+            stdin=subprocess.DEVNULL, text=True, capture_output=True, timeout=30)
+
+    def test_cleanup_keeps_unmerged_work_unless_discarded_and_keeps_reports(self):
+        self.assert_success(self.run_script())
+        result = self.cleanup()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("取り込まれていない", result.stderr)
+        self.assertTrue(self.w.is_dir())
+        result = self.cleanup("--discard")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.w.exists())
+        self.assertNotIn("herdr/contract", self.git("branch", "--list", "herdr/*"))
+        self.assertTrue((self.repo / "handoff/contract-review.md").is_file())
+        self.assertIn("片付けた（捨てた）", self.log_text())
+
+    def test_cleanup_after_merge_needs_no_discard(self):
+        self.assert_success(self.run_script())
+        (self.repo / "handoff/contract.md").unlink()
+        try: self.git("-c", "user.name=F", "-c", "user.email=f@f", "merge", "-q", "--no-edit", "herdr/contract")
+        except subprocess.CalledProcessError as e: self.fail(e.output)
+        result = self.cleanup()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.w.exists())
+        self.assertIn("片付けた（取り込み済み）", self.log_text())
+
+    def test_preflight_stops_when_a_running_task_touches_the_same_file(self):
+        (self.repo / "handoff" / "other.md").write_text("Change src/app.tsx\n")
+        (self.repo / "handoff" / "contract.md").write_text("Also edit `src/app.tsx`\n")
+        other = subprocess.Popen(["bash", "-c", 'exec -a "bash herdr-run.sh other" /usr/bin/sleep 30'])
+        self.addCleanup(other.kill)
+        result = self.run_script()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("動いている仕事 other と触るファイルが重なる: src/app.tsx", self.log_text())
+        self.git("worktree", "remove", "--force", str(self.w)); self.git("branch", "-D", "herdr/contract")
+        self.assert_success(self.run_script(OVERLAP_OK="1"))
+
 
 if __name__ == "__main__":
     unittest.main()

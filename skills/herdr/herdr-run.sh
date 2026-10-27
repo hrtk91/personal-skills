@@ -10,8 +10,15 @@
 #   herdr-<名>.log       この台本の進み具合
 # herdr の中（HERDR_ENV=1）で、Claude のサンドボックスの外から動かす。
 # プロジェクトごとの設定は $REPO/.herdr.env（bash。SKILL.md の「設定」を参照）。
+#   herdr-run.sh --cleanup <名> [--discard]   使い終わった写し・ブランチ・タブを片付ける（--discard は取り込んでいない仕事を捨てる）
+#   herdr-run.sh --stale                      24 時間より古く、台本の動いていない写しを並べる
 set -uo pipefail
-[ "$#" = 1 ] || { echo "使い方: herdr-run.sh <依頼名>" >&2; exit 1; }
+mode=run discard=0
+case ${1:-} in
+  --cleanup) mode=cleanup; shift; [ "${2:-}" = --discard ] && { discard=1; set -- "$1"; } ;;
+  --stale) mode=stale; shift; set -- stale-list ;;
+esac
+[ "$#" = 1 ] || { echo "使い方: herdr-run.sh <依頼名> | --cleanup <名> [--discard] | --stale" >&2; exit 1; }
 name=$1
 [[ "$name" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ ]] || { echo "依頼名は英数字・_・-で指定してください" >&2; exit 1; }
 SKILL_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -20,7 +27,7 @@ REPO=${REPO:-$(git rev-parse --show-toplevel)}
 WORK_NAME=${WORK_NAME:-herdr-$(basename "$REPO")}
 WORK=${HERDR_WORK:-${CODEX_WORK:-$HOME/.cache/$WORK_NAME}}
 W=$WORK/wt/$name
-WS=${HERDR_WORKSPACE_ID:?herdr の中で動かしてください}
+if [ "$mode" = run ]; then WS=${HERDR_WORKSPACE_ID:?herdr の中で動かしてください}; fi
 HANDOFF=${HANDOFF:-handoff}
 RULES=${RULES-$HANDOFF/rules.md}                 # 共通の決まりの文書（空白区切り。無いものは飛ばす）
 CONTEXT_FILES=${CONTEXT_FILES-"CLAUDE.md AGENTS.md"}  # 写しにも入れて読ませる、プロジェクトの説明
@@ -78,6 +85,86 @@ fi
 # git の外で読ませたいもの（例 EXTRA="data/history.jsonl"）は、写しに読み取り専用で置く（パッチには入らない）
 for f in ${EXTRA:-}; do mkdir -p "$W/$(dirname "$f")" && cp -f "$REPO/$f" "$W/$f" && chmod a-w "$W/$f" || return 1; done
 log "写しを作った: $W（実装 $IMPL_AGENT・レビュー $REV_AGENT・追加: ${EXTRA:-なし}）"
+preflight || return 1
+}
+
+# 依頼文が名指すファイル（src/a.ts や handoff/b.md の形）
+named_files() { grep -oE '(^|[^A-Za-z0-9_./-])[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)+\.[A-Za-z0-9]+' "$1" 2>/dev/null | sed -E 's/^[^A-Za-z0-9_.-]//' | sort -u; }
+
+# 動いているほかの herdr の台本の依頼名
+running_tasks() {
+  local pid args
+  for pid in $(pgrep -f 'herdr-run\.sh [A-Za-z0-9]'); do
+    [ "$pid" = $$ ] && continue
+    args=$(tr '\0' ' ' < /proc/$pid/cmdline 2>/dev/null) || continue
+    [[ "$args" =~ herdr-run\.sh\ ([A-Za-z0-9][A-Za-z0-9_-]*)( |$) ]] && [ "${BASH_REMATCH[1]}" != "$name" ] && echo "${BASH_REMATCH[1]}"
+  done | sort -u
+}
+
+# 起動前の確かめ（2026-10-26: 写しに無い依頼文を指した・自分で「待ち」と書いた仕事を出した・同じファイルを触る仕事を重ねた）
+preflight() {
+  local f other theirs overlap
+  # 1. 依頼文が指す handoff の文書が写しに無ければ、本体からコピーする。どこにも無ければ止める（自分の出力の報告・下見・レビューは除く）
+  for f in $(named_files "$W/$REQ" | grep "^$HANDOFF/"); do
+    case $f in "$DESIGN"|"$REPORT"|"$REVIEW") continue ;; esac
+    [ -e "$W/$f" ] && continue
+    if [ -e "$REPO/$f" ]; then mkdir -p "$W/$(dirname "$f")" && cp -r "$REPO/$f" "$W/$f" && log "依頼文が指す $f を本体から写しにコピーした（本体で未コミット）"
+    else case $f in *-report.md|*-design.md|*-review.md|*-shots*) continue ;; esac
+      log "依頼文が指す $f が本体にも写しにも無い。依頼文を直してから出す"; return 1; fi
+  done
+  # 2. STATE に「待ち」と書いた仕事は出さない（WAIT_OK=1 で出す）
+  if [ "${WAIT_OK:-}" != 1 ] && [ -f "$REPO/${STATE_FILE:-STATE.md}" ] && grep -E '待ち' "$REPO/${STATE_FILE:-STATE.md}" | grep -qF "$name"; then
+    log "${STATE_FILE:-STATE.md} にこの仕事の「待ち」がある: $(grep -E '待ち' "$REPO/${STATE_FILE:-STATE.md}" | grep -F "$name" | head -1 | cut -c1-160)。条件を確かめて WAIT_OK=1 で出し直す"; return 1
+  fi
+  # 3. 動いているほかの仕事と、触るファイルが重なれば止める（OVERLAP_OK=1 で出す）
+  for other in $(running_tasks); do
+    theirs=$( { named_files "$REPO/$HANDOFF/$TASK_PREFIX$other.md"
+      git -C "$WORK/wt/$other" diff --name-only HEAD 2>/dev/null
+      git -C "$WORK/wt/$other" ls-files --others --exclude-standard 2>/dev/null; } | grep -v "^$HANDOFF/" | sort -u)
+    overlap=$(comm -12 <(named_files "$W/$REQ" | grep -v "^$HANDOFF/") <(echo "$theirs") | tr '\n' ' ')
+    if [ -n "$overlap" ] && [ "${OVERLAP_OK:-}" != 1 ]; then
+      log "動いている仕事 $other と触るファイルが重なる: $overlap。先に $other を取り込むか、OVERLAP_OK=1 で出す"; return 1
+    fi
+  done
+  return 0
+}
+
+# 片付け: 写し・ブランチ・タブ。取り込んでいないブランチは --discard のときだけ消す
+cleanup_task() {
+  local line tab f merged=0
+  if running_tasks | grep -qx "$name" || pgrep -f "herdr-run\.sh $name( |\$)" | grep -vx $$ >/dev/null; then
+    echo "台本 $name がまだ動いている。止めてから片付ける" >&2; return 1
+  fi
+  git -C "$REPO" rev-parse -q --verify "refs/heads/$BRANCH" >/dev/null && git -C "$REPO" merge-base --is-ancestor "$BRANCH" HEAD && merged=1
+  if git -C "$REPO" rev-parse -q --verify "refs/heads/$BRANCH" >/dev/null && [ "$merged" = 0 ] && [ "$discard" = 0 ]; then
+    echo "ブランチ $BRANCH は取り込まれていない。捨てるなら --discard を付ける" >&2; return 1
+  fi
+  # 報告・下見・レビューは本体に無ければ残す（後で振り返るため）
+  for f in "$DESIGN" "$REPORT" "$REVIEW"; do
+    [ -f "$W/$f" ] && [ ! -e "$REPO/$f" ] && cp "$W/$f" "$REPO/$f" && echo "残した: $f"
+  done
+  line=$(grep 'タブ: ' "$L" 2>/dev/null | tail -1)
+  tab=$(echo "$line" | sed -nE 's/.*タブ: ([^（]+)（.*/\1/p')
+  [ -z "$tab" ] || herdr tab close "$tab" >/dev/null 2>&1
+  if [ -d "$W" ]; then
+    chmod -R u+w "$W" 2>/dev/null
+    git -C "$REPO" worktree remove --force "$W" 2>/dev/null || rm -rf "${W:?}"
+  fi
+  git -C "$REPO" worktree prune
+  if git -C "$REPO" rev-parse -q --verify "refs/heads/$BRANCH" >/dev/null; then git -C "$REPO" branch -q -D "$BRANCH"; fi
+  rm -f "$WORK/done-impl-$name" "$WORK/done-rev-$name"
+  if [ "$merged" = 1 ]; then log "片付けた（取り込み済み）"; else log "片付けた（捨てた）"; fi
+  echo "片付けた: $name"
+}
+
+stale_tasks() {
+  local d n
+  for d in "$WORK"/wt/*/; do
+    [ -d "$d" ] || continue; n=$(basename "$d")
+    [ -n "$(find "$d" -maxdepth 0 -mmin +1440)" ] || continue
+    pgrep -f "herdr-run\.sh $n( |\$)" >/dev/null && continue
+    echo "$n $(cat "$WORK/reviewed-$n" 2>/dev/null || echo 印なし)"
+  done
 }
 
 make_tab() {
@@ -276,4 +363,8 @@ echo reviewed > "$WORK/reviewed-$name"
 log "レビューまで終わった"
 }
 
+case $mode in
+  cleanup) cleanup_task; exit ;;
+  stale) stale_tasks; exit ;;
+esac
 main "$@"; exit
