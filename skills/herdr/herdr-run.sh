@@ -356,7 +356,7 @@ main() {
   rm -f "$WORK/reviewed-$name"
   if [ -n "${TASK_ID:-}" ]; then
     # 台帳に無い・出せない状態の仕事は始めない（台帳が「走行中」にした後でないと、終わりを書けない）
-    "$TASK_BIN" started "$TASK_ID" --agent "impl-$(echo "$name" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-' | cut -c1-24)" --runner $$ >> "$L" 2>&1 || {
+    "$TASK_BIN" started "$TASK_ID" --agent "impl-$(echo "$name" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-' | cut -c1-24)" --runner $$ --workdir "$W" >> "$L" 2>&1 || {
       log "台帳の $TASK_ID を走行中にできなかったので始めない"; ledger_refused=1; return 1;
     }
     log "台帳の $TASK_ID を走行中にした"

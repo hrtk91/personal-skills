@@ -6,6 +6,7 @@ import { isAbsolute, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { KINDS, Ledger, STATUSES, type Kind, type Status, type Task } from './ledger.ts';
 import { realDeps, runOnce, type RunDeps } from './run.ts';
+import { advance, realAdvanceDeps, type AdvanceDeps } from './advance.ts';
 
 const USAGE = `使い方:
   task add --title <題> --why <ユーザーの言葉と日付> [--brief <依頼文のパス>] [--check <確かめのコマンド>]
@@ -18,9 +19,10 @@ const USAGE = `使い方:
   task drop <id> <理由>
   task answer <id> <答え> [--to 待ち|やめ|保留]          判断待ちに答える（既定は 待ち に戻す）
   task export [--repo <パス>]                           ROADMAP 用の一覧（読む用の写し）
-  task run                                              1 回まわす（消えた台本を見つけ、次の仕事を 1 つ出す）
-ハーネスの中で使うもの（herdr-run.sh が呼ぶ）:
-  task started <id> --agent <名> --runner <PID>         台本が動き始めた
+  task run                                              1 回まわす（消えたプロセスを見つけ、終わった仕事を先へ進め、次の仕事を 1 つ出す）
+ハーネスの中で使うもの:
+  task started <id> --agent <名> --runner <PID> [--workdir <パス>]   台本が動き始めた（herdr-run.sh が呼ぶ）
+  task advance <id>                                     確かめ → レビュー → 取り込み（task run が裏で起こす）
   task ended <id> implemented|stopped|blocked|failed [--commit <sha>] [--log <パス>]`;
 
 // What herdr-run.sh's end marker means for the ledger.
@@ -47,13 +49,13 @@ function line(task: Task): string {
   return `${task.id}\t${task.status}\t${task.title}${extra ? `\t(${extra})` : ''}`;
 }
 
-export function main(argv: string[], out: (text: string) => void = console.log, deps: RunDeps = realDeps): number {
+export function main(argv: string[], out: (text: string) => void = console.log, deps: RunDeps = realDeps, advanceDeps: AdvanceDeps = realAdvanceDeps): number {
   const [command, ...rest] = argv;
   const { values, positionals } = parseArgs({ args: rest, allowPositionals: true, options: {
     title: { type: 'string' }, why: { type: 'string' }, brief: { type: 'string' }, check: { type: 'string' },
     after: { type: 'string' }, files: { type: 'string' }, kind: { type: 'string' }, deploy: { type: 'boolean' },
     repo: { type: 'string' }, all: { type: 'boolean' }, status: { type: 'string' }, to: { type: 'string' },
-    agent: { type: 'string' }, runner: { type: 'string' }, commit: { type: 'string' }, log: { type: 'string' },
+    agent: { type: 'string' }, runner: { type: 'string' }, commit: { type: 'string' }, log: { type: 'string' }, workdir: { type: 'string' },
   } });
   const ledger = new Ledger();
   try {
@@ -125,12 +127,19 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
       case 'run':
         for (const said of runOnce(ledger, deps)) out(said);
         return 0;
+      case 'advance': {
+        if (!ledger.get(positionals[0] ?? '')) throw new Error(`台帳にありません: ${positionals[0] ?? ''}`);
+        for (const said of advance(ledger, positionals[0]!, advanceDeps)) out(said);
+        // A merge or a send-back may let the next task start.
+        for (const said of runOnce(ledger, deps)) out(said);
+        return 0;
+      }
       case 'started': {
         const task = ledger.get(positionals[0] ?? '');
         if (!task) throw new Error(`台帳にありません: ${positionals[0] ?? ''}`);
         const runner = values.runner ? Number(values.runner) : null;
         if (task.status === '待ち') ledger.setStatus(task.id, '走行中', '手で出した', { agent: values.agent ?? null, runner, attempts: task.attempts + 1 });
-        else if (task.status === '走行中') ledger.setRunner(task.id, { agent: values.agent ?? null, runner });
+        if (task.status === '待ち' || task.status === '走行中') ledger.setRunner(task.id, { agent: values.agent ?? null, runner, workdir: values.workdir ?? null });
         else throw new Error(`${task.id} は ${task.status} なので出せません（待ち・走行中だけ）`);
         out(line(ledger.get(task.id)!));
         return 0;
@@ -144,6 +153,8 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
         if (task.status !== '走行中') throw new Error(`${task.id} は ${task.status} です（走行中のはず）`);
         const note = values.log ? `${end.note}。ログ: ${values.log}` : end.note;
         out(line(ledger.setStatus(task.id, end.status, note, { commit: values.commit ?? null })));
+        // The script is about to exit; whoever checks the work next takes the task over.
+        ledger.releaseRunner(task.id);
         return 0;
       }
       default:

@@ -19,7 +19,7 @@ export type Task = {
   id: string; repo: string; title: string; why: string; brief: string | null;
   check: string | null; after: string[]; files: string[]; kind: Kind; deploy: boolean;
   status: Status; note: string | null; attempts: number; agent: string | null; commit: string | null;
-  runner: number | null; created_at: string; updated_at: string;
+  runner: number | null; workdir: string | null; created_at: string; updated_at: string;
 };
 export type NewTask = {
   repo: string; title: string; why: string; brief?: string | null; check?: string | null;
@@ -45,15 +45,15 @@ export class Ledger {
         id TEXT PRIMARY KEY, repo TEXT NOT NULL, title TEXT NOT NULL, why TEXT NOT NULL, brief TEXT,
         "check" TEXT, after_json TEXT NOT NULL DEFAULT '[]', files_json TEXT NOT NULL DEFAULT '[]',
         kind TEXT NOT NULL DEFAULT '処理', deploy INTEGER NOT NULL DEFAULT 0,
-        status TEXT NOT NULL, note TEXT, attempts INTEGER NOT NULL DEFAULT 0, agent TEXT, "commit" TEXT, runner INTEGER,
+        status TEXT NOT NULL, note TEXT, attempts INTEGER NOT NULL DEFAULT 0, agent TEXT, "commit" TEXT, runner INTEGER, workdir TEXT,
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL) STRICT;
       CREATE TABLE IF NOT EXISTS events(
         task_id TEXT NOT NULL REFERENCES tasks(id), at TEXT NOT NULL,
         from_status TEXT, to_status TEXT NOT NULL, note TEXT) STRICT;
       CREATE INDEX IF NOT EXISTS events_task ON events(task_id, at);`);
-    // Ledgers made before the harness started tasks itself have no runner column.
-    const columns = this.db.prepare('PRAGMA table_info(tasks)').all() as { name: string }[];
-    if (!columns.some((column) => column.name === 'runner')) this.db.exec('ALTER TABLE tasks ADD COLUMN runner INTEGER');
+    // Ledgers made before the harness started tasks itself lack these columns.
+    const columns = (this.db.prepare('PRAGMA table_info(tasks)').all() as { name: string }[]).map((column) => column.name);
+    for (const [name, type] of [['runner', 'INTEGER'], ['workdir', 'TEXT']]) if (!columns.includes(name!)) this.db.exec(`ALTER TABLE tasks ADD COLUMN ${name} ${type}`);
   }
 
   close(): void { this.db.close(); }
@@ -113,11 +113,23 @@ export class Ledger {
     return this.get(id)!;
   }
 
-  /** Records who is doing a running task, without a status change. */
-  setRunner(id: string, fields: { agent?: string | null; runner?: number | null }): Task {
-    this.db.prepare('UPDATE tasks SET agent=COALESCE(?,agent), runner=COALESCE(?,runner), updated_at=? WHERE id=?')
-      .run(fields.agent ?? null, fields.runner ?? null, this.now().toISOString(), id);
+  /** Records who is doing a running task and where, without a status change. */
+  setRunner(id: string, fields: { agent?: string | null; runner?: number | null; workdir?: string | null }): Task {
+    this.db.prepare('UPDATE tasks SET agent=COALESCE(?,agent), runner=COALESCE(?,runner), workdir=COALESCE(?,workdir), updated_at=? WHERE id=?')
+      .run(fields.agent ?? null, fields.runner ?? null, fields.workdir ?? null, this.now().toISOString(), id);
     return this.get(id)!;
+  }
+
+  /** Nobody is working on the task now; the next harness pass may pick it up. */
+  releaseRunner(id: string): void {
+    this.db.prepare('UPDATE tasks SET runner=NULL, updated_at=? WHERE id=?').run(this.now().toISOString(), id);
+  }
+
+  /** Takes a task that nobody is working on, in one statement so two passes never both take it. */
+  claimRunner(id: string, statuses: readonly Status[], pid: number): boolean {
+    const result = this.db.prepare(`UPDATE tasks SET runner=?, updated_at=? WHERE id=? AND runner IS NULL AND status IN (${statuses.map(() => '?').join(',')})`)
+      .run(pid, this.now().toISOString(), id, ...statuses);
+    return Number(result.changes) === 1;
   }
 
   /** Adds or replaces the brief; a task waiting for one becomes ready to run. */
@@ -204,6 +216,6 @@ function toTask(row: Record<string, unknown>): Task {
     kind: String(row.kind) as Kind, deploy: row.deploy === 1, status: String(row.status) as Status,
     note: row.note === null ? null : String(row.note), attempts: Number(row.attempts),
     agent: row.agent === null ? null : String(row.agent), commit: row.commit === null ? null : String(row.commit),
-    runner: row.runner === null ? null : Number(row.runner), created_at: String(row.created_at), updated_at: String(row.updated_at),
+    runner: row.runner === null ? null : Number(row.runner), workdir: row.workdir === null ? null : String(row.workdir), created_at: String(row.created_at), updated_at: String(row.updated_at),
   };
 }

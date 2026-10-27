@@ -6,7 +6,7 @@ import { closeSync, mkdirSync, openSync, readFileSync } from 'node:fs';
 import { cpus } from 'node:os';
 import { basename, dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { defaultPath, type Ledger, type Task } from './ledger.ts';
+import { ACTIVE, defaultPath, type Ledger, type Task } from './ledger.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const HERDR_RUN = process.env.TASK_HERDR_RUN ?? join(HERE, '../../skills/herdr/herdr-run.sh');
@@ -16,6 +16,8 @@ export const BUSY = Number(process.env.TASK_BUSY ?? 0.8);
 export type RunDeps = {
   /** Starts herdr-run.sh for the task and returns the process id, or throws. */
   start: (task: Task, name: string) => number;
+  /** Starts `task advance <id>` (check, review, merge) in the background. */
+  advance: (task: Task) => void;
   alive: (pid: number) => boolean;
   /** The busier of CPU and memory, 0〜1. */
   load: () => number;
@@ -28,15 +30,21 @@ export function runName(task: Task): string {
 
 export function runOnce(ledger: Ledger, deps: RunDeps): string[] {
   const said: string[] = [];
-  for (const task of ledger.list({ status: '走行中' })) {
+  for (const task of ledger.list().filter((candidate) => ACTIVE.includes(candidate.status))) {
     if (task.runner === null || deps.alive(task.runner)) continue;
-    ledger.setStatus(task.id, '判断待ち', `作業役を回す台本（PID ${task.runner}）が、終わりを書かずに消えた。ログ: ${logPath(task.id)}`);
-    said.push(`${task.id}: 台本が消えたので判断待ち`);
+    ledger.setStatus(task.id, '判断待ち', `${task.status}の仕事を進めていたプロセス（PID ${task.runner}）が、終わりを書かずに消えた。ログ: ${logPath(task.id)}`);
+    ledger.releaseRunner(task.id);
+    said.push(`${task.id}: 進めていたプロセスが消えたので判断待ち`);
   }
   const load = deps.load();
   if (load > BUSY) {
     said.push(`PC が忙しい（${Math.round(load * 100)}%）ので、新しい仕事は出さない`);
     return said;
+  }
+  // Finished work goes on toward merging before anything new starts.
+  for (const task of ledger.list().filter((candidate) => ['確かめ中', 'レビュー中', '取り込み中'].includes(candidate.status) && candidate.runner === null)) {
+    deps.advance(task);
+    said.push(`${task.id}: ${task.status}から先へ進める`);
   }
   // Look-and-feel work is Claude's own (10/26 「見た目が関わるやつはpiに任せたら良くないぞ」), so it stays 待ち.
   const task = ledger.claimNext((candidate) => candidate.kind === '見た目', 'ハーネスが出した');
@@ -77,6 +85,13 @@ export const realDeps: RunDeps = {
       if (!child.pid) throw new Error('herdr-run.sh を起動できなかった');
       child.unref();
       return child.pid;
+    } finally { closeSync(out); }
+  },
+  advance(task) {
+    mkdirSync(dirname(logPath(task.id)), { recursive: true });
+    const out = openSync(logPath(task.id), 'a');
+    try {
+      spawn(process.execPath, ['--no-warnings=ExperimentalWarning', join(HERE, 'cli.ts'), 'advance', task.id], { detached: true, stdio: ['ignore', out, out] }).unref();
     } finally { closeSync(out); }
   },
   alive(pid) {

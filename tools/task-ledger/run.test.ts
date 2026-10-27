@@ -5,7 +5,7 @@ import { runOnce, type RunDeps } from './run.ts';
 
 function fake(overrides: Partial<RunDeps> = {}) {
   const started: string[] = [];
-  const deps: RunDeps = { start: (task, name) => { started.push(`${task.id}:${name}`); return 4242; }, alive: () => true, load: () => 0.3, ...overrides };
+  const deps: RunDeps = { start: (task, name) => { started.push(`${task.id}:${name}`); return 4242; }, advance: (task) => { started.push(`advance:${task.id}`); }, alive: () => true, load: () => 0.3, ...overrides };
   return { deps, started };
 }
 
