@@ -114,3 +114,16 @@ test('filesOverlap compares files and directory prefixes', () => {
   assert.equal(filesOverlap(['web/app'], ['web/apple.ts']), false);
   assert.equal(filesOverlap([], ['x']), true);
 });
+
+test('moving to first inserts at the top and keeps the others in order (not a swap with the old top)', () => {
+  const ledger=make();
+  const [a,b,c,d]=['A','B','C','D'].map((title,n)=>ledger.add({...base,title,brief:'x',files:[`f${n}`]}));
+  ledger.setPriority(d!.id,'first');
+  assert.deepEqual(ledger.ready().map(t=>t.title),['D','A','B','C']);
+  ledger.setPriority(b!.id,'down');
+  assert.deepEqual(ledger.ready().map(t=>t.title),['D','A','C','B']);
+  const goals=['G1','G2','G3','G4'].map((title)=>ledger.addGoal({repo:base.repo,title}));
+  ledger.moveGoal(goals[3]!.id,'first');
+  assert.deepEqual(ledger.listGoals(base.repo).map(g=>g.title),['G4','G1','G2','G3']);
+  void a; void c;
+});
