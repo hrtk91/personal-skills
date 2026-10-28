@@ -132,6 +132,7 @@ function merge(ledger: Ledger, task: Task, deps: AdvanceDeps, said: string[], st
     if (!conflicted) return stop(`本体に入れられなかった: ${tail(merged.output, 5)}`);
     return catchUp(ledger, task, deps, before, said, stop);
   }
+  const mergeCommit = gitHead(repo, deps);
   if (task.check) {
     // In a throwaway copy of the merged commit, never in the repository itself: a repository may serve its build
     // output to production straight from its folder (random-image did; 10/28). The copy borrows the folders
@@ -141,8 +142,9 @@ for d in $(. ./.herdr.env >/dev/null 2>&1; echo "\${EXTRA_DIRS:-}"); do [ -e "$d
 (cd "$T" && ${task.check}); rc=$?
 git worktree remove --force "$T" >/dev/null 2>&1; rm -rf "$T"; exit $rc`, repo, CHECK_TIMEOUT), 'merged-check', '取り込み後の確かめ');
     if (check.code !== 0) {
-      // --keep leaves whatever else is uncommitted in the repository as it was.
-      deps.sh(`git reset --keep ${quote(before)}`, repo, 60_000);
+      // --keep leaves whatever else is uncommitted in the repository as it was. When someone committed on top while the
+      // check ran (Claude's brief did, 10/28, and the reset took it away), undo the merge with a revert instead.
+      deps.sh(`if [ "$(git rev-parse HEAD)" = ${quote(mergeCommit)} ]; then git reset --keep ${quote(before)}; else git -c user.name="$(git config user.name || echo task-ledger)" -c user.email="$(git config user.email || echo task-ledger@noreply.invalid)" revert --no-edit -m 1 ${quote(mergeCommit)}; fi`, repo, 60_000);
       return stop(`本体に入れたあとの確かめが落ちたので戻した。出力: ${writeLog(task.id, 'merged-check', check.output)}`);
     }
   }

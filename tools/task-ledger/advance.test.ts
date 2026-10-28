@@ -169,6 +169,17 @@ test('when the check fails after merging, the merge is undone and other uncommit
   } finally { f.done(); }
 });
 
+test('when someone commits while the check after merging runs, a failed check reverts the merge and keeps their commit', () => {
+  const f = fixture({ check: 'test -f only-in-worktree || { git -C "$(git rev-parse --path-format=absolute --git-common-dir)/.." -c user.name=t -c user.email=t@t commit -q --allow-empty -m "someone else"; exit 1; }' });
+  try {
+    writeFileSync(join(f.workdir, 'only-in-worktree'), '');
+    advance(f.ledger, 'repo-1', deps('{"verdict":"通す","reasons":[],"fixes":[]}'), 1);
+    assert.equal(f.ledger.get('repo-1')!.status, '判断待ち');
+    assert.match(git(f.repo, 'log', '--format=%s').trim(), /someone else/);
+    assert.ok(!existsSync(join(f.repo, 'mul.js')), 'the merged work is undone');
+  } finally { f.done(); }
+});
+
 test('a task someone else is advancing is left alone', () => {
   const f = fixture();
   try {
