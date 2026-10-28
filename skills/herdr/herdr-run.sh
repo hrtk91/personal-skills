@@ -69,7 +69,11 @@ docs() { for f in $REQ $RULES $CONTEXT_FILES $CHECKLIST $DESIGN_RULES; do [ -f "
 setup() {
 # 1. 作業場所を作る
 [ ! -e "$W" ] || { log "写しが既にある: RESUME=1 または RESUME=newtab を使う"; return 1; }
-[ -f "$REPO/$REQ" ] || { log "依頼文 $REQ がない"; return 1; }
+if [ -n "${TASK_ISSUE_ID:-}" ]; then
+  [ -n "${TASK_ID:-}" ] || { log "Issue 仕事には TASK_ID が必要"; return 1; }
+else
+  [ -f "$REPO/$REQ" ] || { log "依頼文 $REQ がない"; return 1; }
+fi
 mkdir -p "$(dirname "$W")" || return 1
 if [ -n "${BASE:-}" ]; then
   # 前の写しの上で続ける（研究の続きなど）。BASE の git の最初の状態がそのまま基準になる
@@ -86,6 +90,12 @@ else
   git -C "$REPO" worktree add -q -b "$BRANCH" "$W" HEAD || return 1
 fi
 for f in $(docs); do mkdir -p "$W/$(dirname "$f")" && cp -f "$REPO/$f" "$W/$f" || return 1; done
+if [ -n "${TASK_ISSUE_ID:-}" ]; then
+  mkdir -p "$W/$(dirname "$REQ")" || return 1
+  "$TASK_BIN" issue brief "$TASK_ISSUE_ID" > "$W/$REQ" || { log "Issue $TASK_ISSUE_ID の依頼文を作れない"; return 1; }
+  # The Issue-generated prompt is run input, not a repository artifact; keep it out of the patch and commit.
+  PATCH_EXCLUDE="${PATCH_EXCLUDE:+$PATCH_EXCLUDE }:!$REQ"
+fi
 if [ -z "${BASE:-}" ] || [ "$BASE_REFRESH_EXTRA_DIRS" != 0 ]; then
   for d in $EXTRA_DIRS; do
     [ -d "$REPO/$d" ] || continue
@@ -279,14 +289,14 @@ run_agent() {
   fi
   if [ "$use_channel" = 1 ]; then
     goal="$task"
-    if [ -n "${TASK_ID:-}" ]; then
+    if [ -n "${TASK_ID:-}" ] && [ -z "${TASK_ISSUE_ID:-}" ]; then
       context=$("$TASK_BIN" context "$TASK_ID" 2>/dev/null) || context=
       [ -z "$context" ] || goal=$(printf '%s\n\n%s' "$context" "$goal")
     fi
     goal="$goal 途中で質問せず最後までやり切り、全部終わったら最後に channel_finish の道具を 1 回呼ぶ（これで次の段に進む）。"
   else
     goal="$task"
-    if [ -n "${TASK_ID:-}" ]; then
+    if [ -n "${TASK_ID:-}" ] && [ -z "${TASK_ISSUE_ID:-}" ]; then
       context=$("$TASK_BIN" context "$TASK_ID" 2>/dev/null) || context=
       [ -z "$context" ] || goal=$(printf '%s\n\n%s' "$context" "$goal")
     fi

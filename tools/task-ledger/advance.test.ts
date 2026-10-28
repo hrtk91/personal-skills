@@ -122,6 +122,23 @@ test('a failing check goes back to the worker with the output written into its b
   } finally { f.done(); }
 });
 
+test('an Issue-originated send-back is saved on the Issue and included in the next brief', () => {
+  const f = fixture({ check: 'echo retry; exit 1' });
+  try {
+    const issue = f.ledger.addIssue({ repo: f.repo, title: 'Issue task', fields: {
+      'なぜ': 'reason', '今の状態': 'known', '関係する所': 'math.js',
+    } });
+    const brief = `handoff/${issue.id}.md`;
+    writeFileSync(join(f.workdir, brief), '# Issue task\n');
+    f.ledger.db.prepare('UPDATE tasks SET issue_id=?, brief=? WHERE id=?').run(issue.id, brief, 'repo-1');
+    advance(f.ledger, 'repo-1', deps(''), 1);
+    const saved = f.ledger.getIssue(issue.id)!;
+    assert.equal(saved.history.length, 1);
+    assert.match(saved.history[0]!, /差し戻し（1 回目のあと/);
+    assert.match(readFileSync(join(f.workdir, brief), 'utf8'), /## 差し戻し（1 回目のあと/);
+  } finally { f.done(); }
+});
+
 test('a review asking for fixes after the last attempt waits for a decision instead', () => {
   const f = fixture({ attempts: 3 });
   try {

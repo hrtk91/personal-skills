@@ -436,6 +436,29 @@ class HerdrContractTest(unittest.TestCase):
         self.assertEqual(task["commit"], self.git("rev-parse", "HEAD", cwd=self.w).strip())
         self.assertNotEqual(task["commit"], self.initial_head)
 
+    def test_issue_task_generates_brief_in_worker_copy_without_repo_brief(self):
+        created = self.ledger("issue", "add", "--repo", str(self.repo), "--title", "Issue仕事", "--なぜ", "理由", "--今の状態", "確認済みの現状", "--関係する所", "baseline.txt")
+        self.assertEqual(created.returncode, 0, created.stderr)
+        issue_id = created.stdout.split("\t")[0]
+        added = self.ledger("add", "--repo", str(self.repo), "--issue", issue_id)
+        self.assertEqual(added.returncode, 0, added.stderr)
+        task_id = added.stdout.split("\t")[0]
+        (self.repo / ".herdr.env").write_text("".join(f"{k}={shlex.quote(v)}\n" for k, v in self.config.items()))
+        env = self.env | {"FAKE_MODE": "normal", "FAKE_PREFIX": self.prefix, "TASK_ID": task_id,
+            "TASK_ISSUE_ID": issue_id, "TASK_LEDGER_DB": str(self.root / "ledger.sqlite"), "TASK_RUN_AFTER": "0"}
+        result = subprocess.run(["bash", str(SKILL / "herdr-run.sh"), issue_id], cwd=self.repo, env=env,
+            stdin=subprocess.DEVNULL, text=True, capture_output=True, timeout=30)
+        issue_work = self.work / "wt" / issue_id
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr + (self.work / f"herdr-{issue_id}.log").read_text())
+        brief = issue_work / "handoff" / f"{issue_id}.md"
+        self.assertTrue(brief.is_file())
+        content = brief.read_text()
+        self.assertIn("## 今の状態", content)
+        self.assertIn("## 関係する所", content)
+        self.assertFalse((self.repo / "handoff" / f"{issue_id}.md").exists())
+        committed = self.git("show", "--format=", "--name-only", "HEAD", cwd=issue_work)
+        self.assertNotIn(f"handoff/{issue_id}.md", committed.splitlines())
+
     def test_ledger_task_stopped_by_design_waits_for_a_decision(self):
         task_id = self.ledger_task()
         result = self.run_script(mode="stop", TASK_ID=task_id, TASK_LEDGER_DB=str(self.root / "ledger.sqlite"), TASK_RUN_AFTER="0")
