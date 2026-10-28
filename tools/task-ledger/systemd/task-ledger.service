@@ -3,5 +3,7 @@ Description=Task ledger: one harness pass (start ready tasks, advance finished o
 
 [Service]
 Type=oneshot
+# The pass starts workers (herdr-run.sh, task advance) that must outlive it; the default kills the whole group on exit.
+KillMode=process
 EnvironmentFile=%h/.config/task-ledger/env
 ExecStart=%h/repos/personal-skills/tools/task-ledger/bin/task run
