@@ -75,6 +75,25 @@ test('an uncommitted copy of a file the branch adds is moved aside so the merge 
   } finally { f.done(); }
 });
 
+test('when the repository changed the same lines meanwhile, the worker gets the conflict marks to settle', () => {
+  const f = fixture();
+  try {
+    writeFileSync(join(f.workdir, 'math.js'), 'export const sub = (a, b) => a - b; // 作業役\n');
+    git(f.workdir, 'add', '-A'); git(f.workdir, 'commit', '-qm', 'worker edits math');
+    writeFileSync(join(f.repo, 'math.js'), 'export const sub = (a, b) => a - b; // 本体\n');
+    git(f.repo, 'add', '-A'); git(f.repo, 'commit', '-qm', 'repo edits math');
+    const before = git(f.repo, 'rev-parse', 'HEAD').trim();
+    const calls: string[] = [];
+    advance(f.ledger, 'repo-1', deps('{"verdict":"通す","reasons":[],"fixes":[]}', calls), 1);
+    const task = f.ledger.get('repo-1')!;
+    assert.equal(task.status, '走行中');
+    assert.ok(calls.includes('resend'));
+    assert.equal(git(f.repo, 'rev-parse', 'HEAD').trim(), before);
+    assert.match(readFileSync(join(f.workdir, 'math.js'), 'utf8'), /<<<<<<<[\s\S]*作業役[\s\S]*本体/);
+    assert.match(readFileSync(join(f.workdir, 'handoff/t.md'), 'utf8'), /衝突の印[\s\S]*math\.js/);
+  } finally { f.done(); }
+});
+
 test('a failing check goes back to the worker with the output written into its brief', () => {
   const f = fixture({ check: 'echo 掛け算が無い; exit 1' });
   try {

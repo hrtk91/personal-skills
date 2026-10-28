@@ -85,8 +85,9 @@ export function advance(ledger: Ledger, id: string, deps: AdvanceDeps, pid = pro
       const lock = join(dirname(defaultPath()), 'merge-locks', task.repo.replaceAll('/', '_'));
       mkdirSync(dirname(lock), { recursive: true });
       while (!tryLock(lock)) deps.pause();
-      try { merge(ledger, task, deps, said, stop); } finally { rmdirSync(lock); }
-      return said;
+      let again: 'again' | void;
+      try { again = merge(ledger, task, deps, said, stop); } finally { rmdirSync(lock); }
+      if (again !== 'again') return said;
     } else {
       ledger.releaseRunner(id);
       return said;
@@ -102,7 +103,8 @@ function gitHead(repo: string, deps: AdvanceDeps): string {
   return deps.sh('git rev-parse HEAD', repo, 60_000).output.trim();
 }
 
-function merge(ledger: Ledger, task: Task, deps: AdvanceDeps, said: string[], stop: (note: string) => unknown): void {
+/** Merges the work. Returns 'again' when the worker's copy took in the repository's newer commits and must be checked again. */
+function merge(ledger: Ledger, task: Task, deps: AdvanceDeps, said: string[], stop: (note: string) => unknown): 'again' | void {
   const repo = task.repo;
   const branch = deps.sh('git branch --show-current', task.workdir!, 60_000).output.trim();
   if (!branch) return stop('作業用のコピーのブランチが分からない');
@@ -121,8 +123,10 @@ function merge(ledger: Ledger, task: Task, deps: AdvanceDeps, said: string[], st
   // The repository's own name for commits, or the harness's when it has none.
   const merged = deps.sh(`git -c user.name="$(git config user.name || echo task-ledger)" -c user.email="$(git config user.email || echo task-ledger@noreply.invalid)" merge --no-ff --no-edit -m ${quote(`${task.title}\n\nTask: ${task.id}`)} ${quote(branch)}`, repo, 120_000);
   if (merged.code !== 0) {
+    const conflicted = deps.sh('git diff --name-only --diff-filter=U', repo, 60_000).output.trim();
     deps.sh('git merge --abort', repo, 60_000);
-    return stop(`本体に入れられなかった: ${tail(merged.output, 5)}`);
+    if (!conflicted) return stop(`本体に入れられなかった: ${tail(merged.output, 5)}`);
+    return catchUp(ledger, task, deps, before, said, stop);
   }
   if (task.check) {
     // In a throwaway copy of the merged commit, never in the repository itself: a repository may serve its build
@@ -150,6 +154,26 @@ git worktree remove --force "$T" >/dev/null 2>&1; rm -rf "$T"; exit $rc`, repo, 
   ledger.setStatus(task.id, '済', cleaned.code === 0 ? '取り込んだ' : `取り込んだが片付けに失敗: ${tail(cleaned.output, 3)}`, { commit });
   ledger.releaseRunner(task.id);
   said.push(`${task.id}: 済（${commit.slice(0, 7)}）`);
+}
+
+// The repository moved on while the worker was busy, and the two collide. Take the repository's commits into the
+// worker's copy: if that goes in cleanly, check again; if files collide, leave git's conflict marks in them and
+// hand the work back to the worker to settle.
+function catchUp(ledger: Ledger, task: Task, deps: AdvanceDeps, head: string, said: string[], stop: (note: string) => unknown): 'again' | void {
+  const workdir = task.workdir!;
+  const into = deps.sh(`git -c user.name="$(git config user.name || echo task-ledger)" -c user.email="$(git config user.email || echo task-ledger@noreply.invalid)" merge --no-edit -m ${quote(`本体の ${head.slice(0, 7)} を取り込む（${task.id}）`)} ${quote(head)}`, workdir, 120_000);
+  if (into.code === 0) {
+    ledger.setStatus(task.id, '確かめ中', `本体が先に進んでいたので、作業役のコピーに本体の ${head.slice(0, 7)} を取り込んだ。確かめ直す`);
+    said.push(`${task.id}: 本体を取り込んで確かめ直す`);
+    return 'again';
+  }
+  const files = deps.sh('git diff --name-only --diff-filter=U', workdir, 60_000).output.trim().split('\n').filter(Boolean);
+  if (files.length === 0) {
+    deps.sh('git merge --abort', workdir, 60_000);
+    return stop(`作業役のコピーに本体を取り込めなかった: ${tail(into.output, 5)}`);
+  }
+  sendBack(ledger, task, deps, `作業のあいだに本体が先に進み、同じ所を変えていた。次のファイルに git の衝突の印（<<<<<<< ・ ======= ・ >>>>>>>）がある: ${files.join('、')}。`,
+    '両方の変更を生かして解き、印を全部消す。git のコマンド（merge・commit・checkout など）は使わない（台本がこのまま取り込みを仕上げる）。', said, stop);
 }
 
 function writeLog(id: string, name: string, text: string): string {
