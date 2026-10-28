@@ -1,11 +1,12 @@
 // `task`: the command people and the commanding Claude use to put tasks into the ledger and read it.
 // Moving a task through 走行中 → 済 is the harness's job, not this command's (except hold / drop / answer).
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { buildTrace, renderTrace, report, toOtlp, tracesSince } from './trace.ts';
-import { defaultPath, KINDS, Ledger, STATUSES, type Kind, type Status, type Task } from './ledger.ts';
+import { defaultPath, ISSUE_FIELDS, KINDS, Ledger, STATUSES, type Kind, type Status, type Task, type IssueField, type IssueFields } from './ledger.ts';
+import { assembleIssueBrief, issueTemplate, meaningful, parseIssueMarkdown } from './issue-brief.ts';
 import { realDeps, runOnce, type RunDeps } from './run.ts';
 import { taskContext } from './context.ts';
 import { advance, realAdvanceDeps, type AdvanceDeps } from './advance.ts';
@@ -16,7 +17,8 @@ const USAGE = `使い方:
   task brief <id> <依頼文のパス> [--check <コマンド>]   依頼文を付ける（依頼文待ち → 待ち）
   task list [--all] [--repo <パス>] [--status <状態>]
   task goal add --title <題> [--why <きっかけ>] [--stages a,b,c] | goal list | goal move <id> up|down|first
-  task issue add --title <題> [--body <中身>] [--by あなた|Claude|作業役|レビュー] [--from <出どころ>] [--goal <id>] [--stage <工程>]
+  task issue add (--title <題> [欄オプション...] | --from <md>) [--by あなた|Claude|作業役|レビュー] [--goal <id>] [--stage <工程>]
+  task issue template | show <id> | brief <id>
   task issue list [--goal <id>|--loose]
   task doc add --kind 仕様|設計|モック|決まり|説明|報告 --title <題> (--path <パス>|--body <中身>) [--goal <id>] | doc list [--goal <id>]
   task priority <task id> first|up|down
@@ -56,6 +58,14 @@ function briefPath(repo: string, path: string): string {
   return path;
 }
 
+/** Import paths are commonly repository-relative even when `task` is run from tools/task-ledger. */
+function issueMarkdownPath(path: string): string {
+  if (isAbsolute(path) || existsSync(path)) return path;
+  const fromRoot = join(repoRoot(process.cwd()), path);
+  if (existsSync(fromRoot)) return fromRoot;
+  throw new Error(`Issue Markdown がありません: ${path}（確認先: ${resolve(path)}、${fromRoot}）`);
+}
+
 function line(task: Task): string {
   const extra = [task.after.length ? `後: ${task.after.join(',')}` : '', task.note ?? ''].filter(Boolean).join(' / ');
   return `${task.id}\t${task.status}\t${task.title}${extra ? `\t(${extra})` : ''}`;
@@ -69,6 +79,7 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
     repo: { type: 'string' }, all: { type: 'boolean' }, status: { type: 'string' }, to: { type: 'string' },
     agent: { type: 'string' }, runner: { type: 'string' }, commit: { type: 'string' }, log: { type: 'string' }, workdir: { type: 'string' },
     since: { type: 'string' }, out: { type: 'string' }, issue: { type: 'string' }, body: { type: 'string' }, by: { type: 'string' }, from: { type: 'string' }, goal: { type: 'string' }, stage: { type: 'string' }, stages: { type: 'string' }, loose: { type: 'boolean' }, docKind: { type: 'string' }, path: { type: 'string' },
+    'なぜ': { type: 'string' }, '今の状態': { type: 'string' }, '関係する所': { type: 'string' }, 'やること': { type: 'string' }, 'やってよいこと': { type: 'string' }, 'やらないこと': { type: 'string' }, '終わりの条件': { type: 'string' }, '確かめのコマンド': { type: 'string' }, '触るファイル': { type: 'string' }, '種類': { type: 'string' }, '本番に出すか': { type: 'string' },
   } });
   const ledger = new Ledger();
   try {
@@ -77,12 +88,25 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
       case 'add': {
         const root = repo ?? repoRoot(process.cwd());
         if (values.kind && !KINDS.includes(values.kind as Kind)) throw new Error(`--kind は ${KINDS.join('・')}`);
+        const issue = values.issue ? ledger.getIssue(values.issue) : null;
+        if (values.issue && !issue) throw new Error(`Issue が台帳にありません: ${values.issue}`);
+        let title = values.title ?? '', why = values.why ?? '', brief = values.brief ? briefPath(root, values.brief) : null;
+        let check = values.check, files = values.files?.split(',').map((s) => s.trim()).filter(Boolean), kind = values.kind as Kind | undefined, deploy = values.deploy;
+        if (issue) {
+          const missing = (['今の状態','関係する所'] as const).filter((field) => !meaningful(issue.fields[field], field));
+          if (missing.length) throw new Error(`Issue の文脈が不足: ${missing.join('、')}`);
+          title ||= issue.title; why ||= issue.fields['なぜ'] ?? '';
+          brief ??= `handoff/${issue.id}.md`;
+          check ??= issue.fields['確かめのコマンド']; files ??= (issue.fields['触るファイル'] ?? '').split(/[，,\n]/).map((s) => s.trim()).filter(Boolean);
+          kind ??= issue.fields['種類'] && KINDS.includes(issue.fields['種類'] as Kind) ? issue.fields['種類'] as Kind : undefined;
+          deploy ??= /^(?:はい|する|true|yes)$/i.test(issue.fields['本番に出すか'] ?? '');
+        }
         const task = ledger.add({
-          repo: root, title: values.title ?? '', why: values.why ?? '',
-          brief: values.brief ? briefPath(root, values.brief) : null, check: values.check,
+          repo: root, title, why,
+          brief, check,
           after: values.after?.split(',').map((s) => s.trim()).filter(Boolean),
-          files: values.files?.split(',').map((s) => s.trim()).filter(Boolean),
-          kind: values.kind as Kind | undefined, deploy: values.deploy, issue_id: values.issue,
+          files,
+          kind, deploy, issue_id: values.issue,
         });
         out(line(task));
         return 0;
@@ -107,10 +131,20 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
         throw new Error('task goal add|list|move');
       }
       case 'issue': {
-        const [sub]=positionals;
-        if(sub==='add'){const by=(values.by??'あなた') as 'あなた'|'Claude'|'作業役'|'レビュー';if(!['あなた','Claude','作業役','レビュー'].includes(by))throw new Error('--by は あなた・Claude・作業役・レビュー');const i=ledger.addIssue({repo:repo??repoRoot(process.cwd()),title:values.title??'',body:values.body,by,from:values.from,goal_id:values.goal,stage:values.stage});out(`${i.id}\t${i.status}\t${i.title}`);return 0;}
+        const [sub,...args]=positionals;
+        if(sub==='template'){out(issueTemplate().trimEnd());return 0;}
+        if(sub==='add'){
+          const by=(values.by??'あなた') as 'あなた'|'Claude'|'作業役'|'レビュー';if(!['あなた','Claude','作業役','レビュー'].includes(by))throw new Error('--by は あなた・Claude・作業役・レビュー');
+          let title=values.title??'', fields:IssueFields={}, body=values.body;
+          // Sections that are not template fields (設計, 報告 ...) stay with the Issue as its body and go into the brief.
+          if(values.from){const source=issueMarkdownPath(values.from);const parsed=parseIssueMarkdown(readFileSync(source,'utf8'));title ||= parsed.title;fields=parsed.fields;body=[body,parsed.extra].filter(Boolean).join('\n\n');}
+          else for(const field of ISSUE_FIELDS){const v=values[field];if(typeof v==='string')fields[field]=v;}
+          const i=ledger.addIssue({repo:repo??repoRoot(process.cwd()),title,body,fields,by,from:values.from,goal_id:values.goal,stage:values.stage});out(`${i.id}\t${i.status}\t${i.title}`);return 0;
+        }
+        if(sub==='brief'){const issue=ledger.getIssue(args[0]??'');if(!issue)throw new Error(`Issue がありません: ${args[0]??''}`);out(assembleIssueBrief(ledger,issue).trimEnd());return 0;}
+        if(sub==='show'){const issue=ledger.getIssue(args[0]??'');if(!issue)throw new Error(`Issue がありません: ${args[0]??''}`);out(JSON.stringify({...issue,goal:issue.goal_id?ledger.getGoal(issue.goal_id):null,tasks:ledger.issuesForTask(issue.id)},null,2));return 0;}
         if(sub==='list'){for(const i of ledger.listIssues({repo,goal:values.goal,loose:values.loose}))out(`${i.id}\t${i.status}\t${i.title}\t${i.goal_id??''}\t${i.stage??''}\t${i.by}`);return 0;}
-        throw new Error('task issue add|list');
+        throw new Error('task issue add|list|template|show|brief');
       }
       case 'doc': {
         const [sub]=positionals;
