@@ -6,8 +6,7 @@ import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSyn
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defaultPath, type Ledger, type SpanAttributes, type Status, type Task } from './ledger.ts';
-import { renderIssueBrief } from './issue-brief.ts';
-import { taskContext } from './context.ts';
+import { assembleIssueBrief } from './issue-brief.ts';
 import { HERDR_RUN, logPath, runName, workerEnv } from './run.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -226,7 +225,7 @@ function sendBack(ledger: Ledger, task: Task, deps: AdvanceDeps, reason: string,
   if (task.issue_id && task.brief === `handoff/${task.issue_id}.md`) {
     ledger.addIssueHistory(task.issue_id, correction);
     const issue = ledger.getIssue(task.issue_id)!;
-    writeFileSync(brief, renderIssueBrief(issue, taskContext(ledger, task)));
+    writeFileSync(brief, assembleIssueBrief(ledger, issue, task));
   } else appendFileSync(brief, `\n\n${correction}\n`);
   ledger.setStatus(task.id, '走行中', `差し戻し: ${reason}`, { attempts: task.attempts + 1 });
   ledger.releaseRunner(task.id);

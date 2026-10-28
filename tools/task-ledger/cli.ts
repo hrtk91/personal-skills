@@ -6,7 +6,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { buildTrace, renderTrace, report, toOtlp, tracesSince } from './trace.ts';
 import { defaultPath, ISSUE_FIELDS, KINDS, Ledger, STATUSES, type Kind, type Status, type Task, type IssueField, type IssueFields } from './ledger.ts';
-import { meaningful, parseIssueMarkdown, renderIssueBrief, TEMPLATE } from './issue-brief.ts';
+import { assembleIssueBrief, issueTemplate, meaningful, parseIssueMarkdown } from './issue-brief.ts';
 import { realDeps, runOnce, type RunDeps } from './run.ts';
 import { taskContext } from './context.ts';
 import { advance, realAdvanceDeps, type AdvanceDeps } from './advance.ts';
@@ -93,7 +93,7 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
         let title = values.title ?? '', why = values.why ?? '', brief = values.brief ? briefPath(root, values.brief) : null;
         let check = values.check, files = values.files?.split(',').map((s) => s.trim()).filter(Boolean), kind = values.kind as Kind | undefined, deploy = values.deploy;
         if (issue) {
-          const missing = (['今の状態','関係する所'] as const).filter((field) => !meaningful(issue.fields[field]));
+          const missing = (['今の状態','関係する所'] as const).filter((field) => !meaningful(issue.fields[field], field));
           if (missing.length) throw new Error(`Issue の文脈が不足: ${missing.join('、')}`);
           title ||= issue.title; why ||= issue.fields['なぜ'] ?? '';
           brief ??= `handoff/${issue.id}.md`;
@@ -132,15 +132,16 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
       }
       case 'issue': {
         const [sub,...args]=positionals;
-        if(sub==='template'){out(TEMPLATE);return 0;}
+        if(sub==='template'){out(issueTemplate().trimEnd());return 0;}
         if(sub==='add'){
           const by=(values.by??'あなた') as 'あなた'|'Claude'|'作業役'|'レビュー';if(!['あなた','Claude','作業役','レビュー'].includes(by))throw new Error('--by は あなた・Claude・作業役・レビュー');
-          let title=values.title??'', fields:IssueFields={};
-          if(values.from){const source=issueMarkdownPath(values.from);const parsed=parseIssueMarkdown(readFileSync(source,'utf8'));title ||= parsed.title;fields=parsed.fields;}
+          let title=values.title??'', fields:IssueFields={}, body=values.body;
+          // Sections that are not template fields (設計, 報告 ...) stay with the Issue as its body and go into the brief.
+          if(values.from){const source=issueMarkdownPath(values.from);const parsed=parseIssueMarkdown(readFileSync(source,'utf8'));title ||= parsed.title;fields=parsed.fields;body=[body,parsed.extra].filter(Boolean).join('\n\n');}
           else for(const field of ISSUE_FIELDS){const v=values[field];if(typeof v==='string')fields[field]=v;}
-          const i=ledger.addIssue({repo:repo??repoRoot(process.cwd()),title,body:values.body,fields,by,from:values.from,goal_id:values.goal,stage:values.stage});out(`${i.id}\t${i.status}\t${i.title}`);return 0;
+          const i=ledger.addIssue({repo:repo??repoRoot(process.cwd()),title,body,fields,by,from:values.from,goal_id:values.goal,stage:values.stage});out(`${i.id}\t${i.status}\t${i.title}`);return 0;
         }
-        if(sub==='brief'){const issue=ledger.getIssue(args[0]??'');if(!issue)throw new Error(`Issue がありません: ${args[0]??''}`);out(renderIssueBrief(issue,taskContext(ledger,{repo:issue.repo,issue_id:issue.id} as Task)));return 0;}
+        if(sub==='brief'){const issue=ledger.getIssue(args[0]??'');if(!issue)throw new Error(`Issue がありません: ${args[0]??''}`);out(assembleIssueBrief(ledger,issue).trimEnd());return 0;}
         if(sub==='show'){const issue=ledger.getIssue(args[0]??'');if(!issue)throw new Error(`Issue がありません: ${args[0]??''}`);out(JSON.stringify({...issue,goal:issue.goal_id?ledger.getGoal(issue.goal_id):null,tasks:ledger.issuesForTask(issue.id)},null,2));return 0;}
         if(sub==='list'){for(const i of ledger.listIssues({repo,goal:values.goal,loose:values.loose}))out(`${i.id}\t${i.status}\t${i.title}\t${i.goal_id??''}\t${i.stage??''}\t${i.by}`);return 0;}
         throw new Error('task issue add|list|template|show|brief');
