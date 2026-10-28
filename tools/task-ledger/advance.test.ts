@@ -101,6 +101,16 @@ test('a review asking for a decision stops with its reasons', () => {
   } finally { f.done(); }
 });
 
+test('the check after merging runs in a throwaway copy, never in the repository folder', () => {
+  const f = fixture({ check: 'test -f mul.js && touch built-here' });
+  try {
+    advance(f.ledger, 'repo-1', deps('{"verdict":"通す","reasons":[],"fixes":[]}'), 1);
+    assert.equal(f.ledger.get('repo-1')!.status, '済');
+    assert.ok(!existsSync(join(f.repo, 'built-here')));
+    assert.equal(git(f.repo, 'worktree', 'list').trim().split('\n').length, 2);
+  } finally { f.done(); }
+});
+
 test('when the check fails after merging, the merge is undone and other uncommitted work is kept', () => {
   // Passes in the worktree, fails in the repository (the marker file exists only in the worktree).
   const f = fixture({ check: 'test -f only-in-worktree' });

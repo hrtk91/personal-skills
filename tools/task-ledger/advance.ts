@@ -114,7 +114,13 @@ function merge(ledger: Ledger, task: Task, deps: AdvanceDeps, said: string[], st
     return stop(`本体に入れられなかった: ${tail(merged.output, 5)}`);
   }
   if (task.check) {
-    const check = deps.sh(task.check, repo, CHECK_TIMEOUT);
+    // In a throwaway copy of the merged commit, never in the repository itself: a repository may serve its build
+    // output to production straight from its folder (random-image did; 10/28). The copy borrows the folders
+    // .herdr.env lists in EXTRA_DIRS (node_modules and the like) by link.
+    const check = deps.sh(`T=$(mktemp -d) && rmdir "$T" && git worktree add -q --detach "$T" HEAD || exit 97
+for d in $(. ./.herdr.env >/dev/null 2>&1; echo "\${EXTRA_DIRS:-}"); do [ -e "$d" ] && mkdir -p "$T/$(dirname "$d")" && ln -s "$PWD/$d" "$T/$d"; done
+(cd "$T" && ${task.check}); rc=$?
+git worktree remove --force "$T" >/dev/null 2>&1; rm -rf "$T"; exit $rc`, repo, CHECK_TIMEOUT);
     if (check.code !== 0) {
       // --keep leaves whatever else is uncommitted in the repository as it was.
       deps.sh(`git reset --keep ${quote(before)}`, repo, 60_000);
