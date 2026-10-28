@@ -278,9 +278,19 @@ run_agent() {
     log "$agent: 完了判定=印"
   fi
   if [ "$use_channel" = 1 ]; then
-    goal="$task 途中で質問せず最後までやり切り、全部終わったら最後に channel_finish の道具を 1 回呼ぶ（これで次の段に進む）。"
+    goal="$task"
+    if [ -n "${TASK_ID:-}" ]; then
+      context=$("$TASK_BIN" context "$TASK_ID" 2>/dev/null) || context=
+      [ -z "$context" ] || goal=$(printf '%s\n\n%s' "$context" "$goal")
+    fi
+    goal="$goal 途中で質問せず最後までやり切り、全部終わったら最後に channel_finish の道具を 1 回呼ぶ（これで次の段に進む）。"
   else
-    goal="$task 途中で質問せず最後までやり切り、全部終わったら最後に touch $mark を実行する（この印で次の段に進む）。"
+    goal="$task"
+    if [ -n "${TASK_ID:-}" ]; then
+      context=$("$TASK_BIN" context "$TASK_ID" 2>/dev/null) || context=
+      [ -z "$context" ] || goal=$(printf '%s\n\n%s' "$context" "$goal")
+    fi
+    goal="$goal 途中で質問せず最後までやり切り、全部終わったら最後に touch $mark を実行する（この印で次の段に進む）。"
   fi
   channel_finished() {
     local rows

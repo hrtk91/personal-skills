@@ -19,11 +19,14 @@ export type Task = {
   id: string; repo: string; title: string; why: string; brief: string | null;
   check: string | null; after: string[]; files: string[]; kind: Kind; deploy: boolean;
   status: Status; note: string | null; attempts: number; agent: string | null; commit: string | null;
-  runner: number | null; workdir: string | null; created_at: string; updated_at: string;
+  runner: number | null; workdir: string | null; issue_id: string | null; priority: number; created_at: string; updated_at: string;
 };
+export type Goal = { id: string; repo: string; title: string; why: string; status: '進行中' | '済' | 'やめ'; stages: string[]; position: number; created_at: string };
+export type Issue = { id: string; repo: string; title: string; body: string; by: 'あなた' | 'Claude' | '作業役' | 'レビュー'; from: string | null; goal_id: string | null; stage: string | null; position: number; status: '開いている' | '仕事にした' | '済' | 'やめ'; created_at: string };
+export type Doc = { id: string; repo: string; kind: '仕様' | '設計' | 'モック' | '決まり' | '説明' | '報告'; title: string; goal_id: string | null; path: string | null; body: string | null; version: number; updated_at: string };
 export type NewTask = {
   repo: string; title: string; why: string; brief?: string | null; check?: string | null;
-  after?: string[]; files?: string[]; kind?: Kind; deploy?: boolean;
+  after?: string[]; files?: string[]; kind?: Kind; deploy?: boolean; issue_id?: string | null;
 };
 export type Event = { task_id: string; at: string; from_status: Status | null; to_status: Status; note: string | null };
 export type SpanAttributes = Record<string, string | number | boolean>;
@@ -49,7 +52,7 @@ export class Ledger {
         "check" TEXT, after_json TEXT NOT NULL DEFAULT '[]', files_json TEXT NOT NULL DEFAULT '[]',
         kind TEXT NOT NULL DEFAULT '処理', deploy INTEGER NOT NULL DEFAULT 0,
         status TEXT NOT NULL, note TEXT, attempts INTEGER NOT NULL DEFAULT 0, agent TEXT, "commit" TEXT, runner INTEGER, workdir TEXT,
-        created_at TEXT NOT NULL, updated_at TEXT NOT NULL) STRICT;
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL, issue_id TEXT, priority REAL NOT NULL DEFAULT 0) STRICT;
       CREATE TABLE IF NOT EXISTS events(
         task_id TEXT NOT NULL REFERENCES tasks(id), at TEXT NOT NULL,
         from_status TEXT, to_status TEXT NOT NULL, note TEXT) STRICT;
@@ -57,10 +60,14 @@ export class Ledger {
       CREATE TABLE IF NOT EXISTS spans(
         task_id TEXT NOT NULL REFERENCES tasks(id), attempt INTEGER NOT NULL, name TEXT NOT NULL,
         start TEXT NOT NULL, "end" TEXT NOT NULL, ok INTEGER NOT NULL, attributes_json TEXT NOT NULL DEFAULT '{}') STRICT;
-      CREATE INDEX IF NOT EXISTS spans_task ON spans(task_id, start);`);
+      CREATE INDEX IF NOT EXISTS spans_task ON spans(task_id, start);
+      CREATE TABLE IF NOT EXISTS goals(id TEXT PRIMARY KEY, repo TEXT NOT NULL, title TEXT NOT NULL, why TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '進行中', stages_json TEXT NOT NULL DEFAULT '["下調べ","設計","モック","サーバー","画面","本番","様子見"]', position INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL) STRICT;
+      CREATE TABLE IF NOT EXISTS issues(id TEXT PRIMARY KEY, repo TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL DEFAULT '', by TEXT NOT NULL DEFAULT 'あなた', source TEXT, goal_id TEXT, stage TEXT, position INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT '開いている', created_at TEXT NOT NULL) STRICT;
+      CREATE TABLE IF NOT EXISTS docs(id TEXT PRIMARY KEY, repo TEXT NOT NULL, kind TEXT NOT NULL, title TEXT NOT NULL, goal_id TEXT, path TEXT, body TEXT, version INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL) STRICT;`);
+    const taskColumns = (this.db.prepare('PRAGMA table_info(tasks)').all() as { name: string }[]).map((column) => column.name);
+    for (const [name, type] of [['runner', 'INTEGER'], ['workdir', 'TEXT'], ['issue_id', 'TEXT'], ['priority', 'REAL NOT NULL DEFAULT 0']]) if (!taskColumns.includes(name)) this.db.exec(`ALTER TABLE tasks ADD COLUMN ${name} ${type}`);
     // Ledgers made before the harness started tasks itself lack these columns.
-    const columns = (this.db.prepare('PRAGMA table_info(tasks)').all() as { name: string }[]).map((column) => column.name);
-    for (const [name, type] of [['runner', 'INTEGER'], ['workdir', 'TEXT']]) if (!columns.includes(name!)) this.db.exec(`ALTER TABLE tasks ADD COLUMN ${name} ${type}`);
+
   }
 
   close(): void { this.db.close(); }
@@ -77,9 +84,12 @@ export class Ledger {
     const at = this.now().toISOString();
     // Without a brief nobody can run it yet; the commanding Claude is reminded until one is written.
     const status: Status = input.brief?.trim() ? '待ち' : '依頼文待ち';
-    this.db.prepare(`INSERT INTO tasks(id,repo,title,why,brief,"check",after_json,files_json,kind,deploy,status,created_at,updated_at)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(id, input.repo, title, input.why.trim(), input.brief?.trim() || null,
-      input.check?.trim() || null, JSON.stringify(after), JSON.stringify(input.files ?? []), kind, input.deploy ? 1 : 0, status, at, at);
+    const priority = Number((this.db.prepare('SELECT COALESCE(MAX(priority),-1)+1 AS n FROM tasks').get() as { n: number }).n);
+    if (input.issue_id && !this.getIssue(input.issue_id)) throw new Error(`Issue が台帳にありません: ${input.issue_id}`);
+    this.db.prepare(`INSERT INTO tasks(id,repo,title,why,brief,"check",after_json,files_json,kind,deploy,status,created_at,updated_at,issue_id,priority)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(id, input.repo, title, input.why.trim(), input.brief?.trim() || null,
+      input.check?.trim() || null, JSON.stringify(after), JSON.stringify(input.files ?? []), kind, input.deploy ? 1 : 0, status, at, at, input.issue_id ?? null, priority);
+    if (input.issue_id) this.db.prepare("UPDATE issues SET status='仕事にした' WHERE id=?").run(input.issue_id);
     this.event(id, null, status, null, at);
     return this.get(id)!;
   }
@@ -97,6 +107,22 @@ export class Ledger {
     const sql = `SELECT * FROM tasks${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY created_at, id`;
     return (this.db.prepare(sql).all(...args) as Record<string, unknown>[]).map(toTask);
   }
+
+  addGoal(input: { repo: string; title: string; why?: string; stages?: string[] }): Goal {
+    const title=input.title.trim(); if(!title) throw new Error('Goal の題が空です'); const id=this.nextEntityId(input.repo,'g'); const at=this.now().toISOString(); const position=Number((this.db.prepare('SELECT COALESCE(MAX(position),-1)+1 AS n FROM goals WHERE repo=?').get(input.repo) as {n:number}).n);
+    this.db.prepare('INSERT INTO goals(id,repo,title,why,stages_json,position,created_at) VALUES(?,?,?,?,?,?,?)').run(id,input.repo,title,input.why?.trim()??'',JSON.stringify(input.stages??['下調べ','設計','モック','サーバー','画面','本番','様子見']),position,at); return this.getGoal(id)!;
+  }
+  listGoals(repo?:string):Goal[]{return (this.db.prepare(`SELECT * FROM goals${repo?' WHERE repo=?':''} ORDER BY repo,position,created_at`).all(...(repo?[repo]:[])) as Record<string,unknown>[]).map(r=>({...r,stages:JSON.parse(String(r.stages_json))} as Goal));}
+  getGoal(id:string):Goal|null{return this.listGoals().find(g=>g.id===id)??null;}
+  moveGoal(id:string,direction:'up'|'down'|'first'):void{const g=this.getGoal(id);if(!g)throw new Error(`Goal がありません: ${id}`);const a=this.listGoals(g.repo),i=a.findIndex(x=>x.id===id),j=direction==='first'?0:Math.max(0,Math.min(a.length-1,i+(direction==='up'?-1:1)));if(i===j)return;a.splice(j,0,...a.splice(i,1));a.forEach((x,n)=>this.db.prepare('UPDATE goals SET position=? WHERE id=?').run(n,x.id));}
+  addIssue(input:{repo:string;title:string;body?:string;by?:Issue['by'];from?:string;goal_id?:string;stage?:string}):Issue{const id=this.nextEntityId(input.repo,'i'),at=this.now().toISOString(),position=Number((this.db.prepare('SELECT COALESCE(MAX(position),-1)+1 AS n FROM issues WHERE repo=?').get(input.repo) as {n:number}).n);this.db.prepare('INSERT INTO issues(id,repo,title,body,"by",source,goal_id,stage,position,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)').run(id,input.repo,input.title.trim(),input.body??'',input.by??'あなた',input.from??null,input.goal_id??null,input.stage??null,position,at);return this.getIssue(id)!;}
+  getIssue(id:string):Issue|null{const r=this.db.prepare('SELECT * FROM issues WHERE id=?').get(id) as Record<string,unknown>|undefined;return r?({...r,from:r.source} as Issue):null;}
+  listIssues(o:{repo?:string;goal?:string;loose?:boolean}={}):Issue[]{const w:string[]=[],a:unknown[]=[];if(o.repo){w.push('repo=?');a.push(o.repo)}if(o.goal){w.push('goal_id=?');a.push(o.goal)}if(o.loose)w.push('goal_id IS NULL');return(this.db.prepare(`SELECT * FROM issues${w.length?' WHERE '+w.join(' AND '):''} ORDER BY repo,position,created_at`).all(...a) as Record<string,unknown>[]).map(r=>({...r,from:r.source} as Issue));}
+  addDoc(input:{repo:string;kind:Doc['kind'];title:string;goal_id?:string;path?:string;body?:string}):Doc{if(!!input.path===!!input.body)throw new Error('--path または --body を一つ指定してください');const id=this.nextEntityId(input.repo,'d'),at=this.now().toISOString();this.db.prepare('INSERT INTO docs(id,repo,kind,title,goal_id,path,body,version,updated_at) VALUES(?,?,?,?,?,?,?,?,?)').run(id,input.repo,input.kind,input.title.trim(),input.goal_id??null,input.path??null,input.body??null,1,at);return this.getDoc(id)!;}
+  getDoc(id:string):Doc|null{const r=this.db.prepare('SELECT * FROM docs WHERE id=?').get(id) as Record<string,unknown>|undefined;return r?r as Doc:null;}
+  listDocs(o:{repo?:string;goal?:string}={}):Doc[]{const w:string[]=[],a:unknown[]=[];if(o.repo){w.push('repo=?');a.push(o.repo)}if(o.goal){w.push('goal_id=?');a.push(o.goal)}return this.db.prepare(`SELECT * FROM docs${w.length?' WHERE '+w.join(' AND '):''} ORDER BY updated_at DESC`).all(...a) as Doc[];}
+  setPriority(id:string,direction:'first'|'up'|'down'):void{const t=this.get(id);if(!t)throw new Error(`台帳にありません: ${id}`);if(t.status!=='待ち')throw new Error('待ちの仕事だけ priority を動かせます');const a=this.list({repo:t.repo,status:'待ち'}).sort((x,y)=>x.priority-y.priority||x.created_at.localeCompare(y.created_at)),i=a.findIndex(x=>x.id===id),j=direction==='first'?0:Math.max(0,Math.min(a.length-1,i+(direction==='up'?-1:1)));if(i===j)return;a.splice(j,0,...a.splice(i,1));a.forEach((x,n)=>this.db.prepare('UPDATE tasks SET priority=? WHERE id=?').run(n,x.id));}
+  private nextEntityId(repo:string,kind:'g'|'i'|'d'):string{const base=repo.split('/').filter(Boolean).at(-1)?.toLowerCase().replace(/[^a-z0-9-]+/g,'-').replace(/^-|-$/g,'')||'task',table=kind==='g'?'goals':kind==='i'?'issues':'docs',rows=this.db.prepare(`SELECT id FROM ${table} WHERE repo=?`).all(repo) as {id:string}[],re=new RegExp(`^${base}-${kind}(\\d+)$`),n=rows.reduce((m,r)=>Math.max(m,Number(re.exec(r.id)?.[1]??0)),0)+1;return `${base}-${kind}${n}`;}
 
   events(id: string): Event[] {
     return this.db.prepare('SELECT task_id,at,from_status,to_status,note FROM events WHERE task_id=? ORDER BY at, rowid').all(id) as Event[];
@@ -166,7 +192,7 @@ export class Ledger {
   ready(): Task[] {
     const active = this.list().filter((task) => ACTIVE.includes(task.status));
     const picked: Task[] = [];
-    for (const task of this.list({ status: '待ち' })) {
+    for (const task of this.list({ status: '待ち' }).sort((a, b) => a.priority - b.priority || a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id))) {
       if (!task.after.every((id) => this.get(id)?.status === '済')) continue;
       const busy = [...active, ...picked].filter((other) => other.repo === task.repo);
       if (busy.some((other) => filesOverlap(task.files, other.files))) continue;
@@ -233,6 +259,6 @@ function toTask(row: Record<string, unknown>): Task {
     kind: String(row.kind) as Kind, deploy: row.deploy === 1, status: String(row.status) as Status,
     note: row.note === null ? null : String(row.note), attempts: Number(row.attempts),
     agent: row.agent === null ? null : String(row.agent), commit: row.commit === null ? null : String(row.commit),
-    runner: row.runner === null ? null : Number(row.runner), workdir: row.workdir === null ? null : String(row.workdir), created_at: String(row.created_at), updated_at: String(row.updated_at),
+    runner: row.runner === null ? null : Number(row.runner), workdir: row.workdir === null ? null : String(row.workdir), issue_id: row.issue_id === null ? null : String(row.issue_id), priority: Number(row.priority), created_at: String(row.created_at), updated_at: String(row.updated_at),
   };
 }
