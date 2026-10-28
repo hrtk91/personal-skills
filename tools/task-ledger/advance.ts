@@ -5,7 +5,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { defaultPath, type Ledger, type Status, type Task } from './ledger.ts';
+import { defaultPath, type Ledger, type SpanAttributes, type Status, type Task } from './ledger.ts';
 import { HERDR_RUN, logPath, runName } from './run.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -20,8 +20,8 @@ export type Verdict = { verdict: '通す' | '直す' | '判断'; reasons: string
 export type Shell = { code: number; output: string };
 export type AdvanceDeps = {
   sh: (command: string, cwd: string, timeoutMs: number) => Shell;
-  /** Asks the reviewer and returns its whole answer. */
-  review: (prompt: string, cwd: string, readable: string[]) => string;
+  /** Asks the reviewer and returns its whole answer, with what the call cost when that is known (for the trace). */
+  review: (prompt: string, cwd: string, readable: string[]) => string | { answer: string; attributes: SpanAttributes };
   /** Starts herdr-run.sh again on the task's existing worktree and returns its process id. */
   resend: (task: Task, name: string) => number;
   /** Waits a little before looking again (merges in one repository go one at a time). */
@@ -60,7 +60,7 @@ export function advance(ledger: Ledger, id: string, deps: AdvanceDeps, pid = pro
     const task = ledger.get(id)!;
     if (task.status === '確かめ中') {
       if (!task.workdir || !existsSync(task.workdir)) return stop(`作業用のコピーが見つからない（${task.workdir ?? '記録なし'}）`);
-      const check = checkTwice(task, deps, said, () => deps.sh(task.check ?? 'true', task.workdir!, CHECK_TIMEOUT), `check-${task.attempts}`);
+      const check = checkTwice(ledger, task, said, () => deps.sh(task.check ?? 'true', task.workdir!, CHECK_TIMEOUT), `check-${task.attempts}`, '確かめ');
       const path = writeLog(id, `check-${task.attempts}`, check.output);
       if (check.code !== 0) { sendBack(ledger, task, deps, `確かめのコマンド \`${task.check}\` が落ちた（終了コード ${check.code}）。`, tail(check.output), said, stop); return said; }
       ledger.setStatus(id, 'レビュー中', `確かめが通った。出力: ${path}`);
@@ -70,7 +70,11 @@ export function advance(ledger: Ledger, id: string, deps: AdvanceDeps, pid = pro
       const base = deps.sh(`git merge-base HEAD ${quote(gitHead(task.repo, deps))}`, workdir, 60_000).output.trim();
       const diffPath = writeLog(id, `diff-${task.attempts}`, deps.sh(`git diff ${quote(base)} HEAD`, workdir, 60_000).output);
       const checkPath = logPath(id).replace(/\.log$/, `-check-${task.attempts}.log`);
-      const answer = deps.review(reviewPrompt(task, diffPath, checkPath), workdir, [dirname(diffPath)]);
+      const reply = timed(ledger, task, 'レビュー', () => deps.review(reviewPrompt(task, diffPath, checkPath), workdir, [dirname(diffPath)]), (got) => {
+        const found = parseVerdict(typeof got === 'string' ? got : got.answer);
+        return { ok: found !== null, attributes: { ...(typeof got === 'string' ? {} : got.attributes), 'review.verdict': found?.verdict ?? '読めない' } };
+      });
+      const answer = typeof reply === 'string' ? reply : reply.answer;
       writeLog(id, `review-${task.attempts}`, answer);
       const verdict = parseVerdict(answer);
       if (!verdict) return stop('レビューの答えから決まった形の JSON を読めなかった');
@@ -121,7 +125,7 @@ function merge(ledger: Ledger, task: Task, deps: AdvanceDeps, said: string[], st
   }
   if (moved.length) said.push(`${task.id}: 本体のコミットしていない ${moved.length} 個を ${aside} へ移した`);
   // The repository's own name for commits, or the harness's when it has none.
-  const merged = deps.sh(`git -c user.name="$(git config user.name || echo task-ledger)" -c user.email="$(git config user.email || echo task-ledger@noreply.invalid)" merge --no-ff --no-edit -m ${quote(`${task.title}\n\nTask: ${task.id}`)} ${quote(branch)}`, repo, 120_000);
+  const merged = timed(ledger, task, '本体に入れる', () => deps.sh(`git -c user.name="$(git config user.name || echo task-ledger)" -c user.email="$(git config user.email || echo task-ledger@noreply.invalid)" merge --no-ff --no-edit -m ${quote(`${task.title}\n\nTask: ${task.id}`)} ${quote(branch)}`, repo, 120_000), exitCode);
   if (merged.code !== 0) {
     const conflicted = deps.sh('git diff --name-only --diff-filter=U', repo, 60_000).output.trim();
     deps.sh('git merge --abort', repo, 60_000);
@@ -132,10 +136,10 @@ function merge(ledger: Ledger, task: Task, deps: AdvanceDeps, said: string[], st
     // In a throwaway copy of the merged commit, never in the repository itself: a repository may serve its build
     // output to production straight from its folder (random-image did; 10/28). The copy borrows the folders
     // .herdr.env lists in EXTRA_DIRS (node_modules and the like) by link.
-    const check = checkTwice(task, deps, said, () => deps.sh(`T=$(mktemp -d) && rmdir "$T" && git worktree add -q --detach "$T" HEAD || exit 97
+    const check = checkTwice(ledger, task, said, () => deps.sh(`T=$(mktemp -d) && rmdir "$T" && git worktree add -q --detach "$T" HEAD || exit 97
 for d in $(. ./.herdr.env >/dev/null 2>&1; echo "\${EXTRA_DIRS:-}"); do [ -e "$d" ] && [ ! -e "$T/$d" ] && mkdir -p "$T/$(dirname "$d")" && ln -s "$PWD/$d" "$T/$d"; done
 (cd "$T" && ${task.check}); rc=$?
-git worktree remove --force "$T" >/dev/null 2>&1; rm -rf "$T"; exit $rc`, repo, CHECK_TIMEOUT), 'merged-check');
+git worktree remove --force "$T" >/dev/null 2>&1; rm -rf "$T"; exit $rc`, repo, CHECK_TIMEOUT), 'merged-check', '取り込み後の確かめ');
     if (check.code !== 0) {
       // --keep leaves whatever else is uncommitted in the repository as it was.
       deps.sh(`git reset --keep ${quote(before)}`, repo, 60_000);
@@ -144,13 +148,13 @@ git worktree remove --force "$T" >/dev/null 2>&1; rm -rf "$T"; exit $rc`, repo, 
   }
   const commit = gitHead(repo, deps);
   if (task.deploy) {
-    const deployed = deps.sh(`. ./.herdr.env 2>/dev/null; [ -n "\${TASK_DEPLOY:-}" ] || { echo '.herdr.env に TASK_DEPLOY が無い'; exit 3; }; TASK_ID=${quote(task.id)} eval "$TASK_DEPLOY"`, repo, DEPLOY_TIMEOUT);
+    const deployed = timed(ledger, task, '本番に出す', () => deps.sh(`. ./.herdr.env 2>/dev/null; [ -n "\${TASK_DEPLOY:-}" ] || { echo '.herdr.env に TASK_DEPLOY が無い'; exit 3; }; TASK_ID=${quote(task.id)} eval "$TASK_DEPLOY"`, repo, DEPLOY_TIMEOUT), exitCode);
     if (deployed.code !== 0) {
       return stop(`取り込んだ（${commit.slice(0, 7)}）が、本番に出せなかった。出力: ${writeLog(task.id, 'deploy', deployed.output)}`);
     }
     said.push(`${task.id}: 本番に出した`);
   }
-  const cleaned = deps.sh(`bash ${quote(HERDR_RUN)} --cleanup ${quote(runName(task))}`, repo, 120_000);
+  const cleaned = timed(ledger, task, '片付け', () => deps.sh(`bash ${quote(HERDR_RUN)} --cleanup ${quote(runName(task))}`, repo, 120_000), exitCode);
   ledger.setStatus(task.id, '済', cleaned.code === 0 ? '取り込んだ' : `取り込んだが片付けに失敗: ${tail(cleaned.output, 3)}`, { commit });
   ledger.releaseRunner(task.id);
   said.push(`${task.id}: 済（${commit.slice(0, 7)}）`);
@@ -161,7 +165,7 @@ git worktree remove --force "$T" >/dev/null 2>&1; rm -rf "$T"; exit $rc`, repo, 
 // hand the work back to the worker to settle.
 function catchUp(ledger: Ledger, task: Task, deps: AdvanceDeps, head: string, said: string[], stop: (note: string) => unknown): 'again' | void {
   const workdir = task.workdir!;
-  const into = deps.sh(`git -c user.name="$(git config user.name || echo task-ledger)" -c user.email="$(git config user.email || echo task-ledger@noreply.invalid)" merge --no-edit -m ${quote(`本体の ${head.slice(0, 7)} を取り込む（${task.id}）`)} ${quote(head)}`, workdir, 120_000);
+  const into = timed(ledger, task, '本体を作業役のコピーへ', () => deps.sh(`git -c user.name="$(git config user.name || echo task-ledger)" -c user.email="$(git config user.email || echo task-ledger@noreply.invalid)" merge --no-edit -m ${quote(`本体の ${head.slice(0, 7)} を取り込む（${task.id}）`)} ${quote(head)}`, workdir, 120_000), exitCode);
   if (into.code === 0) {
     ledger.setStatus(task.id, '確かめ中', `本体が先に進んでいたので、作業役のコピーに本体の ${head.slice(0, 7)} を取り込んだ。確かめ直す`);
     said.push(`${task.id}: 本体を取り込んで確かめ直す`);
@@ -178,13 +182,29 @@ function catchUp(ledger: Ledger, task: Task, deps: AdvanceDeps, head: string, sa
 
 // A check that fails runs once more before anything is decided: on a busy PC an e2e that the task never touched can
 // time out (10/28: three different specs did, one per run). The first output is kept and the event names it.
-function checkTwice(task: Task, deps: AdvanceDeps, said: string[], run: () => { code: number; output: string }, label: string): { code: number; output: string } {
-  const first = run();
+function checkTwice(ledger: Ledger, task: Task, said: string[], command: () => Shell, label: string, name: string): Shell {
+  const run = (count: number) => timed(ledger, task, name, command, (result) => ({ ok: result.code === 0, attributes: { 'step.exit_code': result.code, 'step.run': count } }));
+  const first = run(1);
   if (first.code === 0) return first;
   const firstLog = writeLog(task.id, `${label}-first-fail`, first.output);
-  const second = run();
+  const second = run(2);
   if (second.code === 0) said.push(`${task.id}: 確かめは 1 回目に落ち、流し直して通った（1 回目: ${firstLog}）`);
   return second.code === 0 ? { code: 0, output: `${second.output}\n\n[1 回目は落ちた（終了コード ${first.code}）: ${firstLog}]` } : second;
+}
+
+/** Runs one harness step and records it in the task's trace (handoff/task-ledger-trace-design.md). */
+function timed<T>(ledger: Ledger, task: Task, name: string, run: () => T, describe: (result: T) => { ok: boolean; attributes?: SpanAttributes }): T {
+  const start = new Date().toISOString();
+  const result = run();
+  try {
+    const { ok, attributes = {} } = describe(result);
+    ledger.recordSpan({ task_id: task.id, attempt: task.attempts, name, start, end: new Date().toISOString(), ok, attributes });
+  } catch { /* a trace that cannot be written never stops the work */ }
+  return result;
+}
+
+function exitCode(result: Shell): { ok: boolean; attributes: SpanAttributes } {
+  return { ok: result.code === 0, attributes: { 'step.exit_code': result.code } };
 }
 
 function writeLog(id: string, name: string, text: string): string {
@@ -241,12 +261,25 @@ export const realAdvanceDeps: AdvanceDeps = {
   review(prompt, cwd, readable) {
     // Opus reads and judges only (10/27 「Opus」). It may read the work and the logs, never write.
     // Without the user's hooks and MCP servers: a Stop hook that waits for an hour kept `claude -p` from exiting (10/28).
-    const result = spawnSync('claude', ['-p', '--model', 'opus', '--output-format', 'text',
+    const result = spawnSync('claude', ['-p', '--model', 'opus', '--output-format', 'json',
       '--settings', JSON.stringify({ disableAllHooks: true }), '--strict-mcp-config',
       '--allowedTools', 'Read', 'Grep', 'Glob', 'Bash(git diff:*)', 'Bash(git log:*)', 'Bash(git show:*)', 'Bash(git status:*)',
       '--disallowedTools', 'Edit', 'Write', 'NotebookEdit', ...readable.flatMap((dir) => ['--add-dir', dir])],
     { cwd, input: prompt, encoding: 'utf8', timeout: REVIEW_TIMEOUT, maxBuffer: 64 * 1024 * 1024 });
-    return `${result.stdout ?? ''}${result.status === 0 ? '' : `\n（レビュー役が終了コード ${result.status} で終わった）${result.stderr ?? ''}`}`;
+    const failed = result.status === 0 ? '' : `\n（レビュー役が終了コード ${result.status} で終わった）${result.stderr ?? ''}`;
+    // The JSON result carries the answer and what the call cost; anything else is passed on as it came.
+    try {
+      const json = JSON.parse(result.stdout ?? '') as { result?: string; total_cost_usd?: number; duration_ms?: number; num_turns?: number; usage?: Record<string, number> };
+      const usage = json.usage ?? {};
+      const attributes: SpanAttributes = {};
+      for (const [key, value] of Object.entries({
+        'review.cost_usd': json.total_cost_usd, 'review.turns': json.num_turns, 'review.input_tokens': usage.input_tokens,
+        'review.output_tokens': usage.output_tokens, 'review.cache_read_tokens': usage.cache_read_input_tokens, 'review.cache_write_tokens': usage.cache_creation_input_tokens,
+      })) if (typeof value === 'number') attributes[key] = value;
+      return { answer: `${json.result ?? ''}${failed}`, attributes };
+    } catch {
+      return `${result.stdout ?? ''}${failed}`;
+    }
   },
   resend(task, name) {
     const out = openSync(logPath(task.id), 'a');

@@ -26,6 +26,9 @@ export type NewTask = {
   after?: string[]; files?: string[]; kind?: Kind; deploy?: boolean;
 };
 export type Event = { task_id: string; at: string; from_status: Status | null; to_status: Status; note: string | null };
+export type SpanAttributes = Record<string, string | number | boolean>;
+/** One step inside the harness (a check run, the review, the merge…), for tracing. Design: handoff/task-ledger-trace-design.md */
+export type Span = { task_id: string; attempt: number; name: string; start: string; end: string; ok: boolean; attributes: SpanAttributes };
 
 export function defaultPath(): string {
   return process.env.TASK_LEDGER_DB ?? join(homedir(), '.local/share/task-ledger/ledger.sqlite');
@@ -50,7 +53,11 @@ export class Ledger {
       CREATE TABLE IF NOT EXISTS events(
         task_id TEXT NOT NULL REFERENCES tasks(id), at TEXT NOT NULL,
         from_status TEXT, to_status TEXT NOT NULL, note TEXT) STRICT;
-      CREATE INDEX IF NOT EXISTS events_task ON events(task_id, at);`);
+      CREATE INDEX IF NOT EXISTS events_task ON events(task_id, at);
+      CREATE TABLE IF NOT EXISTS spans(
+        task_id TEXT NOT NULL REFERENCES tasks(id), attempt INTEGER NOT NULL, name TEXT NOT NULL,
+        start TEXT NOT NULL, "end" TEXT NOT NULL, ok INTEGER NOT NULL, attributes_json TEXT NOT NULL DEFAULT '{}') STRICT;
+      CREATE INDEX IF NOT EXISTS spans_task ON spans(task_id, start);`);
     // Ledgers made before the harness started tasks itself lack these columns.
     const columns = (this.db.prepare('PRAGMA table_info(tasks)').all() as { name: string }[]).map((column) => column.name);
     for (const [name, type] of [['runner', 'INTEGER'], ['workdir', 'TEXT']]) if (!columns.includes(name!)) this.db.exec(`ALTER TABLE tasks ADD COLUMN ${name} ${type}`);
@@ -93,6 +100,16 @@ export class Ledger {
 
   events(id: string): Event[] {
     return this.db.prepare('SELECT task_id,at,from_status,to_status,note FROM events WHERE task_id=? ORDER BY at, rowid').all(id) as Event[];
+  }
+
+  recordSpan(span: Span): void {
+    this.db.prepare('INSERT INTO spans(task_id,attempt,name,start,"end",ok,attributes_json) VALUES(?,?,?,?,?,?,?)')
+      .run(span.task_id, span.attempt, span.name, span.start, span.end, span.ok ? 1 : 0, JSON.stringify(span.attributes));
+  }
+
+  spans(id: string): Span[] {
+    return (this.db.prepare('SELECT task_id,attempt,name,start,"end",ok,attributes_json FROM spans WHERE task_id=? ORDER BY start, rowid').all(id) as Record<string, unknown>[])
+      .map((row) => ({ task_id: String(row.task_id), attempt: Number(row.attempt), name: String(row.name), start: String(row.start), end: String(row.end), ok: row.ok === 1, attributes: JSON.parse(String(row.attributes_json)) }));
   }
 
   /** Changes a task's status, records it, and pushes tasks that depend on a dead end to 判断待ち. */

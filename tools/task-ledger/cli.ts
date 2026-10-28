@@ -1,10 +1,11 @@
 // `task`: the command people and the commanding Claude use to put tasks into the ledger and read it.
 // Moving a task through 走行中 → 済 is the harness's job, not this command's (except hold / drop / answer).
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { isAbsolute, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { KINDS, Ledger, STATUSES, type Kind, type Status, type Task } from './ledger.ts';
+import { buildTrace, renderTrace, report, toOtlp, tracesSince } from './trace.ts';
+import { defaultPath, KINDS, Ledger, STATUSES, type Kind, type Status, type Task } from './ledger.ts';
 import { realDeps, runOnce, type RunDeps } from './run.ts';
 import { advance, realAdvanceDeps, type AdvanceDeps } from './advance.ts';
 
@@ -21,6 +22,9 @@ const USAGE = `使い方:
                                                         取り込み中 は Claude がレビューの「直す」を越えて取り込むと決めたとき。答えに理由を書く）
   task export [--repo <パス>]                           ROADMAP 用の一覧（読む用の写し）
   task run                                              1 回まわす（消えたプロセスを見つけ、終わった仕事を先へ進め、次の仕事を 1 つ出す）
+  task trace <id>                                       1 件の時間の流れ（状態ごと・ハーネスの段ごと）
+  task report [--since <日時>] [--repo <パス>]           段ごとのかかった時間・戻った理由・レビューの費用
+  task otel [--since <日時>] [--repo <パス>] [--out <パス>]  OTLP の JSON に書き出す（既定 ~/.local/share/task-ledger/traces/）
 ハーネスの中で使うもの:
   task started <id> --agent <名> --runner <PID> [--workdir <パス>]   台本が動き始めた（herdr-run.sh が呼ぶ）
   task advance <id>                                     確かめ → レビュー → 取り込み（task run が裏で起こす）
@@ -57,6 +61,7 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
     after: { type: 'string' }, files: { type: 'string' }, kind: { type: 'string' }, deploy: { type: 'boolean' },
     repo: { type: 'string' }, all: { type: 'boolean' }, status: { type: 'string' }, to: { type: 'string' },
     agent: { type: 'string' }, runner: { type: 'string' }, commit: { type: 'string' }, log: { type: 'string' }, workdir: { type: 'string' },
+    since: { type: 'string' }, out: { type: 'string' },
   } });
   const ledger = new Ledger();
   try {
@@ -134,6 +139,24 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
       case 'run':
         for (const said of runOnce(ledger, deps)) out(said);
         return 0;
+      case 'trace': {
+        const task = ledger.get(positionals[0] ?? '');
+        if (!task) throw new Error(`台帳にありません: ${positionals[0] ?? ''}`);
+        out(`${'始まりから'.padStart(8)} ${'かかった'.padStart(8)}    ${task.id}`);
+        for (const text of renderTrace(buildTrace(ledger, task))) out(text);
+        return 0;
+      }
+      case 'report': case 'otel': {
+        const since = values.since ? new Date(values.since) : null;
+        if (since && Number.isNaN(since.getTime())) throw new Error(`--since が日時として読めない: ${values.since}`);
+        const traces = tracesSince(ledger, since, repo);
+        if (command === 'report') { for (const text of report(traces)) out(text); return 0; }
+        const path = values.out ?? join(dirname(defaultPath()), 'traces', `task-ledger-${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
+        mkdirSync(dirname(path), { recursive: true });
+        writeFileSync(path, JSON.stringify(toOtlp(traces)));
+        out(`${traces.length} 件の仕事を書き出した: ${path}`);
+        return 0;
+      }
       case 'advance': {
         if (!ledger.get(positionals[0] ?? '')) throw new Error(`台帳にありません: ${positionals[0] ?? ''}`);
         for (const said of advance(ledger, positionals[0]!, advanceDeps)) out(said);
