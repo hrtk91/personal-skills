@@ -2,7 +2,7 @@
 // One `task advance <id>` process carries one task as far as it can and leaves it at 済, 判断待ち, or back
 // with the worker (走行中) carrying the reason. Design: handoff/task-ledger-design.md (流れ 3〜5)
 import { spawn, spawnSync } from 'node:child_process';
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, rmdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defaultPath, type Ledger, type Status, type Task } from './ledger.ts';
@@ -107,6 +107,17 @@ function merge(ledger: Ledger, task: Task, deps: AdvanceDeps, said: string[], st
   const branch = deps.sh('git branch --show-current', task.workdir!, 60_000).output.trim();
   if (!branch) return stop('作業用のコピーのブランチが分からない');
   const before = gitHead(repo, deps);
+  // The worker's branch carries its brief and reports under handoff/, which often sit uncommitted in the repository
+  // too, and git will not overwrite them. Move those aside (kept with the task's logs) before merging.
+  const added = deps.sh(`git diff --name-only --diff-filter=A HEAD...${quote(branch)}`, repo, 60_000).output.split('\n').filter(Boolean);
+  const untracked = new Set(deps.sh('git ls-files --others --exclude-standard', repo, 60_000).output.split('\n').filter(Boolean));
+  const aside = logPath(task.id).replace(/\.log$/, '-untracked');
+  const moved = added.filter((path) => untracked.has(path));
+  for (const path of moved) {
+    mkdirSync(dirname(join(aside, path)), { recursive: true });
+    renameSync(join(repo, path), join(aside, path));
+  }
+  if (moved.length) said.push(`${task.id}: 本体のコミットしていない ${moved.length} 個を ${aside} へ移した`);
   // The repository's own name for commits, or the harness's when it has none.
   const merged = deps.sh(`git -c user.name="$(git config user.name || echo task-ledger)" -c user.email="$(git config user.email || echo task-ledger@noreply.invalid)" merge --no-ff --no-edit -m ${quote(`${task.title}\n\nTask: ${task.id}`)} ${quote(branch)}`, repo, 120_000);
   if (merged.code !== 0) {

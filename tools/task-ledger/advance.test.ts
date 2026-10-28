@@ -62,6 +62,19 @@ test('checked and approved work is merged with the task mark and the worktree is
   } finally { f.done(); }
 });
 
+test('an uncommitted copy of a file the branch adds is moved aside so the merge can go in', () => {
+  const f = fixture();
+  try {
+    writeFileSync(join(f.workdir, 'handoff/t-report.md'), '報告\n');
+    git(f.workdir, 'add', '-A'); git(f.workdir, 'commit', '-qm', 'report');
+    writeFileSync(join(f.repo, 'handoff/t-report.md'), '本体の古い写し\n');
+    advance(f.ledger, 'repo-1', deps('{"verdict":"通す","reasons":[],"fixes":[]}'), 1);
+    assert.equal(f.ledger.get('repo-1')!.status, '済');
+    assert.equal(readFileSync(join(f.repo, 'handoff/t-report.md'), 'utf8'), '報告\n');
+    assert.equal(readFileSync(join(f.dir, 'logs/repo-1-untracked/handoff/t-report.md'), 'utf8'), '本体の古い写し\n');
+  } finally { f.done(); }
+});
+
 test('a failing check goes back to the worker with the output written into its brief', () => {
   const f = fixture({ check: 'echo 掛け算が無い; exit 1' });
   try {
