@@ -1,0 +1,9 @@
+[Unit]
+Description=Task ledger: a harness pass every 3 minutes, so a missed trigger never stops the work
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=3min
+
+[Install]
+WantedBy=timers.target
