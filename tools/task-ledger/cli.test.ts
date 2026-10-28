@@ -16,6 +16,8 @@ test('task add / brief / ready / answer / export through the command', async () 
     assert.match(run('brief', 'repo-1', 'handoff/a.md', '--check', 'npm test').text, /待ち/);
     assert.match(run('ready').text, /repo-1/);
     assert.equal(run('answer', 'repo-1', 'はい').code, 1);
+    run('hold', 'repo-1', '待つ');
+    assert.equal(run('answer', 'repo-1', '直した', '--to', '確かめ中').code, 1);
     run('drop', 'repo-1', '要らない');
     assert.match(run('list', '--all').text, /やめ/);
     assert.match(run('export', '--repo', repo).text, /^# ROADMAP/);

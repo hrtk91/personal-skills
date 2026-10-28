@@ -17,7 +17,7 @@ const USAGE = `使い方:
   task ready                                            いま出してよい仕事
   task hold <id> <理由といつ見直すか>
   task drop <id> <理由>
-  task answer <id> <答え> [--to 待ち|やめ|保留]          判断待ちに答える（既定は 待ち に戻す）
+  task answer <id> <答え> [--to 待ち|やめ|保留|確かめ中]  判断待ちに答える（既定は 待ち に戻す。確かめ中 は Claude が作業役のコピーで直したとき）
   task export [--repo <パス>]                           ROADMAP 用の一覧（読む用の写し）
   task run                                              1 回まわす（消えたプロセスを見つけ、終わった仕事を先へ進め、次の仕事を 1 つ出す）
 ハーネスの中で使うもの:
@@ -108,8 +108,14 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
         if (!task || words.length === 0) throw new Error('task answer <id> <答え>');
         if (task.status !== '判断待ち' && task.status !== '保留') throw new Error(`判断待ち・保留ではありません（今は ${task.status}）`);
         const to = (values.to ?? '待ち') as Status;
-        if (!['待ち', 'やめ', '保留'].includes(to)) throw new Error('--to は 待ち・やめ・保留');
+        if (!['待ち', 'やめ', '保留', '確かめ中'].includes(to)) throw new Error('--to は 待ち・やめ・保留・確かめ中');
+        if (to === '確かめ中' && !task.workdir) throw new Error('作業役のコピーが記録されていないので、確かめ中には戻せません');
         out(line(ledger.setStatus(task.id, to, `答え: ${words.join(' ')}`)));
+        if (to !== '確かめ中') return 0;
+        // The work in the worker's copy was fixed by hand: check, review and merge it now.
+        ledger.releaseRunner(task.id);
+        for (const said of advance(ledger, task.id, advanceDeps)) out(said);
+        for (const said of runOnce(ledger, deps)) out(said);
         return 0;
       }
       case 'export': {
