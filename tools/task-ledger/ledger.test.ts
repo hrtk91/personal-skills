@@ -1,5 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { Ledger, filesOverlap } from './ledger.ts';
 
 const make = () => new Ledger(':memory:');
@@ -77,6 +81,31 @@ test('holding needs a reason; closed tasks leave the default list', () => {
   ledger.setStatus(a.id, '済');
   assert.deepEqual(ledger.list(), []);
   assert.equal(ledger.list({ all: true }).length, 1);
+});
+
+test('ready respects priority without bypassing dependencies or file locks; only waiting tasks can be reordered', () => {
+  const ledger=make();
+  const a=ledger.add({...base,title:'A',brief:'x',files:['a']});
+  const b=ledger.add({...base,title:'B',brief:'x',files:['b']});
+  const c=ledger.add({...base,title:'C',brief:'x',files:['a'],after:[a.id]});
+  ledger.setPriority(b.id,'first');
+  assert.deepEqual(ledger.ready().map(t=>t.id),[b.id,a.id]);
+  ledger.setStatus(a.id,'走行中');
+  ledger.setPriority(c.id,'first');
+  assert.deepEqual(ledger.ready().map(t=>t.id),[b.id]);
+  assert.throws(()=>ledger.setPriority(a.id,'first'),/待ち/);
+});
+
+test('new schema initialization is idempotent and preserves existing task rows', () => {
+  const dir=mkdtempSync(join(tmpdir(),'ledger-migrate-')),path=join(dir,'db.sqlite');
+  try {
+    const old=new DatabaseSync(path);
+    old.exec(`CREATE TABLE tasks(id TEXT PRIMARY KEY,repo TEXT NOT NULL,title TEXT NOT NULL,why TEXT NOT NULL,brief TEXT,"check" TEXT,after_json TEXT NOT NULL DEFAULT '[]',files_json TEXT NOT NULL DEFAULT '[]',kind TEXT NOT NULL DEFAULT '処理',deploy INTEGER NOT NULL DEFAULT 0,status TEXT NOT NULL,note TEXT,attempts INTEGER NOT NULL DEFAULT 0,agent TEXT,"commit" TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL) STRICT;
+      INSERT INTO tasks(id,repo,title,why,status,created_at,updated_at) VALUES('app-1','/r/app','legacy','why','済','2026-01-01','2026-01-01');`); old.close();
+    const first=new Ledger(path);assert.equal(first.get('app-1')?.title,'legacy');first.close();
+    const second=new Ledger(path);assert.equal(second.get('app-1')?.title,'legacy');assert.deepEqual(second.listGoals(),[]);second.close();
+  }
+  finally {rmSync(dir,{recursive:true,force:true});}
 });
 
 test('filesOverlap compares files and directory prefixes', () => {

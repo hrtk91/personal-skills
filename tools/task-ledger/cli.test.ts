@@ -4,6 +4,20 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+test('Goal, Issue, docs, priorities and task context through CLI', async () => {
+  const dir=mkdtempSync(join(tmpdir(),'task-ledger-context-'));process.env.TASK_LEDGER_DB=join(dir,'db.sqlite');const {main}=await import('./cli.ts');
+  const run=(...args:string[])=>{const lines:string[]=[];const code=main(args,t=>lines.push(t));return{code,text:lines.join('\n')}};
+  try {
+    const repo=join(dir,'repo');const goal=run('goal','add','--repo',repo,'--title','Goal','--why','発言');assert.equal(goal.code,0);assert.match(goal.text,/repo-g1/);
+    const issue=run('issue','add','--repo',repo,'--title','Issue','--body','Details','--by','Claude','--goal','repo-g1','--stage','設計');assert.equal(issue.code,0);assert.match(issue.text,/repo-i1/);
+    assert.equal(run('doc','add','--repo',repo,'--kind','仕様','--title','Spec','--path','handoff/spec.md','--goal','repo-g1').code,0);
+    assert.match(run('add','--repo',repo,'--title','task','--why','w','--issue','repo-i1').text,/repo-1/);
+    assert.match(run('issue','list','--goal','repo-g1').text,/Issue/);
+    const context=run('context','repo-1').text;assert.match(context,/Goal/);assert.match(context,/Details/);assert.ok(context.includes('handoff/spec.md'));
+    assert.equal(run('priority','repo-1','first').code,1);
+  } finally {rmSync(dir,{recursive:true,force:true});delete process.env.TASK_LEDGER_DB;}
+});
+
 test('task add / brief / ready / answer / export through the command', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'task-ledger-'));
   process.env.TASK_LEDGER_DB = join(dir, 'ledger.sqlite');

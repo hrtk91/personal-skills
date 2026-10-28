@@ -7,6 +7,7 @@ import { parseArgs } from 'node:util';
 import { buildTrace, renderTrace, report, toOtlp, tracesSince } from './trace.ts';
 import { defaultPath, KINDS, Ledger, STATUSES, type Kind, type Status, type Task } from './ledger.ts';
 import { realDeps, runOnce, type RunDeps } from './run.ts';
+import { taskContext } from './context.ts';
 import { advance, realAdvanceDeps, type AdvanceDeps } from './advance.ts';
 
 const USAGE = `使い方:
@@ -14,6 +15,12 @@ const USAGE = `使い方:
            [--after <id,...>] [--files <パス,...>] [--kind 処理|見た目|調べ] [--deploy] [--repo <パス>]
   task brief <id> <依頼文のパス> [--check <コマンド>]   依頼文を付ける（依頼文待ち → 待ち）
   task list [--all] [--repo <パス>] [--status <状態>]
+  task goal add --title <題> [--why <きっかけ>] [--stages a,b,c] | goal list | goal move <id> up|down|first
+  task issue add --title <題> [--body <中身>] [--by あなた|Claude|作業役|レビュー] [--from <出どころ>] [--goal <id>] [--stage <工程>]
+  task issue list [--goal <id>|--loose]
+  task doc add --kind 仕様|設計|モック|決まり|説明|報告 --title <題> (--path <パス>|--body <中身>) [--goal <id>] | doc list [--goal <id>]
+  task priority <task id> first|up|down
+  task context <task id>
   task show <id>
   task ready                                            いま出してよい仕事
   task hold <id> <理由といつ見直すか>
@@ -61,7 +68,7 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
     after: { type: 'string' }, files: { type: 'string' }, kind: { type: 'string' }, deploy: { type: 'boolean' },
     repo: { type: 'string' }, all: { type: 'boolean' }, status: { type: 'string' }, to: { type: 'string' },
     agent: { type: 'string' }, runner: { type: 'string' }, commit: { type: 'string' }, log: { type: 'string' }, workdir: { type: 'string' },
-    since: { type: 'string' }, out: { type: 'string' },
+    since: { type: 'string' }, out: { type: 'string' }, issue: { type: 'string' }, body: { type: 'string' }, by: { type: 'string' }, from: { type: 'string' }, goal: { type: 'string' }, stage: { type: 'string' }, stages: { type: 'string' }, loose: { type: 'boolean' }, docKind: { type: 'string' }, path: { type: 'string' },
   } });
   const ledger = new Ledger();
   try {
@@ -75,7 +82,7 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
           brief: values.brief ? briefPath(root, values.brief) : null, check: values.check,
           after: values.after?.split(',').map((s) => s.trim()).filter(Boolean),
           files: values.files?.split(',').map((s) => s.trim()).filter(Boolean),
-          kind: values.kind as Kind | undefined, deploy: values.deploy,
+          kind: values.kind as Kind | undefined, deploy: values.deploy, issue_id: values.issue,
         });
         out(line(task));
         return 0;
@@ -92,6 +99,27 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
         for (const task of ledger.list({ repo, all: values.all, status: values.status as Status | undefined })) out(line(task));
         return 0;
       }
+      case 'goal': {
+        const [sub,...args]=positionals;
+        if(sub==='add'){const g=ledger.addGoal({repo:repo??repoRoot(process.cwd()),title:values.title??'',why:values.why,stages:values.stages?.split(',').map(x=>x.trim()).filter(Boolean)});out(`${g.id}\t${g.status}\t${g.title}`);return 0;}
+        if(sub==='list'){for(const g of ledger.listGoals(repo))out(`${g.id}\t${g.status}\t${g.title}\t${g.stages.join(',')}`);return 0;}
+        if(sub==='move'){const d=args[1];if(!['up','down','first'].includes(d??''))throw new Error('task goal move <id> up|down|first');ledger.moveGoal(args[0]!,d as 'up'|'down'|'first');return 0;}
+        throw new Error('task goal add|list|move');
+      }
+      case 'issue': {
+        const [sub]=positionals;
+        if(sub==='add'){const by=(values.by??'あなた') as 'あなた'|'Claude'|'作業役'|'レビュー';if(!['あなた','Claude','作業役','レビュー'].includes(by))throw new Error('--by は あなた・Claude・作業役・レビュー');const i=ledger.addIssue({repo:repo??repoRoot(process.cwd()),title:values.title??'',body:values.body,by,from:values.from,goal_id:values.goal,stage:values.stage});out(`${i.id}\t${i.status}\t${i.title}`);return 0;}
+        if(sub==='list'){for(const i of ledger.listIssues({repo,goal:values.goal,loose:values.loose}))out(`${i.id}\t${i.status}\t${i.title}\t${i.goal_id??''}\t${i.stage??''}\t${i.by}`);return 0;}
+        throw new Error('task issue add|list');
+      }
+      case 'doc': {
+        const [sub]=positionals;
+        if(sub==='add'){const kind=values.docKind??values.kind;if(!['仕様','設計','モック','決まり','説明','報告'].includes(kind??''))throw new Error('--kind は 仕様・設計・モック・決まり・説明・報告');const d=ledger.addDoc({repo:repo??repoRoot(process.cwd()),kind:kind as '仕様'|'設計'|'モック'|'決まり'|'説明'|'報告',title:values.title??'',goal_id:values.goal,path:values.path,body:values.body});out(`${d.id}\t${d.kind}\t${d.title}`);return 0;}
+        if(sub==='list'){for(const d of ledger.listDocs({repo,goal:values.goal}))out(`${d.id}\t${d.kind}\t${d.title}\t${d.path??''}`);return 0;}
+        throw new Error('task doc add|list');
+      }
+      case 'priority': {const [id,d]=positionals;if(!id||!['first','up','down'].includes(d??''))throw new Error('task priority <task id> first|up|down');ledger.setPriority(id,d as 'first'|'up'|'down');out(line(ledger.get(id)!));return 0;}
+      case 'context': {const task=ledger.get(positionals[0]??'');if(!task)throw new Error(`台帳にありません: ${positionals[0]??''}`);const text=taskContext(ledger,task);if(text)out(text.trimEnd());return 0;}
       case 'show': {
         const task = ledger.get(positionals[0] ?? '');
         if (!task) throw new Error(`台帳にありません: ${positionals[0] ?? ''}`);
