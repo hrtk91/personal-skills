@@ -120,6 +120,9 @@ preflight() {
     log "${STATE_FILE:-STATE.md} にこの仕事の「待ち」がある: $(grep -E '待ち' "$REPO/${STATE_FILE:-STATE.md}" | grep -F "$name" | head -1 | cut -c1-160)。条件を確かめて WAIT_OK=1 で出し直す"; return 1
   fi
   # 3. 動いているほかの仕事と、触るファイルが重なれば止める（OVERLAP_OK=1 で出す）
+  # 台帳から出た仕事は、台帳が宣言した触るファイルで重なりを見てから出している。依頼文に読む物として
+  # 名前が出ただけのファイルで止めないよう、ここでは見ない（10/28、調べ物の依頼文が src を名指ししていて止まった）
+  [ -n "${TASK_ID:-}" ] && return 0
   for other in $(running_tasks); do
     theirs=$( { named_files "$REPO/$HANDOFF/$TASK_PREFIX$other.md"
       git -C "$WORK/wt/$other" diff --name-only HEAD 2>/dev/null
