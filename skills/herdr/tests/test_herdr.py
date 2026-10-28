@@ -411,6 +411,19 @@ class HerdrContractTest(unittest.TestCase):
         self.assertIn("pi", self.starts()[0])
         self.assertIn("gpt-6.1-sol", self.starts()[1])
 
+    def test_pi_system_prompt_override_and_default(self):
+        self.assert_success(self.run_script(IMPL_AGENT="pi", REV_AGENT="codex", PI_CHANNEL="0"))
+        start = self.starts()[0]
+        self.assertEqual(start[start.index("--system-prompt") + 1], str(SKILL / "agents/pi-system.md"))
+
+    def test_pi_system_prompt_explicit_override_precedes_legacy_setting(self):
+        override = str(self.root / "custom-pi-system.md")
+        result = self.run_script(IMPL_AGENT="pi", REV_AGENT="codex", PI_CHANNEL="0",
+            PI_SYSTEM_PROMPT=override, PI_SYSTEM=str(self.root / "legacy-pi-system.md"))
+        self.assert_success(result)
+        start = self.starts()[0]
+        self.assertEqual(start[start.index("--system-prompt") + 1], override)
+
     def ledger(self, *args):
         env = self.env | {"TASK_LEDGER_DB": str(self.root / "ledger.sqlite")}
         return subprocess.run([str(TASK_BIN), *args], env=env, text=True, capture_output=True, timeout=30)
