@@ -94,6 +94,17 @@ test('when the repository changed the same lines meanwhile, the worker gets the 
   } finally { f.done(); }
 });
 
+test('a check that fails once and passes when run again moves on, keeping the first output', () => {
+  const marks = mkdtempSync(join(tmpdir(), 'task-flake-'));
+  const f = fixture({ check: `n=$(ls ${marks} | wc -l); touch ${marks}/run-$n; [ $n -ne 0 ] && [ $n -ne 2 ] || { echo 揺れた; exit 1; }` });
+  try {
+    const said = advance(f.ledger, 'repo-1', deps('{"verdict":"通す","reasons":[],"fixes":[]}'), 1);
+    assert.equal(f.ledger.get('repo-1')!.status, '済');
+    assert.equal(said.filter((line) => /1 回目に落ち、流し直して通った/.test(line)).length, 2);
+    assert.match(readFileSync(join(f.dir, 'logs/repo-1-check-1-first-fail.log'), 'utf8'), /揺れた/);
+  } finally { f.done(); rmSync(marks, { recursive: true, force: true }); }
+});
+
 test('a failing check goes back to the worker with the output written into its brief', () => {
   const f = fixture({ check: 'echo 掛け算が無い; exit 1' });
   try {

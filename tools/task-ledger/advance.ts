@@ -60,7 +60,7 @@ export function advance(ledger: Ledger, id: string, deps: AdvanceDeps, pid = pro
     const task = ledger.get(id)!;
     if (task.status === '確かめ中') {
       if (!task.workdir || !existsSync(task.workdir)) return stop(`作業用のコピーが見つからない（${task.workdir ?? '記録なし'}）`);
-      const check = deps.sh(task.check ?? 'true', task.workdir, CHECK_TIMEOUT);
+      const check = checkTwice(task, deps, said, () => deps.sh(task.check ?? 'true', task.workdir!, CHECK_TIMEOUT), `check-${task.attempts}`);
       const path = writeLog(id, `check-${task.attempts}`, check.output);
       if (check.code !== 0) { sendBack(ledger, task, deps, `確かめのコマンド \`${task.check}\` が落ちた（終了コード ${check.code}）。`, tail(check.output), said, stop); return said; }
       ledger.setStatus(id, 'レビュー中', `確かめが通った。出力: ${path}`);
@@ -132,10 +132,10 @@ function merge(ledger: Ledger, task: Task, deps: AdvanceDeps, said: string[], st
     // In a throwaway copy of the merged commit, never in the repository itself: a repository may serve its build
     // output to production straight from its folder (random-image did; 10/28). The copy borrows the folders
     // .herdr.env lists in EXTRA_DIRS (node_modules and the like) by link.
-    const check = deps.sh(`T=$(mktemp -d) && rmdir "$T" && git worktree add -q --detach "$T" HEAD || exit 97
+    const check = checkTwice(task, deps, said, () => deps.sh(`T=$(mktemp -d) && rmdir "$T" && git worktree add -q --detach "$T" HEAD || exit 97
 for d in $(. ./.herdr.env >/dev/null 2>&1; echo "\${EXTRA_DIRS:-}"); do [ -e "$d" ] && [ ! -e "$T/$d" ] && mkdir -p "$T/$(dirname "$d")" && ln -s "$PWD/$d" "$T/$d"; done
 (cd "$T" && ${task.check}); rc=$?
-git worktree remove --force "$T" >/dev/null 2>&1; rm -rf "$T"; exit $rc`, repo, CHECK_TIMEOUT);
+git worktree remove --force "$T" >/dev/null 2>&1; rm -rf "$T"; exit $rc`, repo, CHECK_TIMEOUT), 'merged-check');
     if (check.code !== 0) {
       // --keep leaves whatever else is uncommitted in the repository as it was.
       deps.sh(`git reset --keep ${quote(before)}`, repo, 60_000);
@@ -174,6 +174,17 @@ function catchUp(ledger: Ledger, task: Task, deps: AdvanceDeps, head: string, sa
   }
   sendBack(ledger, task, deps, `作業のあいだに本体が先に進み、同じ所を変えていた。次のファイルに git の衝突の印（<<<<<<< ・ ======= ・ >>>>>>>）がある: ${files.join('、')}。`,
     '両方の変更を生かして解き、印を全部消す。git のコマンド（merge・commit・checkout など）は使わない（台本がこのまま取り込みを仕上げる）。', said, stop);
+}
+
+// A check that fails runs once more before anything is decided: on a busy PC an e2e that the task never touched can
+// time out (10/28: three different specs did, one per run). The first output is kept and the event names it.
+function checkTwice(task: Task, deps: AdvanceDeps, said: string[], run: () => { code: number; output: string }, label: string): { code: number; output: string } {
+  const first = run();
+  if (first.code === 0) return first;
+  const firstLog = writeLog(task.id, `${label}-first-fail`, first.output);
+  const second = run();
+  if (second.code === 0) said.push(`${task.id}: 確かめは 1 回目に落ち、流し直して通った（1 回目: ${firstLog}）`);
+  return second.code === 0 ? { code: 0, output: `${second.output}\n\n[1 回目は落ちた（終了コード ${first.code}）: ${firstLog}]` } : second;
 }
 
 function writeLog(id: string, name: string, text: string): string {
