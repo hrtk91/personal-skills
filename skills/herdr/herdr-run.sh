@@ -15,6 +15,13 @@
 # TASK_ID=<台帳の id> を付けると、台帳（tools/task-ledger）に始まりと終わりを書く。そのときは作業役どうしのレビューを
 #   飛ばし、実装をブランチにコミットして「確かめ中」にする（確かめとレビューはハーネスの次の段がやる）。
 set -uo pipefail
+# bash は台本を読みながら動くので、動いている最中にこのファイルを書き換えると、動いている台本が壊れる
+# （10/28、書き換えで走行中の台本が構文エラーで止まり、台帳に終わりを書けなかった）。自分の写しから動かす。
+if [ -z "${HERDR_RUN_SELF:-}" ]; then
+  HERDR_RUN_SELF=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+  copy=$(mktemp -d "${TMPDIR:-/tmp}/herdr-run.XXXXXX") && cp "${BASH_SOURCE[0]}" "$copy/herdr-run.sh" \
+    && HERDR_RUN_SELF=$HERDR_RUN_SELF exec bash "$copy/herdr-run.sh" "$@"
+fi
 mode=run discard=0
 case ${1:-} in
   --cleanup) mode=cleanup; shift; [ "${2:-}" = --discard ] && { discard=1; set -- "$1"; } ;;
@@ -23,7 +30,7 @@ esac
 [ "$#" = 1 ] || { echo "使い方: herdr-run.sh <依頼名> | --cleanup <名> [--discard] | --stale" >&2; exit 1; }
 name=$1
 [[ "$name" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ ]] || { echo "依頼名は英数字・_・-で指定してください" >&2; exit 1; }
-SKILL_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+SKILL_DIR=$HERDR_RUN_SELF
 REPO=${REPO:-$(git rev-parse --show-toplevel)}
 [ -f "${HERDR_CONF:-$REPO/.herdr.env}" ] && . "${HERDR_CONF:-$REPO/.herdr.env}"
 WORK_NAME=${WORK_NAME:-herdr-$(basename "$REPO")}
