@@ -58,6 +58,14 @@ function briefPath(repo: string, path: string): string {
   return path;
 }
 
+/** Import paths are commonly repository-relative even when `task` is run from tools/task-ledger. */
+function issueMarkdownPath(path: string): string {
+  if (isAbsolute(path) || existsSync(path)) return path;
+  const fromRoot = join(repoRoot(process.cwd()), path);
+  if (existsSync(fromRoot)) return fromRoot;
+  throw new Error(`Issue Markdown がありません: ${path}（確認先: ${resolve(path)}、${fromRoot}）`);
+}
+
 function line(task: Task): string {
   const extra = [task.after.length ? `後: ${task.after.join(',')}` : '', task.note ?? ''].filter(Boolean).join(' / ');
   return `${task.id}\t${task.status}\t${task.title}${extra ? `\t(${extra})` : ''}`;
@@ -128,7 +136,7 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
         if(sub==='add'){
           const by=(values.by??'あなた') as 'あなた'|'Claude'|'作業役'|'レビュー';if(!['あなた','Claude','作業役','レビュー'].includes(by))throw new Error('--by は あなた・Claude・作業役・レビュー');
           let title=values.title??'', fields:IssueFields={};
-          if(values.from){const parsed=parseIssueMarkdown(readFileSync(values.from,'utf8'));title ||= parsed.title;fields=parsed.fields;}
+          if(values.from){const source=issueMarkdownPath(values.from);const parsed=parseIssueMarkdown(readFileSync(source,'utf8'));title ||= parsed.title;fields=parsed.fields;}
           else for(const field of ISSUE_FIELDS){const v=values[field];if(typeof v==='string')fields[field]=v;}
           const i=ledger.addIssue({repo:repo??repoRoot(process.cwd()),title,body:values.body,fields,by,from:values.from,goal_id:values.goal,stage:values.stage});out(`${i.id}\t${i.status}\t${i.title}`);return 0;
         }

@@ -48,7 +48,7 @@ test('the requested dashboard brief initially lacks required template context; m
   try {
     assert.equal(run('issue','add','--repo',repo,'--from','handoff/dashboard-issue-brief.md').code,0);
     assert.equal(run('add','--repo',repo,'--issue','repo-i1').code,1);
-    const original=readFileSync('handoff/dashboard-issue-brief.md','utf8');
+    const original=readFileSync(new URL('../../handoff/dashboard-issue-brief.md',import.meta.url),'utf8');
     const copy=join(dir,'dashboard-issue-brief.md');
     writeFileSync(copy,`${original}\n## 今の状態（必須）\n検査で確認した現在の状態\n\n## 関係する所（必須）\n- tools/task-ledger/ledger.ts\n`);
     assert.equal(run('issue','add','--repo',repo,'--from',copy).code,0);
