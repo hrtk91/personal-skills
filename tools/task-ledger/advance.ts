@@ -6,7 +6,7 @@ import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSyn
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defaultPath, type Ledger, type SpanAttributes, type Status, type Task } from './ledger.ts';
-import { HERDR_RUN, logPath, runName } from './run.ts';
+import { HERDR_RUN, logPath, runName, workerEnv } from './run.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const AFTER_WORK: readonly Status[] = ['確かめ中', 'レビュー中', '取り込み中'];
@@ -256,7 +256,9 @@ ${tail(read(checkPath), 60)}
 
 export const realAdvanceDeps: AdvanceDeps = {
   sh(command, cwd, timeoutMs) {
-    const result = spawnSync('bash', ['-c', command], { cwd, encoding: 'utf8', timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024, env: { ...process.env, TMPDIR: '/tmp' } });
+    // The worker's settings must not reach the checks: herdr's own tests fail when they find a supervisor already set (10/28).
+    const { AGENT_CHANNEL_SUPERVISOR: _supervisor, HERDR_RUN_SELF: _self, ...env } = process.env;
+    const result = spawnSync('bash', ['-c', command], { cwd, encoding: 'utf8', timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024, env: { ...env, TMPDIR: '/tmp' } });
     const output = `${result.stdout ?? ''}${result.stderr ?? ''}${result.error ? `\n${result.error.message}` : ''}`;
     return { code: result.status ?? 124, output };
   },
@@ -288,11 +290,8 @@ export const realAdvanceDeps: AdvanceDeps = {
     try {
       const child = spawn('bash', [HERDR_RUN, name], {
         cwd: task.repo, detached: true, stdio: ['ignore', out, out],
-        env: {
-          IMPL_AGENT: 'pi', PI_PROVIDER: 'openai', PI_MODEL: 'gpt-6-luna', PI_THINKING: 'high', AGENT_CHANNEL_SUPERVISOR: 'task-ledger',
-          ...process.env, HERDR_ENV: '1', REPO: task.repo, TASK_ID: task.id, RESUME: 'newtab',
-          HERDR_WORKSPACE_ID: process.env.HERDR_WORKSPACE_ID ?? process.env.TASK_HERDR_WORKSPACE ?? '',
-        },
+        env: workerEnv({ REPO: task.repo, TASK_ID: task.id, RESUME: 'newtab',
+          HERDR_WORKSPACE_ID: process.env.HERDR_WORKSPACE_ID ?? process.env.TASK_HERDR_WORKSPACE ?? '' }),
       });
       if (!child.pid) throw new Error('herdr-run.sh を起動できなかった');
       child.unref();

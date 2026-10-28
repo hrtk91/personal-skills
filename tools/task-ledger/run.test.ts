@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Ledger } from './ledger.ts';
-import { runOnce, type RunDeps } from './run.ts';
+import { runOnce, workerEnv, type RunDeps } from './run.ts';
 
 function fake(overrides: Partial<RunDeps> = {}) {
   const started: string[] = [];
@@ -63,4 +63,19 @@ test('a task that cannot be started goes to 判断待ち with the reason', () =>
   runOnce(ledger, fake({ start: () => { throw new Error('ワークスペースが無い'); } }).deps);
   assert.equal(ledger.get('r-1')!.status, '判断待ち');
   assert.match(ledger.get('r-1')!.note!, /ワークスペースが無い/);
+});
+
+test('a run started from inside a resent worker does not inherit its run-only settings', () => {
+  const saved = { ...process.env };
+  try {
+    Object.assign(process.env, { RESUME: 'newtab', SKIP_IMPL: '1', HERDR_RUN_SELF: '/x', TASK_ID: 'old-1', PI_MODEL: 'custom' });
+    const env = workerEnv({ TASK_ID: 'new-2', REPO: '/r' });
+    assert.equal(env.RESUME, undefined);
+    assert.equal(env.SKIP_IMPL, undefined);
+    assert.equal(env.HERDR_RUN_SELF, undefined);
+    assert.equal(env.TASK_ID, 'new-2');
+    assert.equal(env.PI_MODEL, 'custom');
+    assert.equal(env.HERDR_ENV, '1');
+    assert.equal(workerEnv({ RESUME: 'newtab' }).RESUME, 'newtab');
+  } finally { process.env = saved; }
 });

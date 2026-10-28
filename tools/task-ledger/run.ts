@@ -13,6 +13,17 @@ export const HERDR_RUN = process.env.TASK_HERDR_RUN ?? join(HERE, '../../skills/
 // Above this share of CPU or memory nothing new starts (the user's rule: use 6〜8 割 of the PC).
 export const BUSY = Number(process.env.TASK_BUSY ?? 0.8);
 
+// Settings that belong to one run of herdr-run.sh. A pass that runs inside a worker's run (its `task ended` starts the
+// next task) must not hand them on: RESUME=newtab from a resend made a fresh task look for a copy it never had (10/28).
+const RUN_ONLY = ['RESUME', 'SKIP_IMPL', 'BASE', 'COMMIT_DIRTY', 'HERDR_RUN_SELF', 'TASK_ID'];
+
+/** The environment for herdr-run.sh: Pi with luna, thinking high, no fast tier (10/25・10/26); the caller's settings win, its run-only ones are dropped. */
+export function workerEnv(extra: Record<string, string>): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { IMPL_AGENT: 'pi', PI_PROVIDER: 'openai', PI_MODEL: 'gpt-6-luna', PI_THINKING: 'high', AGENT_CHANNEL_SUPERVISOR: 'task-ledger', ...process.env };
+  for (const key of RUN_ONLY) delete env[key];
+  return { ...env, HERDR_ENV: '1', ...extra };
+}
+
 export type RunDeps = {
   /** Starts herdr-run.sh for the task and returns the process id, or throws. */
   start: (task: Task, name: string) => number;
@@ -74,13 +85,7 @@ export const realDeps: RunDeps = {
     try {
       const child = spawn('bash', [HERDR_RUN, name], {
         cwd: task.repo, detached: true, stdio: ['ignore', out, out],
-        env: {
-          // Pi with luna, thinking high, no fast tier (10/25・10/26). The caller's environment wins.
-          IMPL_AGENT: 'pi', PI_PROVIDER: 'openai', PI_MODEL: 'gpt-6-luna', PI_THINKING: 'high',
-          AGENT_CHANNEL_SUPERVISOR: 'task-ledger',
-          ...process.env,
-          HERDR_ENV: '1', HERDR_WORKSPACE_ID: workspace, REPO: task.repo, TASK_ID: task.id,
-        },
+        env: workerEnv({ HERDR_WORKSPACE_ID: workspace, REPO: task.repo, TASK_ID: task.id }),
       });
       if (!child.pid) throw new Error('herdr-run.sh を起動できなかった');
       child.unref();
