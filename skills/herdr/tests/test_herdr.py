@@ -205,6 +205,9 @@ class HerdrContractTest(unittest.TestCase):
                 "MODEL", "TIER", "EFFORT", "REPO", "HANDOFF", "RULES", "CONTEXT_FILES", "CHECKLIST", "DESIGN_RULES",
                 "TASK_PREFIX", "BRANCH_PREFIX", "WORK_NAME", "EXTRA", "EXTRA_DIRS", "BASE_REFRESH_EXTRA_DIRS", "PATCH_EXCLUDE", "BASE", "RESUME", "SKIP_IMPL",
                 "COMMIT_DIRTY", "COMMIT_NAME", "COMMIT_EMAIL", "DIRTY_COMMIT_NAME", "DIRTY_COMMIT_EMAIL", "AGENT", "IMPL_AGENT", "REV_AGENT",
+                # The parent Herdr session may carry a live TASK_ID / DB path. These offline contract tests
+                # must never mutate a caller's task ledger while exercising the fake harness.
+                "TASK_ID", "TASK_LEDGER_DB",
             }:
                 self.env.pop(key)
         self.env.update({"PATH": str(self.bin) + os.pathsep + self.env["PATH"], "HERDR_WORKSPACE_ID": "test-workspace",
