@@ -7,7 +7,7 @@
   },
   "scripts": {
     "dev": "react-router dev --host 0.0.0.0",
-    "start": "PORT=8790 HOST=0.0.0.0 react-router-serve ./build/server/index.js",
+    "start": "PORT=${PORT:-8790} HOST=${HOST:-127.0.0.1} react-router-serve ./build/server/index.js",
     "typecheck": "react-router typegen && tsc --noEmit",
     "build": "react-router typegen && react-router build",
     "test": "node --experimental-strip-types --no-warnings --test app/**/*.test.ts"
