@@ -14,7 +14,7 @@ export interface ProjectSummary {
   running: number;
 }
 
-export interface DecisionOption { label: string; detail?: string; recommended?: boolean }
+export interface DecisionOption { label: string; detail?: string; recommended?: boolean; to?: "待ち"|"取り込み中"|"保留"|"やめ"; answer?: string }
 
 /** A task in 判断待ち. The five fields come from the reviewer or the worker when they wrote them; otherwise only `question`. */
 export interface DecisionItem {
@@ -25,6 +25,7 @@ export interface DecisionItem {
   goalTitle?: string;
   /** The ledger's note for the move into 判断待ち (why it stopped). */
   question: string;
+  situation?: string;
   fields?: { goal?: string; how?: string; done?: string; undecided?: string };
   options?: DecisionOption[];
   /** ISO time it entered 判断待ち. */
@@ -97,7 +98,7 @@ export interface GoalTabData {
 
 /** What the view asks the server to do. The route turns each into a form post to its action. */
 export type GoalTabIntent =
-  | { intent: "answer"; taskId: string; text: string; to?: "待ち" | "やめ" | "保留" }
+  | { intent: "answer"; taskId: string; text: string; to?: "待ち" | "取り込み中" | "やめ" | "保留" }
   | { intent: "move-task"; taskId: string; move: "up" | "down" | "first" }
   | { intent: "move-goal"; goalId: string; move: "up" | "down" }
   | { intent: "create-goal"; title: string; why: string };

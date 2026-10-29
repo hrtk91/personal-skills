@@ -5,6 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
+import { createDecisionCard, getDecisionCard, type Decision } from './decision/index.ts';
 
 export const STATUSES = ['依頼文待ち', '待ち', '走行中', '確かめ中', 'レビュー中', '取り込み中', '済', '判断待ち', '保留', 'やめ'] as const;
 export type Status = typeof STATUSES[number];
@@ -64,6 +65,7 @@ export class Ledger {
       CREATE TABLE IF NOT EXISTS events(
         task_id TEXT NOT NULL REFERENCES tasks(id), at TEXT NOT NULL,
         from_status TEXT, to_status TEXT NOT NULL, note TEXT) STRICT;
+      CREATE TABLE IF NOT EXISTS decision_cards(task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, entered_at TEXT NOT NULL, json TEXT NOT NULL, model TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(task_id,entered_at)) STRICT;
       CREATE INDEX IF NOT EXISTS events_task ON events(task_id, at);
       CREATE TABLE IF NOT EXISTS spans(
         task_id TEXT NOT NULL REFERENCES tasks(id), attempt INTEGER NOT NULL, name TEXT NOT NULL,
@@ -187,8 +189,12 @@ export class Ledger {
       if (status === 'やめ' || status === '判断待ち') this.blockDependents(id, at);
       this.db.exec('COMMIT');
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
-    return this.get(id)!;
+    const updated=this.get(id)!;
+    if(status==='判断待ち' && task.status!=='判断待ち' && process.env.NODE_TEST_CONTEXT===undefined && process.env.TASK_DECISION_AUTOGEN!=='0') createDecisionCard(this,updated,at,note??'');
+    return updated;
   }
+
+  decisionCard(id:string,enteredAt:string):{json:Decision;model:string}|null { return getDecisionCard(this,id,enteredAt); }
 
   /** Records who is doing a running task and where, without a status change. */
   setRunner(id: string, fields: { agent?: string | null; runner?: number | null; workdir?: string | null }): Task {
@@ -259,6 +265,7 @@ export class Ledger {
       const note = `先に済むはずの「${this.get(id)!.title}」が止まった`;
       this.db.prepare('UPDATE tasks SET status=?, note=?, updated_at=? WHERE id=?').run('判断待ち', note, at, task.id);
       this.event(task.id, task.status, '判断待ち', note, at);
+      if(process.env.NODE_TEST_CONTEXT===undefined && process.env.TASK_DECISION_AUTOGEN!=='0') createDecisionCard(this,this.get(task.id)!,at,note);
       this.blockDependents(task.id, at);
     }
   }
