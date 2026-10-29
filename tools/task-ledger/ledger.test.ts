@@ -1,4 +1,4 @@
-if (process.env.TASK_DECISION_SPAWN === undefined) process.env.TASK_DECISION_SPAWN = "/bin/true";
+if (process.env.TASK_BIN === undefined) process.env.TASK_BIN = "/bin/true";
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';

@@ -1,9 +1,11 @@
-if (process.env.TASK_DECISION_SPAWN === undefined) process.env.TASK_DECISION_SPAWN = "/bin/true";
+if (process.env.TASK_BIN === undefined) process.env.TASK_BIN = "/bin/true";
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,writeFileSync,rmSync,chmodSync,readFileSync,existsSync} from 'node:fs';
+import {mkdtempSync,writeFileSync,rmSync,chmodSync,readFileSync,existsSync,copyFileSync,mkdirSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {pathToFileURL} from 'node:url';
+import {spawnSync} from 'node:child_process';
 import {setTimeout as delay} from 'node:timers/promises';
 import {Ledger} from './ledger.ts';
 import {createDecisionCard,parseDecision,refreshDecisionCards} from './decision/index.ts';
@@ -11,12 +13,12 @@ import {main} from './cli.ts';
 const good=JSON.stringify({situation:'目的と停止状況。',options:[{label:'続ける',detail:'もう一度進めます。',recommended:true,to:'待ち',answer:'対応を続ける'},{label:'やめる',detail:'仕事を終了します。',to:'やめ',answer:'終了'}]});
 
 test('entering 判断待ち spawns one detached decision refresh, including under node:test',async()=>{
- const dir=mkdtempSync(join(tmpdir(),'decision-spawn-')),oldSpawn=process.env.TASK_DECISION_SPAWN;
+ const dir=mkdtempSync(join(tmpdir(),'decision-spawn-')),oldSpawn=process.env.TASK_BIN;
  const calls=join(dir,'calls'),fake=join(dir,'fake-spawn');
  writeFileSync(fake,`#!/bin/sh\nprintf '%s\\n' "$*" >> '${calls}'\n`);chmodSync(fake,0o755);
  const ledger=new Ledger(join(dir,'db.sqlite'));
  try {
-  process.env.TASK_DECISION_SPAWN=fake;
+  process.env.TASK_BIN=fake;
   const task=ledger.add({repo:dir,title:'spawn test',why:'verify detached refresh',brief:'brief.md'});
   ledger.setStatus(task.id,'判断待ち','needs a decision');
   for(let i=0;i<100&&!existsSync(calls);i++) await delay(20);
@@ -24,7 +26,31 @@ test('entering 判断待ち spawns one detached decision refresh, including unde
   await delay(80);
   assert.equal(readFileSync(calls,'utf8').trim().split('\n').length,1);
   assert.equal(ledger.get(task.id)?.status,'判断待ち');
- } finally {ledger.close();if(oldSpawn===undefined)delete process.env.TASK_DECISION_SPAWN;else process.env.TASK_DECISION_SPAWN=oldSpawn;rmSync(dir,{recursive:true,force:true});}
+ } finally {ledger.close();if(oldSpawn===undefined)delete process.env.TASK_BIN;else process.env.TASK_BIN=oldSpawn;rmSync(dir,{recursive:true,force:true});}
+});
+
+test('TASK_BIN is used from a relocated ledger bundle, and a missing command reports one stderr line without blocking status',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'decision-relocated-')),bundle=join(dir,'bundle'),decision=join(bundle,'decision'),oldBin=process.env.TASK_BIN;
+ mkdirSync(decision,{recursive:true});
+ copyFileSync(new URL('./ledger.ts',import.meta.url),join(bundle,'ledger.ts'));
+ copyFileSync(new URL('./decision/index.ts',import.meta.url),join(decision,'index.ts'));
+ copyFileSync(new URL('./decision/decision-prompt.md',import.meta.url),join(decision,'decision-prompt.md'));
+ const called=join(dir,'called'),fake=join(dir,'fake-task');
+ writeFileSync(fake,`#!/bin/sh\nprintf '%s\\n' "$*" > '${called}'\n`);chmodSync(fake,0o755);
+ const relocated=await import(`${pathToFileURL(join(bundle,'ledger.ts')).href}?relocated=${Date.now()}`) as typeof import('./ledger.ts');
+ const ledger=new relocated.Ledger(join(dir,'db.sqlite'));
+ try {
+  process.env.TASK_BIN=fake;
+  const task=ledger.add({repo:dir,title:'relocated',why:'verify TASK_BIN',brief:'brief'});
+  ledger.setStatus(task.id,'判断待ち','blocked');
+  for(let i=0;i<100&&!existsSync(called);i++) await delay(20);
+  assert.equal(readFileSync(called,'utf8').trim(),`decision refresh ${task.id}`);
+  const missing=join(dir,'missing-task');
+  const probe=`process.env.TASK_BIN=${JSON.stringify(missing)};const {Ledger}=await import(${JSON.stringify(pathToFileURL(join(bundle,'ledger.ts')).href)});const l=new Ledger(${JSON.stringify(join(dir,'probe.sqlite'))});const t=l.add({repo:'/tmp',title:'probe',why:'probe',brief:'x'});l.setStatus(t.id,'判断待ち','blocked');await new Promise(r=>setTimeout(r,60));l.close();`;
+  const result=spawnSync(process.execPath,['--experimental-strip-types','--no-warnings','--input-type=module','-e',probe],{encoding:'utf8'});
+  assert.equal(result.status,0);assert.equal(result.stderr.trim().split('\n').length,1);assert.match(result.stderr,/task decision refresh 起動失敗/);
+  assert.equal(ledger.get(task.id)?.status,'判断待ち');
+ } finally {ledger.close();if(oldBin===undefined)delete process.env.TASK_BIN;else process.env.TASK_BIN=oldBin;rmSync(dir,{recursive:true,force:true});}
 });
 
 test('decision card validates and retries invalid JSON exactly once; refresh creates card',()=>{

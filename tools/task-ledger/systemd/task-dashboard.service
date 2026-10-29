@@ -9,6 +9,7 @@ Environment=HOST=127.0.0.1
 Environment=PORT=8790
 Environment=PATH=%h/.local/share/mise/installs/node/lts/bin:%h/.local/bin:/usr/local/bin:/usr/bin
 Environment=TASK_LEDGER_DB=%h/.local/share/task-ledger/ledger.sqlite
+Environment=TASK_BIN=%h/repos/personal-skills/tools/task-ledger/bin/task
 ExecStart=/usr/bin/env npm run start
 Restart=on-failure
 RestartSec=3

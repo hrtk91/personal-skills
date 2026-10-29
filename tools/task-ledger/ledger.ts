@@ -47,12 +47,16 @@ export function defaultPath(): string {
 }
 
 function spawnDecisionRefresh(id: string): void {
-  const command = process.env.TASK_DECISION_SPAWN || join(import.meta.dirname, 'bin/task');
+  const command = process.env.TASK_BIN || join(import.meta.dirname, 'bin/task');
+  const reportFailure = (error: unknown) => {
+    const reason = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`task decision refresh 起動失敗: ${reason.replace(/[\r\n]+/g, ' ')}\n`);
+  };
   try {
     const child = spawn(command, ['decision', 'refresh', id], { detached: true, stdio: 'ignore' });
-    child.on('error', () => { /* Refresh is best-effort; status changes are already committed. */ });
+    child.on('error', reportFailure);
     child.unref();
-  } catch { /* Refresh is best-effort; status changes are already committed. */ }
+  } catch (error) { reportFailure(error); /* Status changes are already committed. */ }
 }
 
 export class Ledger {
