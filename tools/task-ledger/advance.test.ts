@@ -1,11 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Ledger } from './ledger.ts';
-import { advance, parseVerdict, realAdvanceDeps, type AdvanceDeps } from './advance.ts';
+import { advance, herdrTabSweepCandidates, parseVerdict, realAdvanceDeps, sweepHerdrTabs, type AdvanceDeps } from './advance.ts';
 
 function git(cwd: string, ...args: string[]): string {
   return execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@x', ...args], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -205,6 +205,47 @@ test('a task someone else is advancing is left alone', () => {
     assert.match(said.join('\n'), /ほかが進めている/);
     assert.equal(f.ledger.get('repo-1')!.status, '確かめ中');
   } finally { f.done(); }
+});
+
+test('tab sweeper only selects logged tabs by completion age and records cleanup span; dry-run does not close', () => {
+  const root = mkdtempSync(join(tmpdir(), 'herdr-sweep-'));
+  const ledger = new Ledger(':memory:');
+  const at = new Date('2025-01-01T00:00:00Z');
+  const task = ledger.add({ repo: '/repo', title: 'done', why: 'w', brief: 'handoff/done.md' });
+  ledger.setStatus(task.id, 'やめ');
+  const log = join(root, 'herdr-done.log');
+  writeFileSync(log, 'タブ: tab-done（実装 pane・レビュー pane）\\n');
+  const finished = Date.parse(ledger.events(task.id).at(-1)!.at);
+  const tabs = [{ tab_id: 'tab-done' }, { tab_id: 'not-logged' }];
+  const panes = [{ tab_id: 'tab-done', cwd: root }];
+  try {
+    const dry = sweepHerdrTabs(ledger, { roots: [root], tabs, panes, now: finished + 10 * 60_000, dryRun: true, running: () => false });
+    assert.match(dry.join('\\n'), /tab-done.*10分経過/);
+    assert.equal(ledger.spans(task.id).length, 0);
+    const closed: string[] = [];
+    sweepHerdrTabs(ledger, { roots: [root], tabs, panes, now: finished + 10 * 60_000, close: (id) => closed.push(id), running: () => false });
+    assert.deepEqual(closed, ['tab-done']);
+    assert.deepEqual(ledger.spans(task.id)[0]!.attributes, { 'cleanup.tab_id': 'tab-done', 'cleanup.reason': 'やめから10分経過' });
+    assert.ok(!herdrTabSweepCandidates(ledger, { roots: [root], tabs, panes, now: Date.now(), running: () => false }).some((c) => c.tabId === 'not-logged'));
+  } finally { ledger.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test('judgment and held tasks are never swept; missing cwd and six-hour orphan log qualify', () => {
+  const root = mkdtempSync(join(tmpdir(), 'herdr-sweep-'));
+  const ledger = new Ledger(':memory:');
+  const task = ledger.add({ repo: '/repo', title: 'waiting decision', why: 'w', brief: 'handoff/decision.md' });
+  ledger.setStatus(task.id, '判断待ち', 'needs review');
+  const held = ledger.add({ repo: '/repo', title: 'held', why: 'w', brief: 'handoff/held.md' });
+  ledger.setStatus(held.id, '保留', 'hold');
+  const old = join(root, 'herdr-orphan.log'); writeFileSync(old, 'タブ: orphan（実装 pane）\\n');
+  const decision = join(root, 'herdr-decision.log'); writeFileSync(decision, 'タブ: decision（実装 pane）\\n');
+  const holdLog = join(root, 'herdr-held.log'); writeFileSync(holdLog, 'タブ: held（実装 pane）\\n');
+  const ago = new Date(Date.now() - 7 * 60 * 60_000); utimesSync(old, ago, ago);
+  try {
+    const candidates = herdrTabSweepCandidates(ledger, { roots: [root], tabs: [{tab_id:'orphan'},{tab_id:'decision'},{tab_id:'held'}], panes: [{tab_id:'orphan',cwd:'/gone'},{tab_id:'decision',cwd:'/gone'},{tab_id:'held',cwd:'/gone'}], now: Date.now(), running: () => false });
+    assert.deepEqual(candidates.map((candidate) => candidate.tabId), ['orphan']);
+    assert.match(candidates[0]!.reason, /作業用フォルダが無い/);
+  } finally { ledger.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
 test('the verdict is the last valid JSON object in the answer', () => {

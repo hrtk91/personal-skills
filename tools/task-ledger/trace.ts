@@ -21,7 +21,9 @@ export function buildTrace(ledger: Ledger, task: Task, now: Date = new Date()): 
   const traceId = hex(task.id, 32);
   const events = ledger.events(task.id);
   const closedAt = CLOSED.has(task.status) ? Date.parse(events.at(-1)?.at ?? task.updated_at) : null;
-  const end = closedAt ?? now.getTime();
+  const steps = ledger.spans(task.id);
+  const lastStep = steps.reduce((latest, step) => Math.max(latest, Date.parse(step.end)), 0);
+  const end = closedAt === null ? now.getTime() : Math.max(closedAt, lastStep);
   const rootId = hex(`${task.id}/root`, 16);
   const spans: TraceSpan[] = [{
     traceId, spanId: rootId, name: task.title, start: Date.parse(task.created_at), end, ok: task.status !== 'やめ' && task.status !== '判断待ち',
@@ -30,7 +32,7 @@ export function buildTrace(ledger: Ledger, task: Task, now: Date = new Date()): 
   }];
   const states = statusSpans(task, events, traceId, rootId, end, closedAt === null);
   spans.push(...states);
-  for (const step of ledger.spans(task.id)) spans.push(stepSpan(task, step, traceId, states, rootId));
+  for (const step of steps) spans.push(stepSpan(task, step, traceId, states, rootId));
   spans.sort((a, b) => a.start - b.start || a.depth - b.depth);
   return { task, spans };
 }
@@ -117,7 +119,7 @@ export function renderTrace(trace: TaskTrace): string[] {
     const mark = span.ok ? ' ' : '✗';
     const facts = Object.entries(span.attributes)
       .filter(([key]) => !['task.id', 'task.repo', 'status.note'].includes(key))
-      .map(([key, value]) => `${key.replace(/^(task|status|step|review)\./, '')}=${typeof value === 'string' ? clip(value, 90) : value}`);
+      .map(([key, value]) => `${key.replace(/^cleanup\.tab_id$/, 'tab').replace(/^cleanup\.reason$/, 'reason').replace(/^(task|status|step|review)\./, '')}=${typeof value === 'string' ? clip(value, 90) : value}`);
     return `${at} ${took} ${mark} ${'  '.repeat(span.depth)}${span.name}${facts.length ? `  ${facts.join(' ')}` : ''}`;
   });
 }
