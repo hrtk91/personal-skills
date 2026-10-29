@@ -1,0 +1,28 @@
+/* Colors and type for the whole dashboard (from handoff/task-dashboard-mock.html). Imported once by the root. */
+:root {
+  --bg: #f4f2ee; --panel: #fffdf9; --line: #e2ddd3; --ink: #24221e; --sub: #6d675c; --faint: #a39d90;
+  --run: #2f7f86; --run-bg: #dcefef; --wait: #b4741d; --wait-bg: #f8ead3; --bad: #b4483b; --bad-bg: #f6dfdb;
+  --ok: #4c7d3a; --ok-bg: #e2eedb; --idle: #8b8577; --idle-bg: #ebe7df; --rev: #6a55a8; --rev-bg: #e7e1f4;
+  --accent: #24221e; color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #17171a; --panel: #1f1f23; --line: #33333a; --ink: #ecebe6; --sub: #a9a59b; --faint: #6f6c65;
+    --run: #6cc3c9; --run-bg: #1f3a3c; --wait: #e2a957; --wait-bg: #3d3020; --bad: #e58476; --bad-bg: #43251f;
+    --ok: #8fc479; --ok-bg: #24361d; --idle: #9e998d; --idle-bg: #2a2a2e; --rev: #ad9ae6; --rev-bg: #2e2843; --accent: #ecebe6; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #17171a; --panel: #1f1f23; --line: #33333a; --ink: #ecebe6; --sub: #a9a59b; --faint: #6f6c65;
+  --run: #6cc3c9; --run-bg: #1f3a3c; --wait: #e2a957; --wait-bg: #3d3020; --bad: #e58476; --bad-bg: #43251f;
+  --ok: #8fc479; --ok-bg: #24361d; --idle: #9e998d; --idle-bg: #2a2a2e; --rev: #ad9ae6; --rev-bg: #2e2843; --accent: #ecebe6; color-scheme: dark;
+}
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font: 14px/1.6 "IBM Plex Sans JP", "Noto Sans JP", system-ui, sans-serif;
+  padding-top: env(safe-area-inset-top, 0px);
+}
+button, input, textarea, select { font: inherit; color: inherit; }
