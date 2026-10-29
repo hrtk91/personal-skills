@@ -130,6 +130,9 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
             const full = resolve(root, path);
             if (isAbsolute(path) || (full !== root && !full.startsWith(`${root}/`))) return true;
             if (existsSync(full)) return false;
+            // A missing path with prose-like whitespace or Japanese text is not a concrete file target,
+            // even when its parent directory exists (for example: "tools/ の差し戻しの記録まわり").
+            if (/[\s\u3000-\u9fff]/u.test(path)) return true;
             // A not-yet-created file is a valid target when its directory prefix already exists in the repo.
             let parent = dirname(full);
             while (parent !== root && parent.startsWith(`${root}/`)) {

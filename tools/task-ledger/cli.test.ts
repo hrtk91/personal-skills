@@ -86,13 +86,17 @@ test('task add --issue validates check and file fields, supports overrides, and 
     assert.equal(run('add','--repo',repo,'--issue','repo-i3','--files','tools/a.ts').code,0);
 
     assert.equal(run('issue','add','--repo',repo,'--title','New target','--なぜ','reason','--今の状態','known','--関係する所','tools/a.ts','--確かめのコマンド','npm test','--触るファイル','tools/new.ts').code,0);
-    assert.equal(run('add','--repo',repo,'--issue','repo-i4').code,0);
+    const newTarget=run('add','--repo',repo,'--issue','repo-i4');assert.equal(newTarget.code,0,newTarget.err);
     assert.deepEqual(JSON.parse(run('show','repo-4').text.split('\n}')[0]+'\n}').files,['tools/new.ts']);
 
+    assert.equal(run('issue','add','--repo',repo,'--title','Prose path','--なぜ','reason','--今の状態','known','--関係する所','tools/a.ts','--確かめのコマンド','npm test','--触るファイル','tools/a.ts、tools/ の差し戻しの記録まわり').code,0);
+    const prosePath=run('add','--repo',repo,'--issue','repo-i5');
+    assert.equal(prosePath.code,1);assert.ok(prosePath.err.includes('tools/ の差し戻しの記録まわり'));assert.match(prosePath.err,/--files/);
+
     assert.equal(run('issue','add','--repo',repo,'--title','Existing brief','--なぜ','reason','--今の状態','known','--関係する所','tools/a.ts','--確かめのコマンド','npm test','--触るファイル','tools/a.ts').code,0);
-    writeFileSync(join(repo,'handoff','repo-i5.md'),'keep this brief');
-    assert.equal(run('add','--repo',repo,'--issue','repo-i5').code,0);
-    assert.equal(readFileSync(join(repo,'handoff','repo-i5.md'),'utf8'),'keep this brief');
+    writeFileSync(join(repo,'handoff','repo-i6.md'),'keep this brief');
+    assert.equal(run('add','--repo',repo,'--issue','repo-i6').code,0);
+    assert.equal(readFileSync(join(repo,'handoff','repo-i6.md'),'utf8'),'keep this brief');
   } finally {rmSync(dir,{recursive:true,force:true});delete process.env.TASK_LEDGER_DB;}
 });
 
