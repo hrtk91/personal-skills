@@ -12,7 +12,7 @@ set -uo pipefail
 prompt=$1 raw=$2 session_file=$3 state=$4 report=$5 model=$6 effort=$7
 session=
 for attempt in 1 2; do
-  args=(-p --model "$model" --effort "$effort" --permission-mode bypassPermissions --output-format stream-json --verbose)
+  args=(-p --model "$model" --effort "$effort" --permission-mode bypassPermissions --output-format stream-json --verbose --settings '{"disableAllHooks":true}' --strict-mcp-config)
   [ -z "$session" ] || args+=(--resume "$session")
   # File capture avoids EOF hangs when descendants inherit stdout. A successful terminal
   # result plus the requested report is also completion: stop a CLI kept alive by a hook.

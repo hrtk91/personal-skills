@@ -271,6 +271,8 @@ class HerdrContractTest(unittest.TestCase):
         self.assertIn("--permission-mode", args)
         self.assertIn("bypassPermissions", args)
         self.assertIn("stream-json", args)
+        self.assertEqual(args[args.index("--settings") + 1], '{"disableAllHooks":true}')
+        self.assertIn("--strict-mcp-config", args)
         self.assertEqual((self.work / "claude-contract.session").read_text().strip(), "session-smoke")
         self.assertIn('"session_id": "session-smoke"', (self.work / "claude-contract.jsonl").read_text())
         pane = (self.root / "pane-output.txt").read_text()
