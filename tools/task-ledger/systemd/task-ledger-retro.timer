@@ -1,0 +1,10 @@
+[Unit]
+Description=Run task-ledger harness retrospective nightly
+
+[Timer]
+OnCalendar=*-*-* 23:40:00
+Persistent=true
+Unit=task-ledger-retro.service
+
+[Install]
+WantedBy=timers.target

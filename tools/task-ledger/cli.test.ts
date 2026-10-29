@@ -30,6 +30,19 @@ function runner(main: (argv: string[], out: (t: string) => void) => number) {
 }
 const handoff = (name: string) => new URL(`../../handoff/${name}`, import.meta.url).pathname;
 
+test('retro CLI reads JSON traces and filters open issues by creator', async () => {
+  const dir=mkdtempSync(join(tmpdir(),'task-ledger-retro-cli-'));process.env.TASK_LEDGER_DB=join(dir,'db.sqlite');const {main}=await import('./cli.ts');
+  const run=runner(main),repo=join(dir,'repo');
+  try {
+    assert.equal(run('issue','add','--repo',repo,'--title','Watch','--by','見張り役').code,0);
+    assert.equal(run('issue','add','--repo',repo,'--title','Other','--by','Claude').code,0);
+    const watcher=run('issue','list','--by','見張り役','--open');assert.equal(watcher.code,0);assert.match(watcher.text,/Watch/);assert.doesNotMatch(watcher.text,/Other/);
+    assert.equal(run('issue','list','--by','見張り役','--open').code,0);
+    const traces=run('report','--since','1970-01-01T00:00:00Z','--json');assert.equal(traces.code,0);assert.deepEqual(JSON.parse(traces.text),[]);
+    assert.equal(run('issue','add','--repo',repo,'--title','Bad','--by','someone').code,1);
+  } finally {rmSync(dir,{recursive:true,force:true});delete process.env.TASK_LEDGER_DB;}
+});
+
 test('issue Markdown import, required context validation, task generation and show/template', async () => {
   const dir=mkdtempSync(join(tmpdir(),'task-ledger-issue-'));process.env.TASK_LEDGER_DB=join(dir,'db.sqlite');const {main}=await import('./cli.ts');
   const repo=join(dir,'repo');mkdirSync(join(repo,'handoff'),{recursive:true});

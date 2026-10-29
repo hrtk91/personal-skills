@@ -20,7 +20,7 @@ const USAGE = `使い方:
   task goal add --title <題> [--why <きっかけ>] [--stages a,b,c] | goal list | goal move <id> up|down|first
   task issue add (--title <題> [欄オプション...] | --from <md>) [--by あなた|Claude|作業役|レビュー] [--goal <id>] [--stage <工程>]
   task issue template | show <id> | brief <id>
-  task issue list [--goal <id>|--loose]
+  task issue list [--goal <id>|--loose] [--by <作成者>] [--open]
   task doc add --kind 仕様|設計|モック|決まり|説明|報告 --title <題> (--path <パス>|--body <中身>) [--goal <id>] | doc list [--goal <id>]
   task priority <task id> first|up|down
   task context <task id>
@@ -33,7 +33,7 @@ const USAGE = `使い方:
   task export [--repo <パス>]                           ROADMAP 用の一覧（読む用の写し）
   task run                                              1 回まわす（消えたプロセスを見つけ、終わった仕事を先へ進め、次の仕事を 1 つ出す）
   task trace <id>                                       1 件の時間の流れ（状態ごと・ハーネスの段ごと）
-  task report [--since <日時>] [--repo <パス>]           段ごとのかかった時間・戻った理由・レビューの費用
+  task report [--since <日時>] [--repo <パス>] [--json]  段ごとのかかった時間・戻った理由・レビューの費用
   task otel [--since <日時>] [--repo <パス>] [--out <パス>]  OTLP の JSON に書き出す（既定 ~/.local/share/task-ledger/traces/）
 ハーネスの中で使うもの:
   task started <id> --agent <名> --runner <PID> [--workdir <パス>]   台本が動き始めた（herdr-run.sh が呼ぶ）
@@ -81,7 +81,7 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
     worker: { type: 'string' }, model: { type: 'string' }, effort: { type: 'string' },
     repo: { type: 'string' }, all: { type: 'boolean' }, status: { type: 'string' }, to: { type: 'string' },
     agent: { type: 'string' }, runner: { type: 'string' }, commit: { type: 'string' }, log: { type: 'string' }, workdir: { type: 'string' },
-    since: { type: 'string' }, out: { type: 'string' }, issue: { type: 'string' }, body: { type: 'string' }, by: { type: 'string' }, from: { type: 'string' }, goal: { type: 'string' }, stage: { type: 'string' }, stages: { type: 'string' }, loose: { type: 'boolean' }, docKind: { type: 'string' }, path: { type: 'string' },
+    since: { type: 'string' }, json: { type: 'boolean' }, out: { type: 'string' }, issue: { type: 'string' }, body: { type: 'string' }, by: { type: 'string' }, from: { type: 'string' }, goal: { type: 'string' }, stage: { type: 'string' }, stages: { type: 'string' }, loose: { type: 'boolean' }, open: { type: 'boolean' }, docKind: { type: 'string' }, path: { type: 'string' },
     'なぜ': { type: 'string' }, '今の状態': { type: 'string' }, '関係する所': { type: 'string' }, 'やること': { type: 'string' }, 'やってよいこと': { type: 'string' }, 'やらないこと': { type: 'string' }, '終わりの条件': { type: 'string' }, '確かめのコマンド': { type: 'string' }, '触るファイル': { type: 'string' }, '種類': { type: 'string' }, '本番に出すか': { type: 'string' },
   } });
   const ledger = new Ledger();
@@ -138,7 +138,7 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
         const [sub,...args]=positionals;
         if(sub==='template'){out(issueTemplate().trimEnd());return 0;}
         if(sub==='add'){
-          const by=(values.by??'あなた') as 'あなた'|'Claude'|'作業役'|'レビュー';if(!['あなた','Claude','作業役','レビュー'].includes(by))throw new Error('--by は あなた・Claude・作業役・レビュー');
+          const by=(values.by??'あなた') as 'あなた'|'Claude'|'作業役'|'レビュー'|'見張り役';if(!['あなた','Claude','作業役','レビュー','見張り役'].includes(by))throw new Error('--by は あなた・Claude・作業役・レビュー・見張り役');
           let title=values.title??'', fields:IssueFields={}, body=values.body;
           // Sections that are not template fields (設計, 報告 ...) stay with the Issue as its body and go into the brief.
           if(values.from){const source=issueMarkdownPath(values.from);const parsed=parseIssueMarkdown(readFileSync(source,'utf8'));title ||= parsed.title;fields=parsed.fields;body=[body,parsed.extra].filter(Boolean).join('\n\n');}
@@ -147,7 +147,7 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
         }
         if(sub==='brief'){const issue=ledger.getIssue(args[0]??'');if(!issue)throw new Error(`Issue がありません: ${args[0]??''}`);out(assembleIssueBrief(ledger,issue).trimEnd());return 0;}
         if(sub==='show'){const issue=ledger.getIssue(args[0]??'');if(!issue)throw new Error(`Issue がありません: ${args[0]??''}`);out(JSON.stringify({...issue,goal:issue.goal_id?ledger.getGoal(issue.goal_id):null,tasks:ledger.issuesForTask(issue.id)},null,2));return 0;}
-        if(sub==='list'){for(const i of ledger.listIssues({repo,goal:values.goal,loose:values.loose}))out(`${i.id}\t${i.status}\t${i.title}\t${i.goal_id??''}\t${i.stage??''}\t${i.by}`);return 0;}
+        if(sub==='list'){for(const i of ledger.listIssues({repo,goal:values.goal,loose:values.loose}).filter(i=>(!values.by||i.by===values.by)&&(!values.open||i.status==='開いている')))out(`${i.id}\t${i.status}\t${i.title}\t${i.goal_id??''}\t${i.stage??''}\t${i.by}`);return 0;}
         throw new Error('task issue add|list|template|show|brief');
       }
       case 'doc': {
@@ -213,7 +213,7 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
         const since = values.since ? new Date(values.since) : null;
         if (since && Number.isNaN(since.getTime())) throw new Error(`--since が日時として読めない: ${values.since}`);
         const traces = tracesSince(ledger, since, repo);
-        if (command === 'report') { for (const text of report(traces)) out(text); return 0; }
+        if (command === 'report') { if (values.json) out(JSON.stringify(traces.map(({task,spans})=>({task,spans})))); else for (const text of report(traces)) out(text); return 0; }
         const path = values.out ?? join(dirname(defaultPath()), 'traces', `task-ledger-${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
         mkdirSync(dirname(path), { recursive: true });
         writeFileSync(path, JSON.stringify(toOtlp(traces)));

@@ -1,0 +1,7 @@
+[Unit]
+Description=Nightly task-ledger harness retrospective
+
+[Service]
+Type=oneshot
+EnvironmentFile=-%h/.config/task-ledger/env
+ExecStart=@RETRO_SCRIPT@
