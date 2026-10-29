@@ -227,6 +227,9 @@ function Decision({ item, submit, busy, now, consultHref }: { item: DecisionItem
 // The order the harness starts tasks in. Running ones sit on top and cannot move.
 function Queue({ items, submit, busy, now }: { items: QueueItem[]; submit: (intent: GoalTabIntent) => void; busy?: boolean; now: number }) {
   const firstMovable = items.findIndex((item) => item.movable);
+  // Name the task being waited for by what it does, not by its number.
+  const names = new Map(items.map((item) => [item.id, splitTitle(item.title).text]));
+  const named = (text: string) => text.replace(/([a-z0-9][a-z0-9-]*-\d+) ?/g, (whole, id: string) => names.has(id) ? `「${names.get(id)}」` : whole);
   return (
     <section className={styles.section}>
       <SectionHead title="次に出る順" hint="上から出ます。入れ替えると次の 3 分の回から効きます" />
@@ -238,7 +241,7 @@ function Queue({ items, submit, busy, now }: { items: QueueItem[]; submit: (inte
               <span className={styles.tt}>
                 <TaskStory title={item.title} why={item.why} status={item.status} meta={[
                   RUNNING.includes(item.status) ? [item.worker, item.attempts > 1 ? `${item.attempts} 回目` : null, `${ago(item.updatedAt, now)}から`].filter(Boolean).join(" ・ ") : null,
-                  item.after.length ? `${item.after.join("・")} の後` : null,
+                  item.blockedBy ? named(item.blockedBy) : item.after.length ? named(`${item.after.join("・")} の後`) : null,
                 ].filter(Boolean).join(" ・ ")} />
                 {item.lastNote && RUNNING.includes(item.status) && item.attempts > 1 ? (
                   <details className={styles.more}><summary>前の回で戻された理由</summary><p>{item.lastNote}</p></details>
