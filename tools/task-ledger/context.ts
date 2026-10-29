@@ -4,7 +4,19 @@ import type { Ledger, Task } from './ledger.ts';
 // `issueBody: false` when the Issue's body is already in the brief this context is appended to.
 export function taskContext(ledger: Ledger, task: Task, now = new Date(), options: { issueBody?: boolean } = {}): string {
   const lines: string[] = [];
-  if (task.note?.startsWith('答え: ')) lines.push('## 判断待ちへの答え', task.note.slice('答え: '.length));
+  // Issue briefs without a concrete task have no task event history to consult.
+  const taskEvents = task.id ? ledger.events(task.id) : [];
+  let answerIndex = -1;
+  for (let i = 0; i < taskEvents.length; i++) {
+    const event = taskEvents[i]!;
+    if ((event.from_status === '判断待ち' || event.from_status === '保留')
+      && event.to_status !== '判断待ち' && event.to_status !== '保留'
+      && event.note?.startsWith('答え: ')) answerIndex = i;
+  }
+  const answer = answerIndex >= 0 ? taskEvents[answerIndex]!.note!.slice('答え: '.length) : null;
+  const workerFinished = answerIndex >= 0 && taskEvents.slice(answerIndex + 1).some((event) =>
+    event.from_status === '走行中' && event.to_status === '確かめ中');
+  if (answer !== null && !workerFinished) lines.push('## 判断待ちへの答え', answer);
   if (!task.issue_id) return lines.length ? `${lines.join('\n')}\n` : '';
   const issue = ledger.getIssue(task.issue_id);
   if (!issue) return lines.length ? `${lines.join('\n')}\n` : '';
