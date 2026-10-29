@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Ledger } from './ledger.ts';
 import { advance, herdrTabSweepCandidates, parseVerdict, realAdvanceDeps, sweepHerdrTabs, type AdvanceDeps } from './advance.ts';
+import { buildTrace, renderTrace } from './trace.ts';
 
 function git(cwd: string, ...args: string[]): string {
   return execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@x', ...args], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -147,6 +148,28 @@ test('a check that fails once and passes when run again moves on, keeping the fi
     assert.equal(said.filter((line) => /1 回目に落ち、流し直して通った/.test(line)).length, 2);
     assert.match(readFileSync(join(f.dir, 'logs/repo-1-check-1-first-fail.log'), 'utf8'), /揺れた/);
   } finally { f.done(); rmSync(marks, { recursive: true, force: true }); }
+});
+
+test('a missing command is an environment failure: no retry, no attempt consumed, and task trace records it', () => {
+  const f = fixture({ check: 'definitely-not-a-real-check-command' });
+  try {
+    const calls: string[] = [];
+    const said = advance(f.ledger, 'repo-1', deps('', calls), 1);
+    const task = f.ledger.get('repo-1')!;
+    assert.equal(task.status, '判断待ち');
+    assert.equal(task.attempts, 1);
+    assert.match(task.note!, /環境の失敗/);
+    assert.equal(calls.filter((call) => call === 'definitely-not-a-real-check-command').length, 1);
+    assert.ok(!calls.includes('resend'));
+    const span = f.ledger.spans('repo-1').find((item) => item.name === '確かめ')!;
+    assert.equal(span.ok, false);
+    assert.equal(span.attributes['step.exit_code'], 127);
+    assert.equal(span.attributes['failure.kind'], 'environment');
+    const rendered = renderTrace(buildTrace(f.ledger, task)).join('\\n');
+    assert.match(rendered, /判断待ち/);
+    assert.match(rendered, /確かめ.*failure.kind=environment/);
+    assert.match(said.join('\\n'), /環境の失敗/);
+  } finally { f.done(); }
 });
 
 test('a failing check goes back to the worker with the output written into its brief', () => {

@@ -99,7 +99,7 @@ export const realDeps: RunDeps = {
     try {
       const child = spawn('bash', [HERDR_RUN, name], {
         cwd: task.repo, detached: true, stdio: ['ignore', out, out],
-        env: workerEnv({ HERDR_WORKSPACE_ID: workspace, REPO: task.repo, TASK_ID: task.id, ...(task.issue_id && task.brief === `handoff/${task.issue_id}.md` ? { TASK_ISSUE_ID: task.issue_id } : {}), ...extraEnv }, task),
+        env: workerEnv({ HERDR_WORKSPACE_ID: workspace, REPO: task.repo, TASK_ID: task.id, ...(task.check ? { TASK_CHECK: task.check } : {}), ...(task.issue_id && task.brief === `handoff/${task.issue_id}.md` ? { TASK_ISSUE_ID: task.issue_id } : {}), ...extraEnv }, task),
       });
       if (!child.pid) throw new Error('herdr-run.sh を起動できなかった');
       child.unref();

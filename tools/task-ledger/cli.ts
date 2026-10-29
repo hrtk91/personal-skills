@@ -39,7 +39,7 @@ const USAGE = `使い方:
 ハーネスの中で使うもの:
   task started <id> --agent <名> --runner <PID> [--workdir <パス>]   台本が動き始めた（herdr-run.sh が呼ぶ）
   task advance <id>                                     確かめ → レビュー → 取り込み（task run が裏で起こす）
-  task ended <id> implemented|stopped|blocked|failed [--commit <sha>] [--log <パス>]`;
+  task ended <id> implemented|stopped|blocked|failed|environment-failed [--commit <sha>] [--log <パス>]`;
 
 // What herdr-run.sh's end marker means for the ledger.
 const ENDED: Record<string, { status: Status; note: string }> = {
@@ -47,6 +47,7 @@ const ENDED: Record<string, { status: Status; note: string }> = {
   stopped: { status: '判断待ち', note: '作業役が設計の下見で STOP と書いた' },
   blocked: { status: '判断待ち', note: '作業役が確認の画面で止まった' },
   failed: { status: '判断待ち', note: '作業役を回す台本が失敗した' },
+  'environment-failed': { status: '判断待ち', note: '環境の失敗: 起動前の部品確認で必要なコマンドが無かった' },
 };
 
 function repoRoot(path: string): string {

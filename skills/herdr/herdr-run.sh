@@ -106,6 +106,17 @@ fi
 for f in ${EXTRA:-}; do mkdir -p "$W/$(dirname "$f")" && cp -f "$REPO/$f" "$W/$f" && chmod a-w "$W/$f" || return 1; done
 log "写しを作った: $W（実装 $IMPL_AGENT・レビュー $REV_AGENT・追加: ${EXTRA:-なし}）"
 preflight || return 1
+# 作業役を起こす前に、worktree 上で確かめを一度流して依存コマンドの欠落を検出する。
+# 実装前に不成立な通常の検査 (多くは終了 1) は続行し、command not found (127) のみ環境失敗にする。
+if [ -n "${TASK_CHECK:-}" ]; then
+  local_check_output=$(cd "$W" && bash -c "$TASK_CHECK" 2>&1); local_check_rc=$?
+  if [ "$local_check_rc" = 127 ]; then
+    log "起動前の確かめで環境の失敗（終了コード 127）: $local_check_output"
+    echo environment-failed > "$WORK/reviewed-$name"
+    return 2
+  fi
+  log "起動前の部品確認: 終了コード $local_check_rc（0 以外は実装前の未完了として続行）"
+fi
 }
 
 # 依頼文が名指すファイル（src/a.ts や handoff/b.md の形）
@@ -383,7 +394,7 @@ commit_and_close() {
 ledger_end() {
   local outcome commit=
   outcome=$(cat "$WORK/reviewed-$name" 2>/dev/null) || outcome=failed
-  case $outcome in implemented|stopped|blocked|failed) ;; *) outcome=failed ;; esac
+  case $outcome in implemented|stopped|blocked|failed|environment-failed) ;; *) outcome=failed ;; esac
   [ "$outcome" = implemented ] && [ -z "${BASE:-}" ] && commit=$(git -C "$W" rev-parse HEAD 2>/dev/null)
   "$TASK_BIN" ended "$TASK_ID" "$outcome" ${commit:+--commit "$commit"} --log "$L" >> "$L" 2>&1 ||
     log "台帳に終わり（$outcome）を書けなかった"
@@ -420,7 +431,7 @@ main() {
   else
     setup && make_tab; rc=$?
   fi
-  [ "$rc" = 0 ] || { echo failed > "$WORK/reviewed-$name"; log "準備で止まった"; return 1; }
+  [ "$rc" = 0 ] || { [ "$rc" = 2 ] && [ "$(cat "$WORK/reviewed-$name" 2>/dev/null)" = environment-failed ] || echo failed > "$WORK/reviewed-$name"; log "準備で止まった"; return 1; }
 short=$(echo "$name" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-' | cut -c1-24)
 
 # 3. 実装
