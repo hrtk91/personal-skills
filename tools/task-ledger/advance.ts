@@ -27,8 +27,6 @@ export type AdvanceDeps = {
   resend: (task: Task, name: string) => number;
   /** Waits a little before looking again (merges in one repository go one at a time). */
   pause: () => void;
-  /** Runs the periodic tab sweep; tests may omit this or supply a fake. */
-  sweep?: (ledger: Ledger) => string[];
 };
 
 function tail(text: string, lines = 80): string {
@@ -103,7 +101,7 @@ export function advance(ledger: Ledger, id: string, deps: AdvanceDeps, pid = pro
 }
 
 export type SweepCandidate = { tabId: string; name: string; reason: string; task: Task | null };
-type HerdrTab = { tab_id: string };
+type HerdrTab = { tab_id: string; label?: string };
 type HerdrPane = { tab_id: string; cwd?: string };
 type SweepOptions = {
   now?: number;
@@ -122,7 +120,7 @@ export function herdrTabSweepCandidates(ledger: Ledger, options: SweepOptions = 
   const tabs = options.tabs ?? herdrJson('tab', 'list').tabs;
   const panes = options.panes ?? herdrJson('pane', 'list').panes;
   const paneRoots = panes.map((pane) => pane.cwd).filter((cwd): cwd is string => !!cwd).map((cwd) => dirname(dirname(cwd)));
-  const tabIds = new Set(tabs.map((tab) => tab.tab_id));
+  const eligibleTabs = new Set(tabs.filter((tab) => typeof tab.label === 'string').map((tab) => `${tab.tab_id}\0${tab.label}`));
   const tasks = ledger.list({ all: true });
   const byName = new Map<string, Task[]>();
   for (const task of tasks.filter((item) => item.brief)) {
@@ -138,7 +136,7 @@ export function herdrTabSweepCandidates(ledger: Ledger, options: SweepOptions = 
       let text = ''; let mtime = 0;
       try { text = readFileSync(join(root, file), 'utf8'); mtime = statSync(join(root, file)).mtimeMs; } catch { continue; }
       const tabId = [...text.matchAll(/タブ: ([^（\s]+)（/g)].at(-1)?.[1];
-      if (!tabId || !tabIds.has(tabId)) continue;
+      if (!tabId || !eligibleTabs.has(`${tabId}\0${name}`)) continue;
       const matches = byName.get(name) ?? [];
       if (matches.length > 1) continue; // Identical run names across repositories are ambiguous; fail closed.
       const task = matches[0] ?? null;
@@ -417,5 +415,4 @@ export const realAdvanceDeps: AdvanceDeps = {
     } finally { closeSync(out); }
   },
   pause() { spawnSync('sleep', ['20']); },
-  sweep(ledger) { return sweepHerdrTabs(ledger); },
 };

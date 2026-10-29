@@ -64,7 +64,7 @@ test('cleanup tab and reason are readable in the rendered trace', () => {
   try {
     ledger.recordSpan({ task_id: task.id, attempt: 1, name: '片付け', start: time.now().toISOString(), end: time.now().toISOString(), ok: true,
       attributes: { 'cleanup.tab_id': 'w1:t2', 'cleanup.reason': '済から10分経過' } });
-    const text = renderTrace(buildTrace(ledger, ledger.get(task.id)!, time.now())).join('\\n');
+    const text = renderTrace(buildTrace(ledger, ledger.get(task.id)!, time.now())).join('\n');
     assert.match(text, /片付け.*tab=w1:t2 reason=済から10分経過/);
   } finally { ledger.close(); }
 });
