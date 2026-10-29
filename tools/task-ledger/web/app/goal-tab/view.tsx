@@ -61,7 +61,7 @@ export function DashboardShell({ projects, current, tab, hrefFor, tabHref, foot,
   return (
     <div className={styles.app}>
       <nav className={styles.side} aria-label="プロジェクト">
-        <div className={styles.brand}>仕事の台帳</div>
+        <div className={styles.brand}>task-ledger</div>
         {projects.map((project) => (
           <a key={project.repo} href={hrefFor(project)} className={project.repo === current.repo ? `${styles.proj} ${styles.on}` : styles.proj} aria-current={project.repo === current.repo ? "page" : undefined}>
             {project.name}
