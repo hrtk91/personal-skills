@@ -115,11 +115,11 @@ export function EmptyTab({ title, note }: { title: string; note: string }) {
 
 // ---- the Goal tab ----
 
-export function GoalTabView({ data, submit, busy }: { data: GoalTabData; submit: (intent: GoalTabIntent) => void; busy?: boolean }) {
+export function GoalTabView({ data, submit, busy, consultHref }: { data: GoalTabData; submit: (intent: GoalTabIntent) => void; busy?: boolean; /** Opens the consultation sidebar for a task. Omitted: no 「相談する」. */ consultHref?: (taskId: string) => string }) {
   const now = Date.parse(data.readAt);
   return (
     <div className={styles.goalTab}>
-      <Decisions items={data.decisions} submit={submit} busy={busy} now={now} />
+      <Decisions items={data.decisions} submit={submit} busy={busy} now={now} consultHref={consultHref} />
       <Queue items={data.queue} submit={submit} busy={busy} now={now} />
       <Goals goals={data.goals} submit={submit} busy={busy} />
       <NewGoal submit={submit} busy={busy} />
@@ -133,12 +133,12 @@ function SectionHead({ title, hint }: { title: string; hint?: string }) {
 }
 
 // What waits on you: each stop in the fixed shape, with its options.
-function Decisions({ items, submit, busy, now }: { items: DecisionItem[]; submit: (intent: GoalTabIntent) => void; busy?: boolean; now: number }) {
+function Decisions({ items, submit, busy, now, consultHref }: { items: DecisionItem[]; submit: (intent: GoalTabIntent) => void; busy?: boolean; now: number; consultHref?: (taskId: string) => string }) {
   return (
     <section className={styles.section}>
       <SectionHead title="あなたの番" />
       {items.length
-        ? items.map((item) => <Decision key={item.taskId} item={item} submit={submit} busy={busy} now={now} />)
+        ? items.map((item) => <Decision key={item.taskId} item={item} submit={submit} busy={busy} now={now} consultHref={consultHref} />)
         : <div className={`${styles.card} ${styles.calm}`}>決めることはありません。</div>}
     </section>
   );
@@ -148,7 +148,7 @@ const FIELD_LABELS: Array<[keyof NonNullable<DecisionItem["fields"]>, string]> =
   ["goal", "最終的なゴール"], ["how", "どう実現するか"], ["done", "やったこと"], ["undecided", "決められないこと"],
 ];
 
-function Decision({ item, submit, busy, now }: { item: DecisionItem; submit: (intent: GoalTabIntent) => void; busy?: boolean; now: number }) {
+function Decision({ item, submit, busy, now, consultHref }: { item: DecisionItem; submit: (intent: GoalTabIntent) => void; busy?: boolean; now: number; consultHref?: (taskId: string) => string }) {
   const recommended = item.options?.findIndex((option) => option.recommended) ?? -1;
   const [choice, setChoice] = useState(Math.max(0, recommended));
   const [memo, setMemo] = useState("");
@@ -181,6 +181,7 @@ function Decision({ item, submit, busy, now }: { item: DecisionItem; submit: (in
       <div className={styles.btns}>
         <input className={styles.t} value={memo} onChange={(event) => setMemo(event.target.value)} placeholder={options.length ? "ひとこと（任意）" : "どうするか（例: この直し方で続けて）"} aria-label="ひとこと" />
         <button type="button" className={`${styles.b} ${styles.pri}`} disabled={busy || (!options.length && !memo.trim())} onClick={() => send()}>{options.length ? "これで決める" : "続けさせる"}</button>
+        {consultHref ? <a className={styles.b} href={consultHref(item.taskId)}>相談する</a> : null}
         <button type="button" className={styles.b} disabled={busy} onClick={() => send("保留")}>保留</button>
         <button type="button" className={`${styles.b} ${styles.quiet}`} disabled={busy} onClick={() => send("やめ")}>やめる</button>
       </div>
