@@ -10,7 +10,7 @@ AIエージェントに、作業の進め方や判断基準を追加するため
 
 ## Task dashboard
 
-`tools/task-ledger/web/` は台帳SQLiteを表示するReact Routerアプリです。`tools/task-ledger/systemd/task-dashboard.service` は8790番で待ち受けるユーザーサービスで、既存の `tools/task-ledger/systemd/install.sh` が台帳ハーネスとともに有効化します。依存導入はプロジェクト内で行わず、環境にある `node_modules` を `web/node_modules` にリンクして使います。
+`tools/task-ledger/web/` は台帳SQLiteを表示するReact Routerアプリです。`tools/task-ledger/systemd/task-dashboard.service` は8790番で待ち受けるユーザーサービスで、既存の `tools/task-ledger/systemd/install.sh` が台帳ハーネスとともに有効化します。部品（npm のパッケージ）は本体の `web/` に 1 回だけ入れます（`npm ci`）。作業役のコピーやハーネスの使い捨てのコピーでは入れ直さず、`web/check.sh` が本体の `node_modules` をリンクで指してから、型の検査・ビルド・検査を流します（SSD に毎回 167 個を書かないため）。ダッシュボードの仕事の確かめのコマンドは `cd tools/task-ledger && node --experimental-strip-types --no-warnings --test *.test.ts && bash web/check.sh`。
 
 各スキルの詳しい使い方は、`skills/<スキル名>/SKILL.md` にあります。
 
