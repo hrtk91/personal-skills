@@ -148,7 +148,8 @@ export function report(traces: TaskTrace[]): string[] {
       const why = span.attributes['status.left_because'];
       if (span.role !== 'status' || typeof why !== 'string') continue;
       if (!/^差し戻し|判断待ち|落ち|戻した|通らなかった/.test(why) && span.ok) continue;
-      const kind = why.startsWith('差し戻し: レビュー') ? 'レビューで差し戻し'
+      const kind = why.startsWith('差し戻し: 作業役の報告が') ? '作業役が未完了と書いていた'
+        : why.startsWith('差し戻し: レビュー') ? 'レビューで差し戻し'
         : why.startsWith('差し戻し: 確かめ') ? '確かめが落ちて差し戻し'
         : why.startsWith('差し戻し') ? 'その他の差し戻し'
         : /本体に入れたあとの確かめ/.test(why) ? '取り込み後の確かめが落ちた'

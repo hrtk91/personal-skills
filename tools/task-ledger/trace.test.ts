@@ -82,6 +82,19 @@ test('the OTLP document has the resource, nanosecond times, typed attributes and
   assert.ok(spans.some((s) => s.spanId === review.parentSpanId && s.name === 'レビュー中'));
 });
 
+test('the report counts work returned because its report said conditions were unmet', () => {
+  const time = clock();
+  const ledger = new Ledger(':memory:', time.now);
+  const task = ledger.add({ repo: '/r', title: '未完了', why: 'w', brief: 'handoff/t.md' });
+  ledger.setStatus(task.id, '確かめ中');
+  time.wait(1);
+  ledger.setStatus(task.id, '走行中', '差し戻し: 作業役の報告が、終わりの条件を満たしていないと書いている: 条件X', { attempts: 2 });
+  const text = report([buildTrace(ledger, ledger.get(task.id)!, time.now())]).join('\n');
+  assert.match(text, /作業役が未完了と書いていた\s+1 回/);
+  assert.ok(renderTrace(buildTrace(ledger, ledger.get(task.id)!, time.now())).some((line) => line.includes('報告を見る')) === false);
+  ledger.close();
+});
+
 test('the report gives times per status and step, why work went back, and the review cost', () => {
   const { ledger, task, time } = finishedTask();
   const trace = buildTrace(ledger, task, time.now());

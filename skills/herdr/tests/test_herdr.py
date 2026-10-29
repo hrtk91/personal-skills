@@ -383,6 +383,8 @@ class HerdrContractTest(unittest.TestCase):
         self.assertEqual(self.git("log", "-1", "--format=%an <%ae>", cwd=self.w).strip(), "Example <example@noreply.invalid>")
         impl_text = self.state()["prompts"][0][1]
         self.assertIn("handoff/design-first.md の手順と結論の書式に従う", impl_text)
+        self.assertIn("終わりの条件: 満たした", impl_text)
+        self.assertIn("終わりの条件: 満たしていない", impl_text)
         self.assertNotIn("10 行程度", impl_text)
 
     def test_ignored_extra_and_excluded_paths_do_not_fail_staging(self):
