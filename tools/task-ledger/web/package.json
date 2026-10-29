@@ -2,13 +2,15 @@
   "name": "task-dashboard",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=24" },
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "dev": "react-router dev --host 0.0.0.0",
-    "start": "react-router dev --host 0.0.0.0 --port 8790",
+    "start": "PORT=8790 HOST=0.0.0.0 react-router-serve ./build/server/index.js",
     "typecheck": "react-router typegen && tsc --noEmit",
     "build": "react-router typegen && react-router build",
-    "test": "node --experimental-strip-types --no-warnings --test *.test.ts"
+    "test": "node --experimental-strip-types --no-warnings --test app/**/*.test.ts"
   },
   "dependencies": {
     "@react-router/node": "^8.4.0",

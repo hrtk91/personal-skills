@@ -11,6 +11,8 @@ HERDR_SOCKET_PATH=$HERDR_SOCKET_PATH
 HERDR_BIN_PATH=${HERDR_BIN_PATH:-$(command -v herdr)}
 TASK_HERDR_WORKSPACE=$HERDR_WORKSPACE_ID
 ENV
+# The dashboard has its own packages (10/29: 「専用に入れてよい」) and is served from its build.
+( cd "$here/../web" && [ -d node_modules ] || npm install --no-audit --no-fund ) && ( cd "$here/../web" && npm run build )
 cp "$here/task-ledger.service" "$here/task-ledger.timer" "$here/task-dashboard.service" ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now task-ledger.timer task-dashboard.service

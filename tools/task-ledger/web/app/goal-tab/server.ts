@@ -1,4 +1,5 @@
 import { Ledger, ACTIVE, type Task, type Goal, type Issue } from "../../../ledger.ts";
+import { answerTask } from "../../../answer.ts";
 import type { DecisionItem, GoalTabData, GoalRow, IssueRow, TaskRow, TaskStatus, StageState, ProjectSummary } from "./types.js";
 
 const RUNNING = new Set<string>(ACTIVE);
@@ -42,7 +43,7 @@ export function loadGoalData(ledger:Ledger, repo:string, now=new Date()):GoalTab
 export function submitIntent(ledger:Ledger, repo:string, data:Record<string,string>) {
  const text=(k:string)=>data[k]??'';
  switch(text('intent')) {
-  case 'answer': {const t=ledger.get(text('taskId'));if(!t||t.repo!==repo)throw new Response('Task not found',{status:404});if(!['判断待ち','保留'].includes(t.status))throw new Response('判断待ち・保留ではありません',{status:400});const to=text('to')||'待ち';if(!['待ち','やめ','保留'].includes(to))throw new Response('invalid answer destination',{status:400});ledger.setStatus(t.id,to as any,`答え: ${text('text')}`);return {ok:true};}
+  case 'answer': {const t=ledger.get(text('taskId'));if(!t||t.repo!==repo)throw new Response('Task not found',{status:404});const to=text('to')||'待ち';if(!['待ち','やめ','保留'].includes(to))throw new Response('invalid answer destination',{status:400});try{answerTask(ledger,t.id,text('text'),to as any);}catch(e){throw new Response(e instanceof Error?e.message:String(e),{status:400});}return {ok:true};}
   case 'move-task': {const t=ledger.get(text('taskId'));if(!t||t.repo!==repo)throw new Response('Task not found',{status:404});if(t.status!=='待ち')throw new Response('動いている仕事は動かせません', {status:400});const move=text('move');if(!['up','down','first'].includes(move))throw new Response('invalid move',{status:400});ledger.setPriority(t.id,move as any);return {ok:true};}
   case 'move-goal': {const g=ledger.getGoal(text('goalId'));if(!g||g.repo!==repo)throw new Response('Goal not found',{status:404});ledger.moveGoal(g.id,text('move') as 'up'|'down');return {ok:true};}
   case 'create-goal': ledger.addGoal({repo,title:text('title'),why:text('why')});return {ok:true};

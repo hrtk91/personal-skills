@@ -1,5 +1,6 @@
 // `task`: the command people and the commanding Claude use to put tasks into the ledger and read it.
 // Moving a task through 走行中 → 済 is the harness's job, not this command's (except hold / drop / answer).
+import { answerTask } from './answer.ts';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
@@ -172,13 +173,10 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
       }
       case 'answer': {
         const [id, ...words] = positionals;
-        const task = ledger.get(id ?? '');
-        if (!task || words.length === 0) throw new Error('task answer <id> <答え>');
-        if (task.status !== '判断待ち' && task.status !== '保留') throw new Error(`判断待ち・保留ではありません（今は ${task.status}）`);
+        if (!id || words.length === 0) throw new Error('task answer <id> <答え>');
         const to = (values.to ?? '待ち') as Status;
-        if (!['待ち', 'やめ', '保留', '確かめ中', '取り込み中'].includes(to)) throw new Error('--to は 待ち・やめ・保留・確かめ中・取り込み中');
-        if ((to === '確かめ中' || to === '取り込み中') && !task.workdir) throw new Error(`作業役のコピーが記録されていないので、${to}には戻せません`);
-        out(line(ledger.setStatus(task.id, to, `答え: ${words.join(' ')}`)));
+        const task = answerTask(ledger, id, words.join(' '), to);
+        out(line(task));
         if (to !== '確かめ中' && to !== '取り込み中') return 0;
         // Fixed by hand (check, review, merge) or accepted over the review (merge; the check after merging still runs).
         ledger.releaseRunner(task.id);
