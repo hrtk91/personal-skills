@@ -102,6 +102,22 @@ test('changes entirely within task.files produce no outside notice or trace attr
   } finally { f.done(); }
 });
 
+test('brief and harness-generated report/design files do not produce an outside notice', () => {
+  const f = fixture({ files: ['mul.js'] });
+  try {
+    writeFileSync(join(f.workdir, 'handoff/t-report.md'), '終わりの条件: 満たした\n');
+    writeFileSync(join(f.workdir, 'handoff/t-design.md'), '# 設計\n');
+    git(f.workdir, 'add', 'handoff/t-report.md', 'handoff/t-design.md');
+    git(f.workdir, 'commit', '-qm', 'harness report and design');
+    const calls: string[] = [];
+    advance(f.ledger, 'repo-1', deps('{"verdict":"判断","reasons":[],"fixes":[]}', calls), 1);
+    assert.doesNotMatch(calls.find((call) => call.startsWith('review:'))!, /^review:触るファイルの外の変更:/);
+    const reviewSpan = f.ledger.spans('repo-1').find((span) => span.name === 'レビュー')!;
+    assert.equal(reviewSpan.attributes['diff.outside_files'], undefined);
+    assert.equal(f.ledger.spans('repo-1').find((span) => span.name === '報告を見る')!.attributes['report.status'], '満たした');
+  } finally { f.done(); }
+});
+
 test('files allow exact paths and files beneath declared folders only', () => {
   assert.deepEqual(outsideTaskFiles(['src/a.ts', 'skills/herdr/tests/test_x.py', 'other.txt'], ['src/a.ts', 'skills/herdr/tests']), ['other.txt']);
 });

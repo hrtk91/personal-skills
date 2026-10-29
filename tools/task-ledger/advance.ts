@@ -85,7 +85,8 @@ export function advance(ledger: Ledger, id: string, deps: AdvanceDeps, pid = pro
       const base = deps.sh(`git merge-base HEAD ${quote(gitHead(task.repo, deps))}`, workdir, 60_000).output.trim();
       const diffPath = writeLog(id, `diff-${task.attempts}`, deps.sh(`git diff ${quote(base)} HEAD`, workdir, 60_000).output);
       const changedPaths = deps.sh(`git diff --name-only ${quote(base)} HEAD`, workdir, 60_000).output.split('\n').filter(Boolean);
-      const outsideFiles = outsideTaskFiles(changedPaths, task.files);
+      const harnessFiles = task.brief ? [task.brief, ...['-report.md', '-design.md', '-review.md'].map((suffix) => task.brief!.replace(/\.md$/, suffix))] : [];
+      const outsideFiles = outsideTaskFiles(changedPaths, [...task.files, ...harnessFiles]);
       const checkPath = logPath(id).replace(/\.log$/, `-check-${task.attempts}.log`);
       const reply = timed(ledger, task, 'レビュー', () => deps.review(reviewPrompt(task, diffPath, checkPath, outsideFiles), workdir, [dirname(diffPath)]), (got) => {
         const found = parseVerdict(typeof got === 'string' ? got : got.answer);
