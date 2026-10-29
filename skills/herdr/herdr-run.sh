@@ -279,7 +279,7 @@ run_agent() {
     goal="$goal 途中で質問せず最後までやり切り、報告ファイルを書き終えてください。"
     rm -f "$mark"
     claude_send "$agent" "$goal" "$mark" "$pane" || { log "$agent: Claude -p が正常終了し報告を書くまで完了しなかった"; return 1; }
-    log "$agent: Claude -p の報告と正常終了を確認した（session_id $(cat "$WORK/claude-$name.session" 2>/dev/null)）"
+    log "$agent: Claude -p の終端結果と報告を確認した（session_id $(cat "$WORK/claude-$name.session" 2>/dev/null)）"
     return 0
   fi
   if [ "$kind" = pi ] && [ "${PI_CHANNEL:-1}" != 0 ] && [ -f "${PI_CHANNEL_EXT:-$SKILL_DIR/channel/pi/extension.ts}" ] && [ -f "$channel_bin" ]; then

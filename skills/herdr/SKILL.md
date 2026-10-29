@@ -49,7 +49,7 @@ Codex は設計・実装・レビューを一旦 `gpt-6.1-sol / default / max` �
 
 旧名 `MODEL`・`TIER`・`EFFORT` も、対応する `CODEX_*` が無い場合に読む。レビュー専用の指定が最優先。`/goal` で依頼を渡し、セッション記録の目標イベントに今回の印のパスが載ったことを確かめる。`-s danger-full-access -a never` で動かすため、書いてよい場所は依頼文で絞る。worktree と元の Git ルートの信頼指定は起動引数に渡し、ユーザーの設定ファイルは編集しない。
 
-Claude は `claude -p` を実装ペインで起動し、依頼を標準入力で渡す。`--output-format stream-json --verbose` の生ログは `$HERDR_WORK/claude-<名>.jsonl`、ペインには道具・短い本文・最後の結果を表示する。終了コード0かつ `handoff/<名>-report.md` がある場合だけ完了。報告が無い場合は同じ session_id を `--resume` で一度だけ再開する。session_id はログに記録する。`CLAUDE_MODEL`・`CLAUDE_EFFORT` でモデルと強さを指定する。
+Claude は `claude -p` を実装ペインで起動し、依頼を標準入力で渡す。`--output-format stream-json --verbose` の生ログは `$HERDR_WORK/claude-<名>.jsonl`、ペインには道具・短い本文・最後の結果を表示する。終了コード0かつ `handoff/<名>-report.md` がある場合に完了する。CLI が結果後も終了しないときは、エラーでない `result` と報告の両方を確認して CLI を止める。報告が無い場合は同じ session_id を `--resume` で一度だけ再開する。session_id はログに記録する。`CLAUDE_MODEL`・`CLAUDE_EFFORT` でモデルと強さを指定する。
 
 pi は通常のプロンプトを使い、`/goal` は使わない。既定は `openai-codex/gpt-6-luna`・thinking `high`（`PI_PROVIDER`・`PI_MODEL`・`PI_THINKING`）。モデル名による起動拒否はない。自動実行用の `agents/pi-system.md` を `--system-prompt` に渡す。ユーザーの SYSTEM.md は変えない。ローカルモデルを使う場合は、許可されたランタイムを先に起動しておく。
 

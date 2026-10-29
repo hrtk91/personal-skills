@@ -192,7 +192,7 @@ class HerdrContractTest(unittest.TestCase):
             path.write_text(source)
             path.chmod(0o755)
         claude = self.bin / "claude"
-        claude.write_text("#!/usr/bin/env python3\nimport json,os,sys\nopen(os.environ['FAKE_CLAUDE_ARGS'],'w').write(json.dumps(sys.argv[1:]))\nprint(json.dumps({'type':'system','subtype':'init','session_id':'session-smoke'}))\nprint(json.dumps({'type':'assistant','message':{'content':[{'type':'tool_use','name':'Write','input':{'file':'handoff/report'}}]}}))\nprint(json.dumps({'type':'result','result':'finished'}))\nname=os.environ['FAKE_NAME']; os.makedirs('handoff',exist_ok=True); open('handoff/'+name+'-report.md','w').write('done\\n')\n")
+        claude.write_text("#!/usr/bin/env python3\nimport json,os,sys,subprocess\nopen(os.environ['FAKE_CLAUDE_ARGS'],'w').write(json.dumps(sys.argv[1:]))\nprint(json.dumps({'type':'system','subtype':'init','session_id':'session-smoke'}), flush=True)\nprint(json.dumps({'type':'assistant','message':{'content':[{'type':'tool_use','name':'Write','input':{'file':'handoff/report'}}]}}), flush=True)\nprint(json.dumps({'type':'result','result':'finished'}), flush=True)\nif os.environ.get('FAKE_CLAUDE_HOLD_CHILD') == '1':\n child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)'])\n open(os.environ['FAKE_CLAUDE_CHILD_PID'],'w').write(str(child.pid))\nname=os.environ['FAKE_NAME']; os.makedirs('handoff',exist_ok=True); open('handoff/'+name+'-report.md','w').write('done\\n')\n" )
         claude.chmod(0o755)
         self.claude_args = self.root / "claude-args.json"
         self.channel_bin = self.bin / "channel"
@@ -225,7 +225,7 @@ class HerdrContractTest(unittest.TestCase):
                 self.env.pop(key)
         self.env.update({"PATH": str(self.bin) + os.pathsep + self.env["PATH"], "HERDR_WORKSPACE_ID": "test-workspace",
             "CODEX_HOME": str(self.home), "FAKE_STATE": str(self.state_path), "FAKE_NAME": self.name,
-            "FAKE_WORK": str(self.work), "FAKE_W": str(self.w), "FAKE_CLAUDE_ARGS": str(self.claude_args), "FAKE_PANE_OUTPUT": str(self.root / "pane-output.txt"), "PI_CHANNEL_EXT": str(self.channel_ext),
+            "FAKE_WORK": str(self.work), "FAKE_W": str(self.w), "FAKE_CLAUDE_ARGS": str(self.claude_args), "FAKE_CLAUDE_CHILD_PID": str(self.root / "claude-child.pid"), "FAKE_PANE_OUTPUT": str(self.root / "pane-output.txt"), "PI_CHANNEL_EXT": str(self.channel_ext),
             "CHANNEL_BIN": str(self.channel_bin), "AGENT_CHANNEL": str(self.channel_log)})
 
     @property
@@ -277,6 +277,22 @@ class HerdrContractTest(unittest.TestCase):
         self.assertIn("tool: Write", pane)
         self.assertIn("result: finished", pane)
         self.assertTrue((self.w / "handoff/contract-report.md").is_file())
+
+    def test_claude_result_finishes_when_descendant_holds_stdout_open(self):
+        import signal
+        import time
+        started = time.monotonic()
+        result = self.run_script(IMPL_AGENT="claude", REV_AGENT="codex", CLAUDE_MODEL="haiku", CLAUDE_EFFORT="high", FAKE_CLAUDE_HOLD_CHILD="1")
+        elapsed = time.monotonic() - started
+        child_pid = int((self.root / "claude-child.pid").read_text())
+        try:
+            self.assert_success(result)
+            self.assertLess(elapsed, 8, f"stream formatter waited for inherited stdout (elapsed {elapsed:.1f}s)")
+        finally:
+            try:
+                os.kill(child_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
 
     def test_default_model_author_branch_and_pipeline(self):
         self.assert_success(self.run_script())
