@@ -47,11 +47,11 @@ const fs = require('fs');
 const since = Date.parse(process.argv[3]);
 for (const line of fs.readFileSync(process.argv[2], 'utf8').split(/\r?\n/)) {
   if (!line || (!line.includes('stopped') && !line.includes('post'))) continue;
-  let keep = true;
+  let keep = false;
   try {
     const x = JSON.parse(line);
     const at = Date.parse(x.at ?? x.timestamp ?? x.created_at ?? x.time ?? '');
-    if (Number.isFinite(at)) keep = at >= since;
+    keep = Number.isFinite(at) && at >= since;
   } catch {}
   if (keep) console.log(line);
 }
