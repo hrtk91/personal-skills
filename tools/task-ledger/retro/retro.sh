@@ -83,7 +83,9 @@ raw="$work/result.json"
 # Keep user HOME/auth configuration untouched. The tool allowlist permits only read operations and issue creation.
 # Both spellings: the model calls the command as `task …` (it is on PATH) as often as by its full path.
 allowed=(Read Grep Glob "Bash($TASK report *)" "Bash($TASK trace *)" "Bash($TASK issue list *)" "Bash($TASK issue show *)" "Bash($TASK issue add *)" 'Bash(task report *)' 'Bash(task trace *)' 'Bash(task issue list *)' 'Bash(task issue show *)' 'Bash(task issue add *)' 'Bash(sqlite3 -readonly *)' 'Bash(cat *)' 'Bash(ls *)')
-cat "$HERE/retro-prompt.md" "$input" | claude -p --model opus --output-format json --settings '{"disableAllHooks":true}' --strict-mcp-config --add-dir "$DATA" --allowedTools "${allowed[@]}" > "$raw"
+cat "$HERE/retro-prompt.md" "$input" | claude -p --model opus --output-format json --settings '{"disableAllHooks":true}' --strict-mcp-config --add-dir "$DATA" --allowedTools "${allowed[@]}" > "$raw" 2> "$work/claude.err" || {
+  # The temp folder is removed on exit; put what claude said into the journal (10/29 23:40 failed with no trace).
+  echo "claude -p が終了コード $? で終わった" >&2; cat "$work/claude.err" "$raw" >&2; exit 1; }
 
 session=$(node -e 'const x=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); process.stdout.write(String(x.session_id??""))' "$raw")
 cost=$(node -e 'const x=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); process.stdout.write(String(x.total_cost_usd??"不明"))' "$raw")
