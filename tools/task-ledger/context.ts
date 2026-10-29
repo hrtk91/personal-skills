@@ -1,8 +1,9 @@
+import { existsSync, readFileSync } from 'node:fs';
 import type { Ledger, Task } from './ledger.ts';
 
 /** Renders the optional knowledge context attached to a task's Issue/Goal. */
 // `issueBody: false` when the Issue's body is already in the brief this context is appended to.
-export function taskContext(ledger: Ledger, task: Task, now = new Date(), options: { issueBody?: boolean } = {}): string {
+export function taskContext(ledger: Ledger, task: Task, now = new Date(), options: { issueBody?: boolean; taskSpecificOnly?: boolean } = {}): string {
   const lines: string[] = [];
   lines.push('## 作業役とモデル');
   lines.push(`- worker: ${task.worker ?? 'pi（既定）'}`);
@@ -18,10 +19,22 @@ export function taskContext(ledger: Ledger, task: Task, now = new Date(), option
       && event.note?.startsWith('答え: ')) answerIndex = i;
   }
   const answer = answerIndex >= 0 ? taskEvents[answerIndex]!.note!.slice('答え: '.length) : null;
-  const workerFinished = answerIndex >= 0 && taskEvents.slice(answerIndex + 1).some((event) =>
+  const sendBackIndex = taskEvents.findLastIndex((event) => event.to_status === '走行中' && event.note?.startsWith('差し戻し: '));
+  const sendBack = sendBackIndex >= 0 ? taskEvents[sendBackIndex]! : null;
+  const workerFinished = (index: number) => taskEvents.slice(index + 1).some((event) =>
     event.from_status === '走行中' && event.to_status === '確かめ中');
-  if (answer !== null && !workerFinished) lines.push('## 判断待ちへの答え', answer);
-  if (!task.issue_id) return `${lines.join('\n')}\n`;
+  if (answer !== null && !workerFinished(answerIndex)) lines.push('## 判断待ちへの答え', answer);
+  if (sendBack?.note && !workerFinished(sendBackIndex)) {
+    const [reasonLine, ...rest] = sendBack.note.slice('差し戻し: '.length).split('\n');
+    const reason = reasonLine?.replace(/\s*（詳しく: .*）$/, '') ?? '';
+    const logPath = reasonLine?.match(/（詳しく: (.+)）$/)?.[1] ?? rest.join('\n').match(/^詳しく: (.+)$/m)?.[1];
+    let detail: string[] = [];
+    if (logPath && existsSync(logPath)) {
+      try { detail = readFileSync(logPath, 'utf8').split('\n').slice(0, 80); } catch { /* reason remains useful without the log */ }
+    } else if (rest.length && !logPath) detail = rest.slice(0, 80);
+    lines.push('## 今回の差し戻し', `- ${reason}`, ...detail);
+  }
+  if (options.taskSpecificOnly || !task.issue_id) return `${lines.join('\n')}\n`;
   const issue = ledger.getIssue(task.issue_id);
   if (!issue) return `${lines.join('\n')}\n`;
   const goal = issue.goal_id ? ledger.getGoal(issue.goal_id) : null;
@@ -41,7 +54,7 @@ export function taskContext(ledger: Ledger, task: Task, now = new Date(), option
   const events = ledger.db.prepare("SELECT e.note FROM events e JOIN tasks t ON t.id=e.task_id WHERE t.repo=? AND e.at>=? AND e.note LIKE '%差し戻し%' ORDER BY e.at DESC").all(task.repo, since) as { note: string | null }[];
   const reasons = new Map<string, number>();
   for (const event of events) {
-    const reason = (event.note ?? '').replace(/^差し戻し[:：]?\s*/, '').trim() || '理由の記録なし';
+    const reason = (event.note ?? '').split('\n', 1)[0].replace(/^差し戻し[:：]?\s*/, '').replace(/\s*（詳しく: .*）$/, '').trim() || '理由の記録なし';
     reasons.set(reason, (reasons.get(reason) ?? 0) + 1);
   }
   lines.push('## 直近 7 日の差し戻し理由');

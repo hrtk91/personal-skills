@@ -102,7 +102,7 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
     repo: { type: 'string' }, all: { type: 'boolean' }, status: { type: 'string' }, to: { type: 'string' },
     agent: { type: 'string' }, runner: { type: 'string' }, commit: { type: 'string' }, log: { type: 'string' }, workdir: { type: 'string' },
     since: { type: 'string' }, json: { type: 'boolean' }, 'dry-run': { type: 'boolean' }, out: { type: 'string' }, issue: { type: 'string' }, body: { type: 'string' }, by: { type: 'string' }, from: { type: 'string' }, goal: { type: 'string' }, stage: { type: 'string' }, stages: { type: 'string' }, loose: { type: 'boolean' }, open: { type: 'boolean' }, docKind: { type: 'string' }, path: { type: 'string' },
-    'なぜ': { type: 'string' }, '今の状態': { type: 'string' }, '関係する所': { type: 'string' }, 'やること': { type: 'string' }, 'やってよいこと': { type: 'string' }, 'やらないこと': { type: 'string' }, '終わりの条件': { type: 'string' }, '確かめのコマンド': { type: 'string' }, '触るファイル': { type: 'string' }, '種類': { type: 'string' }, '本番に出すか': { type: 'string' },
+    'なぜ': { type: 'string' }, '今の状態': { type: 'string' }, '関係する所': { type: 'string' }, 'やること': { type: 'string' }, 'やってよいこと': { type: 'string' }, 'やらないこと': { type: 'string' }, '終わりの条件': { type: 'string' }, '確かめのコマンド': { type: 'string' }, '触るファイル': { type: 'string' }, '種類': { type: 'string' }, '本番に出すか': { type: 'string' }, 'task-specific': { type: 'boolean' },
   } });
   const ledger = new Ledger();
   try {
@@ -202,7 +202,7 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
         throw new Error('task doc add|list');
       }
       case 'priority': {const [id,d]=positionals;if(!id||!['first','up','down'].includes(d??''))throw new Error('task priority <task id> first|up|down');ledger.setPriority(id,d as 'first'|'up'|'down');out(line(ledger.get(id)!));return 0;}
-      case 'context': {const task=ledger.get(positionals[0]??'');if(!task)throw new Error(`台帳にありません: ${positionals[0]??''}`);const text=taskContext(ledger,task);if(text)out(text.trimEnd());return 0;}
+      case 'context': {const task=ledger.get(positionals[0]??'');if(!task)throw new Error(`台帳にありません: ${positionals[0]??''}`);const text=taskContext(ledger,task,new Date(),{issueBody:false,taskSpecificOnly:values['task-specific']});if(text)out(text.trimEnd());return 0;}
       case 'show': {
         const task = ledger.get(positionals[0] ?? '');
         if (!task) throw new Error(`台帳にありません: ${positionals[0] ?? ''}`);

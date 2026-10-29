@@ -13,7 +13,7 @@ test('Goal, Issue, docs, priorities and task context through CLI', async () => {
     assert.equal(run('doc','add','--repo',repo,'--kind','仕様','--title','Spec','--path','handoff/spec.md','--goal','repo-g1').code,0);
     assert.match(run('add','--repo',repo,'--title','task','--why','w','--issue','repo-i1').text,/repo-1/);
     assert.match(run('issue','list','--goal','repo-g1').text,/Issue/);
-    const context=run('context','repo-1').text;assert.match(context,/Goal/);assert.match(context,/Details/);assert.ok(context.includes('handoff/spec.md'));
+    const context=run('context','repo-1').text;assert.match(context,/Goal/);assert.doesNotMatch(context,/Details/);assert.ok(context.includes('handoff/spec.md'));
     assert.equal(run('priority','repo-1','first').code,0);
   } finally {rmSync(dir,{recursive:true,force:true});delete process.env.TASK_LEDGER_DB;}
 });
