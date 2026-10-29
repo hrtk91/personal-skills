@@ -2,6 +2,7 @@
 // The harness moves tasks along; people and the commanding Claude only add, answer, hold or drop them.
 // Design: handoff/task-ledger-design.md
 import { DatabaseSync } from 'node:sqlite';
+import { spawn } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
@@ -43,6 +44,15 @@ export type Span = { task_id: string; attempt: number; name: string; start: stri
 
 export function defaultPath(): string {
   return process.env.TASK_LEDGER_DB ?? join(homedir(), '.local/share/task-ledger/ledger.sqlite');
+}
+
+function spawnDecisionRefresh(id: string): void {
+  const command = process.env.TASK_DECISION_SPAWN || join(import.meta.dirname, 'bin/task');
+  try {
+    const child = spawn(command, ['decision', 'refresh', id], { detached: true, stdio: 'ignore' });
+    child.on('error', () => { /* Refresh is best-effort; status changes are already committed. */ });
+    child.unref();
+  } catch { /* Refresh is best-effort; status changes are already committed. */ }
 }
 
 export class Ledger {
@@ -181,17 +191,18 @@ export class Ledger {
     if (!task) throw new Error(`台帳にありません: ${id}`);
     if (status === '保留' && !note?.trim()) throw new Error('保留には理由と、いつ見直すかを書いてください');
     const at = this.now().toISOString();
+    const decisionIds: string[] = [];
     this.db.exec('BEGIN IMMEDIATE');
     try {
       this.db.prepare(`UPDATE tasks SET status=?, note=?, agent=COALESCE(?,agent), "commit"=COALESCE(?,"commit"), attempts=COALESCE(?,attempts), runner=COALESCE(?,runner), updated_at=? WHERE id=?`)
         .run(status, note, fields.agent ?? null, fields.commit ?? null, fields.attempts ?? null, fields.runner ?? null, at, id);
       this.event(id, task.status, status, note, at);
-      if (status === 'やめ' || status === '判断待ち') this.blockDependents(id, at);
+      if (status === 'やめ' || status === '判断待ち') this.blockDependents(id, at, decisionIds);
+      if (status === '判断待ち' && task.status !== '判断待ち') decisionIds.unshift(id);
       this.db.exec('COMMIT');
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
-    const updated=this.get(id)!;
-    if(status==='判断待ち' && task.status!=='判断待ち' && process.env.NODE_TEST_CONTEXT===undefined && process.env.TASK_DECISION_AUTOGEN!=='0') createDecisionCard(this,updated,at,note??'');
-    return updated;
+    for (const decisionId of decisionIds) spawnDecisionRefresh(decisionId);
+    return this.get(id)!;
   }
 
   decisionCard(id:string,enteredAt:string):{json:Decision;model:string}|null { return getDecisionCard(this,id,enteredAt); }
@@ -259,14 +270,14 @@ export class Ledger {
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
   }
 
-  private blockDependents(id: string, at: string): void {
+  private blockDependents(id: string, at: string, decisionIds: string[]): void {
     const waiting = this.list().filter((task) => task.after.includes(id) && !CLOSED.includes(task.status) && !ACTIVE.includes(task.status) && task.status !== '判断待ち');
     for (const task of waiting) {
       const note = `先に済むはずの「${this.get(id)!.title}」が止まった`;
       this.db.prepare('UPDATE tasks SET status=?, note=?, updated_at=? WHERE id=?').run('判断待ち', note, at, task.id);
       this.event(task.id, task.status, '判断待ち', note, at);
-      if(process.env.NODE_TEST_CONTEXT===undefined && process.env.TASK_DECISION_AUTOGEN!=='0') createDecisionCard(this,this.get(task.id)!,at,note);
-      this.blockDependents(task.id, at);
+      decisionIds.push(task.id);
+      this.blockDependents(task.id, at, decisionIds);
     }
   }
 

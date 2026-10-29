@@ -1,3 +1,4 @@
+if (process.env.TASK_DECISION_SPAWN === undefined) process.env.TASK_DECISION_SPAWN = "/bin/true";
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Ledger } from './ledger.ts';
