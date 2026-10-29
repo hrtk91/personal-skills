@@ -13,6 +13,7 @@ import unittest
 SKILL = Path(__file__).resolve().parents[1]
 GIT = shutil.which("git")
 TASK_BIN = SKILL.parents[1] / "tools/task-ledger/bin/task"
+VERIFICATION_RULE = "終わりの条件の確かめは、使う人が実際に通る入口（依頼文に書かれたスクリプト・コマンド・起動の台本）で流し、そのコマンドと出力の要所を貼る。手で組んだ代わりの命令で流したもの、手で作った成果物は「代わりの道」と書き、満たしたとは書かない"
 
 FAKE_HERDR = r'''#!/usr/bin/env python3
 import json, os, re, sys, subprocess
@@ -220,7 +221,7 @@ class HerdrContractTest(unittest.TestCase):
                 "COMMIT_DIRTY", "COMMIT_NAME", "COMMIT_EMAIL", "DIRTY_COMMIT_NAME", "DIRTY_COMMIT_EMAIL", "AGENT", "IMPL_AGENT", "REV_AGENT",
                 # The parent Herdr session may carry a live TASK_ID / DB path. These offline contract tests
                 # must never mutate a caller's task ledger while exercising the fake harness.
-                "TASK_ID", "TASK_LEDGER_DB",
+                "TASK_ID", "TASK_ISSUE_ID", "TASK_LEDGER_DB",
             }:
                 self.env.pop(key)
         self.env.update({"PATH": str(self.bin) + os.pathsep + self.env["PATH"], "HERDR_WORKSPACE_ID": "test-workspace",
@@ -287,6 +288,7 @@ class HerdrContractTest(unittest.TestCase):
         self.assertIn("tool: Write", pane)
         self.assertIn("result: finished", pane)
         self.assertTrue((self.w / "handoff/contract-report.md").is_file())
+        self.assertIn(VERIFICATION_RULE, (self.work / "claude-contract.md").read_text())
 
     def test_claude_denial_detection_only_reports_tool_result_error(self):
         result = self.run_script(IMPL_AGENT="claude", REV_AGENT="codex", FAKE_CLAUDE_TOOL_DENIAL="1")
@@ -385,6 +387,7 @@ class HerdrContractTest(unittest.TestCase):
         self.assertIn("handoff/design-first.md の手順と結論の書式に従う", impl_text)
         self.assertIn("終わりの条件: 満たした", impl_text)
         self.assertIn("終わりの条件: 満たしていない", impl_text)
+        self.assertIn(VERIFICATION_RULE, impl_text)
         self.assertNotIn("10 行程度", impl_text)
 
     def test_ignored_extra_and_excluded_paths_do_not_fail_staging(self):
@@ -427,6 +430,11 @@ class HerdrContractTest(unittest.TestCase):
             self.assertIn("CODEX_HOME=" + str(self.home), call)
             self.assertIn("--no-focus", call)
 
+    def test_verification_rule_is_consistent_in_worker_instructions(self):
+        for path in (SKILL / "agents/pi-system.md", SKILL / "agents/claude.sh", SKILL / "herdr-run.sh"):
+            with self.subTest(path=path.name):
+                self.assertIn(VERIFICATION_RULE, path.read_text())
+
     def test_legacy_work_directory_is_supported(self):
         self.config.pop("HERDR_WORK")
         self.assert_success(self.run_script(CODEX_WORK=str(self.work)))
@@ -449,6 +457,8 @@ class HerdrContractTest(unittest.TestCase):
         self.assertIn("宛先 claude-271", (self.work / "herdr-contract.log").read_text())
         self.assertIn(str(wrapper), self.starts()[0])
         self.assertIn("channel_finish", self.state()["prompts"][0][1])
+        self.assertIn(VERIFICATION_RULE, self.state()["prompts"][0][1])
+        self.assertIn("agents/pi-system.md", " ".join(self.starts()[0]))
         self.assertNotIn("touch ", self.state()["prompts"][0][1])
 
     def test_pi_supervisor_override_is_written_to_wrapper_and_logged(self):
@@ -563,7 +573,11 @@ class HerdrContractTest(unittest.TestCase):
         content = brief.read_text()
         self.assertIn("## 今の状態", content)
         self.assertIn("## 関係する所", content)
-        self.assertFalse((self.repo / "handoff" / f"{issue_id}.md").exists())
+        # task add --issue materializes the canonical brief in the repo; the worker copy
+        # also receives it, but the brief must remain excluded from the worker commit.
+        repo_brief = self.repo / "handoff" / f"{issue_id}.md"
+        self.assertTrue(repo_brief.is_file())
+        self.assertEqual(repo_brief.read_text().strip(), self.ledger("issue", "brief", issue_id).stdout.strip())
         committed = self.git("show", "--format=", "--name-only", "HEAD", cwd=issue_work)
         self.assertNotIn(f"handoff/{issue_id}.md", committed.splitlines())
 

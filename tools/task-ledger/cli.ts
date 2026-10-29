@@ -1,9 +1,9 @@
 // `task`: the command people and the commanding Claude use to put tasks into the ledger and read it.
 // Moving a task through 走行中 → 済 is the harness's job, not this command's (except hold / drop / answer).
 import { answerTask } from './answer.ts';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { buildTrace, renderTrace, report, toOtlp, tracesSince } from './trace.ts';
 import { defaultPath, ISSUE_FIELDS, KINDS, WORKERS, Ledger, STATUSES, type Kind, type Status, type Task, type IssueField, type IssueFields, type Worker } from './ledger.ts';
@@ -61,6 +61,24 @@ function briefPath(repo: string, path: string): string {
   return path;
 }
 
+const KNOWN_COMMANDS = new Set(['cd', 'npm', 'node', 'python3', 'bash', 'npx']);
+
+function shellCommandLooksRunnable(check: string): boolean {
+  const first = check.trim().match(/^(?:'([^']+)'|"([^"]+)"|([^\s;&|<>()[\]]+))/);
+  const command = first?.[1] ?? first?.[2] ?? first?.[3];
+  if (!command || /[\u3000-\u9fff]/.test(command)) return false;
+  if (KNOWN_COMMANDS.has(command)) return true;
+  return (process.env.PATH ?? '').split(delimiter).some((dir) => {
+    const candidate = join(dir || '.', command);
+    try { return existsSync(candidate) && (process.platform === 'win32' || (statSync(candidate).mode & 0o111) !== 0); }
+    catch { return false; }
+  });
+}
+
+function issueFiles(value: string): string[] {
+  return value.split(/[，、,\n]/).map((s) => s.trim()).filter(Boolean);
+}
+
 /** Import paths are commonly repository-relative even when `task` is run from tools/task-ledger. */
 function issueMarkdownPath(path: string): string {
   if (isAbsolute(path) || existsSync(path)) return path;
@@ -97,15 +115,40 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
         const issue = values.issue ? ledger.getIssue(values.issue) : null;
         if (values.issue && !issue) throw new Error(`Issue が台帳にありません: ${values.issue}`);
         let title = values.title ?? '', why = values.why ?? '', brief = values.brief ? briefPath(root, values.brief) : null;
-        let check = values.check, files = values.files?.split(',').map((s) => s.trim()).filter(Boolean), kind = values.kind as Kind | undefined, deploy = values.deploy;
+        let check = values.check, files = values.files?.split(/[，、,\n]/).map((s) => s.trim()).filter(Boolean), kind = values.kind as Kind | undefined, deploy = values.deploy;
+        let generatedIssueBrief = false;
         if (issue) {
           const missing = (['今の状態','関係する所'] as const).filter((field) => !meaningful(issue.fields[field], field));
           if (missing.length) throw new Error(`Issue の文脈が不足: ${missing.join('、')}`);
           title ||= issue.title; why ||= issue.fields['なぜ'] ?? '';
-          brief ??= `handoff/${issue.id}.md`;
-          check ??= issue.fields['確かめのコマンド']; files ??= (issue.fields['触るファイル'] ?? '').split(/[，,\n]/).map((s) => s.trim()).filter(Boolean);
+          if (!brief) { brief = `handoff/${issue.id}.md`; generatedIssueBrief = true; }
+          check ??= issue.fields['確かめのコマンド'];
+          files ??= issueFiles(issue.fields['触るファイル'] ?? '');
+          if (check && !values.check && !shellCommandLooksRunnable(check)) {
+            throw new Error(`Issue の「確かめのコマンド」はシェルで実行できるコマンドに見えません: ${check}（--check で上書きできます）`);
+          }
+          const invalidFiles = files.filter((path) => {
+            const full = resolve(root, path);
+            if (isAbsolute(path) || (full !== root && !full.startsWith(`${root}/`))) return true;
+            if (existsSync(full)) return false;
+            // A missing path with prose-like whitespace or Japanese text is not a concrete file target,
+            // even when its parent directory exists (for example: "tools/ の差し戻しの記録まわり").
+            if (/[\s\u3000-\u9fff]/u.test(path)) return true;
+            // A not-yet-created file is a valid target when its directory prefix already exists in the repo.
+            let parent = dirname(full);
+            while (parent !== root && parent.startsWith(`${root}/`)) {
+              if (existsSync(parent) && statSync(parent).isDirectory()) return false;
+              parent = dirname(parent);
+            }
+            return true;
+          });
+          if (invalidFiles.length) throw new Error(`Issue の「触るファイル」にリポジトリにないパスがあります: ${invalidFiles.join('、')}（--files で上書きできます）`);
           kind ??= issue.fields['種類'] && KINDS.includes(issue.fields['種類'] as Kind) ? issue.fields['種類'] as Kind : undefined;
           deploy ??= /^(?:はい|する|true|yes)$/i.test(issue.fields['本番に出すか'] ?? '');
+          if (generatedIssueBrief && !existsSync(join(root, brief))) {
+            mkdirSync(dirname(join(root, brief)), { recursive: true });
+            writeFileSync(join(root, brief), assembleIssueBrief(ledger, issue));
+          }
         }
         const task = ledger.add({
           repo: root, title, why,
