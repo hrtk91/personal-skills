@@ -12,6 +12,15 @@ function fake(overrides: Partial<RunDeps> = {}) {
   return { deps, started };
 }
 
+test('sweeps once even when no tasks are waiting or advancing', () => {
+  const ledger = new Ledger(':memory:');
+  let sweeps = 0;
+  const { deps } = fake({ sweep: () => { sweeps++; return ['掃除候補なし']; } });
+  assert.deepEqual(runOnce(ledger, deps), ['掃除候補なし']);
+  assert.equal(sweeps, 1);
+  ledger.close();
+});
+
 test('task worker/model/effort become the corresponding herdr environment settings', () => {
   const saved = { ...process.env };
   try {

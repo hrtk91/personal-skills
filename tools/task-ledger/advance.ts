@@ -57,7 +57,6 @@ export function parseVerdict(answer: string): Verdict | null {
 
 export function advance(ledger: Ledger, id: string, deps: AdvanceDeps, pid = process.pid): string[] {
   const said: string[] = [];
-  said.push(...(deps.sweep?.(ledger) ?? []));
   if (!ledger.claimRunner(id, AFTER_WORK, pid)) return [...said, `${id}: ほかが進めているか、進める段ではない`];
   const stop = (note: string) => { ledger.setStatus(id, '判断待ち', note); ledger.releaseRunner(id); said.push(`${id}: 判断待ち（${note}）`); return said; };
   for (;;) {
@@ -122,6 +121,7 @@ export function herdrTabSweepCandidates(ledger: Ledger, options: SweepOptions = 
   const roots = options.roots ?? defaultHerdrRoots();
   const tabs = options.tabs ?? herdrJson('tab', 'list').tabs;
   const panes = options.panes ?? herdrJson('pane', 'list').panes;
+  const paneRoots = panes.map((pane) => pane.cwd).filter((cwd): cwd is string => !!cwd).map((cwd) => dirname(dirname(cwd)));
   const tabIds = new Set(tabs.map((tab) => tab.tab_id));
   const tasks = ledger.list({ all: true });
   const byName = new Map<string, Task[]>();
@@ -130,7 +130,7 @@ export function herdrTabSweepCandidates(ledger: Ledger, options: SweepOptions = 
     byName.set(name, [...(byName.get(name) ?? []), task]);
   }
   const candidates: SweepCandidate[] = [];
-  for (const root of roots) {
+  for (const root of new Set([...roots, ...paneRoots])) {
     let logs: string[];
     try { logs = readdirSync(root).filter((file) => /^herdr-[A-Za-z0-9][A-Za-z0-9_-]*\.log$/.test(file)); } catch { continue; }
     for (const file of logs) {
@@ -165,6 +165,7 @@ export function sweepHerdrTabs(ledger: Ledger, options: SweepOptions = {}): stri
     return [`herdr タブ掃除を見送った（一覧を読めない: ${error instanceof Error ? error.message : String(error)}）`];
   }
   const said: string[] = [];
+  if (candidates.length === 0) return ['掃除候補なし'];
   for (const candidate of candidates) {
     if (options.dryRun ?? process.env.TASK_HERDR_SWEEP_DRY_RUN === '1') {
       said.push(`掃除候補: ${candidate.tabId}（${candidate.name}）— ${candidate.reason}`);

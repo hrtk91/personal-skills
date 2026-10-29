@@ -214,13 +214,13 @@ test('tab sweeper only selects logged tabs by completion age and records cleanup
   const task = ledger.add({ repo: '/repo', title: 'done', why: 'w', brief: 'handoff/done.md' });
   ledger.setStatus(task.id, 'やめ');
   const log = join(root, 'herdr-done.log');
-  writeFileSync(log, 'タブ: tab-done（実装 pane・レビュー pane）\\n');
+  writeFileSync(log, 'タブ: tab-done（実装 pane・レビュー pane）\n');
   const finished = Date.parse(ledger.events(task.id).at(-1)!.at);
   const tabs = [{ tab_id: 'tab-done' }, { tab_id: 'not-logged' }];
   const panes = [{ tab_id: 'tab-done', cwd: root }];
   try {
     const dry = sweepHerdrTabs(ledger, { roots: [root], tabs, panes, now: finished + 10 * 60_000, dryRun: true, running: () => false });
-    assert.match(dry.join('\\n'), /tab-done.*10分経過/);
+    assert.match(dry.join('\n'), /tab-done.*10分経過/);
     assert.equal(ledger.spans(task.id).length, 0);
     const closed: string[] = [];
     sweepHerdrTabs(ledger, { roots: [root], tabs, panes, now: finished + 10 * 60_000, close: (id) => closed.push(id), running: () => false });
@@ -230,6 +230,21 @@ test('tab sweeper only selects logged tabs by completion age and records cleanup
   } finally { ledger.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
+test('finds logs outside HERDR_WORK from the pane worktree root', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'herdr-external-'));
+  const work = join(dir, 'custom-work');
+  const cwd = join(work, 'wt', 'orphan');
+  mkdirSync(cwd, { recursive: true });
+  const ledger = new Ledger(':memory:');
+  const log = join(work, 'herdr-orphan.log');
+  writeFileSync(log, 'タブ: external-tab（実装 pane）\n');
+  const ago = new Date(Date.now() - 7 * 60 * 60_000); utimesSync(log, ago, ago);
+  try {
+    const found = herdrTabSweepCandidates(ledger, { roots: [], tabs: [{ tab_id: 'external-tab' }], panes: [{ tab_id: 'external-tab', cwd }], running: () => false });
+    assert.deepEqual(found.map((candidate) => candidate.tabId), ['external-tab']);
+  } finally { ledger.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('judgment and held tasks are never swept; missing cwd and six-hour orphan log qualify', () => {
   const root = mkdtempSync(join(tmpdir(), 'herdr-sweep-'));
   const ledger = new Ledger(':memory:');
@@ -237,9 +252,9 @@ test('judgment and held tasks are never swept; missing cwd and six-hour orphan l
   ledger.setStatus(task.id, '判断待ち', 'needs review');
   const held = ledger.add({ repo: '/repo', title: 'held', why: 'w', brief: 'handoff/held.md' });
   ledger.setStatus(held.id, '保留', 'hold');
-  const old = join(root, 'herdr-orphan.log'); writeFileSync(old, 'タブ: orphan（実装 pane）\\n');
-  const decision = join(root, 'herdr-decision.log'); writeFileSync(decision, 'タブ: decision（実装 pane）\\n');
-  const holdLog = join(root, 'herdr-held.log'); writeFileSync(holdLog, 'タブ: held（実装 pane）\\n');
+  const old = join(root, 'herdr-orphan.log'); writeFileSync(old, 'タブ: orphan（実装 pane）\n');
+  const decision = join(root, 'herdr-decision.log'); writeFileSync(decision, 'タブ: decision（実装 pane）\n');
+  const holdLog = join(root, 'herdr-held.log'); writeFileSync(holdLog, 'タブ: held（実装 pane）\n');
   const ago = new Date(Date.now() - 7 * 60 * 60_000); utimesSync(old, ago, ago);
   try {
     const candidates = herdrTabSweepCandidates(ledger, { roots: [root], tabs: [{tab_id:'orphan'},{tab_id:'decision'},{tab_id:'held'}], panes: [{tab_id:'orphan',cwd:'/gone'},{tab_id:'decision',cwd:'/gone'},{tab_id:'held',cwd:'/gone'}], now: Date.now(), running: () => false });
