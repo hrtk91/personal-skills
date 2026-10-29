@@ -192,7 +192,7 @@ class HerdrContractTest(unittest.TestCase):
             path.write_text(source)
             path.chmod(0o755)
         claude = self.bin / "claude"
-        claude.write_text("#!/usr/bin/env python3\nimport json,os,sys,subprocess\nopen(os.environ['FAKE_CLAUDE_ARGS'],'w').write(json.dumps(sys.argv[1:]))\nprint(json.dumps({'type':'system','subtype':'init','session_id':'session-smoke'}), flush=True)\nprint(json.dumps({'type':'assistant','message':{'content':[{'type':'tool_use','name':'Write','input':{'file':'handoff/report'}}]}}), flush=True)\nprint(json.dumps({'type':'result','subtype':'success','stop_reason':'end_turn','result':'finished'}), flush=True)\nif os.environ.get('FAKE_CLAUDE_HOLD_CHILD') == '1':\n child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)'])\n open(os.environ['FAKE_CLAUDE_CHILD_PID'],'w').write(str(child.pid))\n if os.environ.get('FAKE_CLAUDE_HOLD_PARENT') == '1':\n  import time; time.sleep(60)\nname=os.environ['FAKE_NAME']; os.makedirs('handoff',exist_ok=True); open('handoff/'+name+'-report.md','w').write('done\\n')\n" )
+        claude.write_text("#!/usr/bin/env python3\nimport json,os,sys,subprocess\nopen(os.environ['FAKE_CLAUDE_ARGS'],'w').write(json.dumps(sys.argv[1:]))\nprint(json.dumps({'type':'system','subtype':'init','session_id':'session-smoke'}), flush=True)\nif os.environ.get('FAKE_CLAUDE_RETRY_DENIAL') == '1':\n counter=os.environ['FAKE_CLAUDE_ARGS']+'.count'; n=int(open(counter).read()) if os.path.exists(counter) else 0; open(counter,'w').write(str(n+1))\n if n == 0: print(json.dumps({'type':'system','subtype':'permission_denied','message':'sandbox blocked write'}), flush=True)\nif os.environ.get('FAKE_CLAUDE_BODY_BUBBLEWRAP') == '1': print(json.dumps({'type':'assistant','message':{'content':[{'type':'text','text':'The word bubblewrap is just in this explanation.'}]}}), flush=True)\nif os.environ.get('FAKE_CLAUDE_TOOL_DENIAL') == '1': print(json.dumps({'type':'user','message':{'content':[{'type':'tool_result','is_error':True,'content':'bwrap: Operation not permitted'}]}}), flush=True)\nif os.environ.get('FAKE_CLAUDE_BASH_JA') == '1': print(json.dumps({'type':'user','message':{'content':[{'type':'tool_result','is_error':False,'content':'mkdir: 作成できません: 読み込み専用ファイルシステムです\\nmkdir_exit=1'}]}}), flush=True)\nprint(json.dumps({'type':'assistant','message':{'content':[{'type':'tool_use','name':'Write','input':{'file':'handoff/report'}}]}}), flush=True)\nprint(json.dumps({'type':'result','subtype':'success','stop_reason':'end_turn','result':'finished'}), flush=True)\nif os.environ.get('FAKE_CLAUDE_HOLD_CHILD') == '1':\n child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)'])\n open(os.environ['FAKE_CLAUDE_CHILD_PID'],'w').write(str(child.pid))\n if os.environ.get('FAKE_CLAUDE_HOLD_PARENT') == '1':\n  import time; time.sleep(60)\nname=os.environ['FAKE_NAME']; os.makedirs('handoff',exist_ok=True)\nif os.environ.get('FAKE_CLAUDE_RETRY_DENIAL') != '1' or n != 0: open('handoff/'+name+'-report.md','w').write('done\\n')\n" )
         claude.chmod(0o755)
         self.claude_args = self.root / "claude-args.json"
         self.channel_bin = self.bin / "channel"
@@ -269,9 +269,17 @@ class HerdrContractTest(unittest.TestCase):
         self.assertEqual(args[0:2], ["-p", "--model"])
         self.assertIn("haiku", args)
         self.assertIn("--permission-mode", args)
-        self.assertIn("bypassPermissions", args)
+        self.assertIn("acceptEdits", args)
         self.assertIn("stream-json", args)
-        self.assertEqual(args[args.index("--settings") + 1], '{"disableAllHooks":true}')
+        settings = json.loads(args[args.index("--settings") + 1])
+        self.assertTrue(settings["disableAllHooks"])
+        self.assertTrue(settings["sandbox"]["enabled"])
+        self.assertTrue(settings["sandbox"]["autoAllowBashIfSandboxed"])
+        self.assertFalse(settings["sandbox"]["allowUnsandboxedCommands"])
+        self.assertNotIn("filesystem", settings["sandbox"])
+        self.assertNotIn("/tmp/claude-1000/isolation-smoke/outside", json.dumps(settings))
+        self.assertEqual(settings["permissions"]["defaultMode"], "acceptEdits")
+        self.assertEqual(settings["permissions"]["allow"], ["Bash(*)"])
         self.assertIn("--strict-mcp-config", args)
         self.assertEqual((self.work / "claude-contract.session").read_text().strip(), "session-smoke")
         self.assertIn('"session_id": "session-smoke"', (self.work / "claude-contract.jsonl").read_text())
@@ -279,6 +287,40 @@ class HerdrContractTest(unittest.TestCase):
         self.assertIn("tool: Write", pane)
         self.assertIn("result: finished", pane)
         self.assertTrue((self.w / "handoff/contract-report.md").is_file())
+
+    def test_claude_denial_detection_only_reports_tool_result_error(self):
+        result = self.run_script(IMPL_AGENT="claude", REV_AGENT="codex", FAKE_CLAUDE_TOOL_DENIAL="1")
+        self.assert_success(result)
+        log = (self.work / "herdr-contract.log").read_text()
+        self.assertEqual(log.count("囲いで止められた"), 1, log)
+        self.assertIn("tool_result bwrap: Operation not permitted", (self.root / "pane-output.txt").read_text())
+
+    def test_claude_denial_detection_catches_a_japanese_bash_failure_that_is_not_an_error(self):
+        result = self.run_script(IMPL_AGENT="claude", REV_AGENT="codex", FAKE_CLAUDE_BASH_JA="1")
+        self.assert_success(result)
+        log = (self.work / "herdr-contract.log").read_text()
+        self.assertEqual(log.count("囲いで止められた"), 1, log)
+
+    def test_claude_body_bubblewrap_text_does_not_trigger_denial(self):
+        result = self.run_script(IMPL_AGENT="claude", REV_AGENT="codex", FAKE_CLAUDE_BODY_BUBBLEWRAP="1")
+        self.assert_success(result)
+        log = (self.work / "herdr-contract.log").read_text()
+        self.assertNotIn("囲いで止められた", log)
+        self.assertNotIn("囲いで止められた", (self.root / "pane-output.txt").read_text())
+
+    def test_claude_denial_detection_only_reports_new_attempt_data(self):
+        result = self.run_script(IMPL_AGENT="claude", REV_AGENT="codex", FAKE_CLAUDE_RETRY_DENIAL="1")
+        self.assert_success(result)
+        log = (self.work / "herdr-contract.log").read_text()
+        self.assertEqual(log.count("囲いで止められた"), 1, log)
+        self.assertEqual((self.claude_args.with_suffix(".json.count")).read_text(), "2")
+
+    def test_claude_sandbox_can_be_disabled_explicitly(self):
+        result = self.run_script(IMPL_AGENT="claude", REV_AGENT="codex", CLAUDE_SANDBOX="0")
+        self.assert_success(result)
+        args = json.loads(self.claude_args.read_text())
+        self.assertIn("bypassPermissions", args)
+        self.assertEqual(args[args.index("--settings") + 1], '{"disableAllHooks":true}')
 
     def test_claude_result_finishes_when_descendant_holds_stdout_open(self):
         import signal

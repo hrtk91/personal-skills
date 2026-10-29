@@ -23,15 +23,36 @@ for line in sys.stdin:
  t=x.get("type",""); p=x.get("message",x)
  if t=="system" and x.get("subtype")=="init":
   sid=str(x.get("session_id","")); open(session_file,"w").write(sid+"\\n"); print("session_id: "+sid,flush=True)
+ if t=="system" and x.get("subtype")=="permission_denied":
+  print("囲いで止められた: permission_denied event "+" ".join(str(x.get("message","" )).split())[:400],flush=True)
  if t=="assistant":
   for c in p.get("content",[]) if isinstance(p,dict) else []:
    if c.get("type")=="tool_use": print("tool: "+str(c.get("name","tool"))+" "+str(c.get("input",{}))[:180],flush=True)
    elif c.get("type")=="text": print("Claude: "+" ".join(c.get("text","").split())[:240],flush=True)
+ if t=="user":
+  for c in p.get("content",[]) if isinstance(p,dict) else []:
+   if c.get("type")!="tool_result":
+    continue
+   text=str(c.get("content",c.get("text","")))
+   # A Bash command that ends with its own echo is not an error, and the OS message follows the locale (10/29 live run).
+   terms=("bwrap", "bubblewrap", "operation not permitted", "read-only file system")
+   os_terms=("operation not permitted", "read-only file system", "読み込み専用ファイルシステム", "許可されていない操作")
+   if (c.get("is_error") and any(term in text.lower() for term in terms)) or any(term in text.lower() for term in os_terms):
+    print("囲いで止められた: tool_result "+" ".join(text.split())[:400],flush=True)
  if t=="result": print("result: "+" ".join(str(x.get("result"," ")).split())[:500],flush=True)
 '
 session=
+: >> "$raw"
 for attempt in 1 2; do
-  args=(-p --model "$model" --effort "$effort" --permission-mode bypassPermissions --output-format stream-json --verbose --settings '{"disableAllHooks":true}' --strict-mcp-config)
+  raw_start=$(wc -c < "$raw")
+  if [ "${CLAUDE_SANDBOX:-1}" = 0 ]; then
+    settings='{"disableAllHooks":true}'
+    permission_mode=bypassPermissions
+  else
+    settings='{"disableAllHooks":true,"sandbox":{"enabled":true,"autoAllowBashIfSandboxed":true,"allowUnsandboxedCommands":false},"permissions":{"defaultMode":"acceptEdits","allow":["Bash(*)"]}}'
+    permission_mode=acceptEdits
+  fi
+  args=(-p --model "$model" --effort "$effort" --permission-mode "$permission_mode" --output-format stream-json --verbose --settings "$settings" --strict-mcp-config)
   [ -z "$session" ] || args+=(--resume "$session")
   # File capture prevents stdout-inheriting descendants from blocking formatting; tail streams live.
   claude "${args[@]}" < "$prompt" >> "$raw" 2>&1 & claude_pid=$!
@@ -44,6 +65,26 @@ for attempt in 1 2; do
   [ "$interrupted" = 0 ] && ended=yes || ended=no
   for _ in 1 2 3 4 5 6 7 8; do kill -0 "$follower" 2>/dev/null || break; sleep 0.25; done
   kill "$follower" 2>/dev/null || true
+  if tail -c +"$((raw_start + 1))" "$raw" | python3 -c '
+import json,sys
+terms=("bwrap", "bubblewrap", "operation not permitted", "read-only file system")
+os_terms=("operation not permitted", "read-only file system", "読み込み専用ファイルシステム", "許可されていない操作")
+for line in sys.stdin:
+ try: event=json.loads(line)
+ except Exception: continue
+ if event.get("type")=="system" and event.get("subtype")=="permission_denied":
+  print("yes"); break
+ if event.get("type")=="user":
+  message=event.get("message",{})
+  for block in message.get("content",[]) if isinstance(message,dict) else []:
+   text=str(block.get("content",block.get("text","")))
+   if block.get("type")=="tool_result" and ((block.get("is_error") and any(term in text.lower() for term in terms)) or any(term in text.lower() for term in os_terms)):
+    print("yes"); raise SystemExit
+' | grep -q yes; then
+    message="囲いで止められた: Claude の tool_result または permission_denied event を記録しました。詳細=$raw"
+    printf '%s %s\n' "$(date +%F' '%T)" "$message" >> "$log_file"
+    printf '%s\n' "$message"
+  fi
   session=$(python3 - "$raw" <<'PY'
 import json,sys
 sid=''; reason='none'

@@ -44,6 +44,7 @@ description: 実装を Codex や pi に振るとき、herdr のタブでエー�
 | `CLAUDE_MODEL` | Claude Code `-p` のモデル | `opus` |
 | `CLAUDE_EFFORT` | Claude Code `-p` の念入りさ | `high` |
 | `CLAUDE_TIMEOUT_SECONDS` | Claude Code `-p` の最大待ち時間 | `1800` |
+| `CLAUDE_SANDBOX` | Claude Code 組み込み sandbox。`0` で従来モードに戻す | `1` |
 
 Codex は設計・実装・レビューを一旦 `gpt-6.1-sol / default / max` に一本化する。`gpt-6-astra` は `CODEX_MODEL=gpt-6-astra` または `CODEX_REV_MODEL=gpt-6-astra` と明示すれば使える。設計専用の制限や起動拒否はない。台本の外で設計だけ頼む場合も同じ既定を使う。
 
@@ -51,7 +52,7 @@ Codex は設計・実装・レビューを一旦 `gpt-6.1-sol / default / max` �
 
 Claude は `claude -p` を実装ペインで起動し、依頼を標準入力で渡す。`--output-format stream-json --verbose` の生ログは `$HERDR_WORK/claude-<名>.jsonl`、ペインには道具・短い本文・最後の結果を表示する。終了コード0かつ `handoff/<名>-report.md` がある場合に完了する。CLI が結果後も終了しないときは、エラーでない `result` と報告の両方を確認して CLI を止める。報告が無い場合は同じ session_id を `--resume` で一度だけ再開する。session_id はログに記録する。`CLAUDE_MODEL`・`CLAUDE_EFFORT` でモデルと強さを指定する。
 
-作業役の Claude は `--settings '{"disableAllHooks":true}' --strict-mcp-config` で起動し、ユーザーのフックと MCP サーバーを読まない（台帳のレビュー役 `advance.ts` と同じ）。ユーザーの Stop フック（終わり際に 1 時間待つもの）が `-p` の終わりを止め、連絡の受け取りや「いるか」の記録のフックは作業役で動くと司令塔の知らせを消してしまうため（10/28・10/29）。ペインの表示は、生ログを追いかけて 1 行ずつ出す。
+作業役の Claude は既定で `--settings` に組み込み sandbox（`sandbox.enabled`、`autoAllowBashIfSandboxed`、`allowUnsandboxedCommands: false`）を有効にし、`acceptEdits` で起動する。Bash は明示的に許可し sandbox 内で動かす。`allowUnsandboxedCommands: false` により、sandbox 内で失敗したコマンドを Claude が sandbox 外で再実行することを許さない。sandbox の設計上、一時フォルダ（`/tmp`）への書き込みは許されるため、そこにある試験パスも書き込み可能であり、試験用パスを個別に禁止しない。Write/Edit は作業ディレクトリ内で使える。Linux 実動で root の dotfile 11 個が `/dev/null` の読み取り専用 bind mount、`.claude/` がホストの対応パスの読み取り専用 bind mountとして見えた（囲いの中の `git status` に出る）。囲いの中で `git add -A` をしても、これらは記録に入らなかった（10/29 の実動）。台本のコミットは Claude が終わった後に作るので、どちらにしても入らない。今回の起動で追加されたログの `permission_denied` イベント、エラーの `tool_result` に bwrap・bubblewrap があるか、道具の結果に OS の拒否の文（`Operation not permitted`・`Read-only file system`、日本語の環境では「読み込み専用ファイルシステム」「許可されていない操作」）があれば、ペインと herdr ログに「囲いで止められた」と記録する（過去の記録は再検出しない）。Claude 本文、tool_use 入力、通常の道具結果は判定しない。`CLAUDE_SANDBOX=0` で従来の `bypassPermissions`（囲いなし）に戻せる。どちらも `disableAllHooks` と `--strict-mcp-config` は維持し、ユーザーのフックと MCP サーバーを使わない。ユーザーの Stop フック（終わり際に 1 時間待つもの）が `-p` の終わりを止め、連絡の受け取りや「いるか」の記録のフックは作業役で動くと司令塔の知らせを消してしまうため（10/28・10/29）。ペインの表示は、生ログを追いかけて 1 行ずつ出す。
 
 pi は通常のプロンプトを使い、`/goal` は使わない。既定は `openai-codex/gpt-6-luna`・thinking `high`（`PI_PROVIDER`・`PI_MODEL`・`PI_THINKING`）。モデル名による起動拒否はない。自動実行用の `agents/pi-system.md` を `--system-prompt` に渡す。ユーザーの SYSTEM.md は変えない。ローカルモデルを使う場合は、許可されたランタイムを先に起動しておく。
 
