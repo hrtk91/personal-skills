@@ -561,6 +561,10 @@ class HerdrContractTest(unittest.TestCase):
         added = self.ledger("add", "--repo", str(self.repo), "--issue", issue_id)
         self.assertEqual(added.returncode, 0, added.stderr)
         task_id = added.stdout.split("\t")[0]
+        held = self.ledger("hold", task_id, "テスト用の保留")
+        self.assertEqual(held.returncode, 0, held.stderr)
+        answered = self.ledger("answer", task_id, "判断待ちへの回答です")
+        self.assertEqual(answered.returncode, 0, answered.stderr)
         (self.repo / ".herdr.env").write_text("".join(f"{k}={shlex.quote(v)}\n" for k, v in self.config.items()))
         env = self.env | {"FAKE_MODE": "normal", "FAKE_PREFIX": self.prefix, "TASK_ID": task_id,
             "TASK_ISSUE_ID": issue_id, "TASK_LEDGER_DB": str(self.root / "ledger.sqlite"), "TASK_RUN_AFTER": "0"}
@@ -568,6 +572,9 @@ class HerdrContractTest(unittest.TestCase):
             stdin=subprocess.DEVNULL, text=True, capture_output=True, timeout=30)
         issue_work = self.work / "wt" / issue_id
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr + (self.work / f"herdr-{issue_id}.log").read_text())
+        prompts = [text for agent, text in self.state()["prompts"] if agent.startswith("impl-")]
+        self.assertTrue(prompts)
+        self.assertIn("## 判断待ちへの答え\n判断待ちへの回答です", prompts[0])
         brief = issue_work / "handoff" / f"{issue_id}.md"
         self.assertTrue(brief.is_file())
         content = brief.read_text()

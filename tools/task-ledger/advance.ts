@@ -2,11 +2,10 @@
 // One `task advance <id>` process carries one task as far as it can and leaves it at 済, 判断待ち, or back
 // with the worker (走行中) carrying the reason. Design: handoff/task-ledger-design.md (流れ 3〜5)
 import { spawn, spawnSync } from 'node:child_process';
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmdirSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmdirSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defaultPath, type Ledger, type SpanAttributes, type Status, type Task } from './ledger.ts';
-import { assembleIssueBrief } from './issue-brief.ts';
 import { HERDR_RUN, logPath, runName, workerEnv } from './run.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -355,17 +354,11 @@ function writeLog(id: string, name: string, text: string): string {
   return path;
 }
 
-/** Gives the work back to the worker with the reason written into its brief, or stops after too many tries. */
+/** Gives the work back to the worker with the reason recorded in task history, or stops after too many tries. */
 function sendBack(ledger: Ledger, task: Task, deps: AdvanceDeps, reason: string, detail: string, said: string[], stop: (note: string) => unknown): void {
   if (task.attempts >= MAX_ATTEMPTS) return stop(`${MAX_ATTEMPTS} 回やって通らなかった。最後: ${reason}`);
-  const brief = join(task.workdir!, task.brief!);
-  const correction = `## 差し戻し（${task.attempts} 回目のあと。ハーネスより）\n${reason}\n\n${detail ? `\`\`\`\n${detail}\n\`\`\`\n\n` : ''}上を直し、報告を書き直してください。直したあとも依頼の終わりの条件を全部満たすこと。`;
-  if (task.issue_id && task.brief === `handoff/${task.issue_id}.md`) {
-    ledger.addIssueHistory(task.issue_id, correction);
-    const issue = ledger.getIssue(task.issue_id)!;
-    writeFileSync(brief, assembleIssueBrief(ledger, issue, task));
-  } else appendFileSync(brief, `\n\n${correction}\n`);
-  ledger.setStatus(task.id, '走行中', `差し戻し: ${reason}`, { attempts: task.attempts + 1 });
+  if (task.issue_id && task.brief === `handoff/${task.issue_id}.md`) ledger.addIssueHistory(task.issue_id, reason);
+  ledger.setStatus(task.id, '走行中', `差し戻し: ${reason}${detail ? `\n${detail}` : ''}`, { attempts: task.attempts + 1 });
   ledger.releaseRunner(task.id);
   try {
     ledger.setRunner(task.id, { runner: deps.resend(task, runName(task)) });

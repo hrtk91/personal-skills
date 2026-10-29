@@ -18,9 +18,14 @@ export function taskContext(ledger: Ledger, task: Task, now = new Date(), option
       && event.note?.startsWith('答え: ')) answerIndex = i;
   }
   const answer = answerIndex >= 0 ? taskEvents[answerIndex]!.note!.slice('答え: '.length) : null;
+  const sendBack = [...taskEvents].reverse().find((event) => event.to_status === '走行中' && event.note?.startsWith('差し戻し: '));
   const workerFinished = answerIndex >= 0 && taskEvents.slice(answerIndex + 1).some((event) =>
     event.from_status === '走行中' && event.to_status === '確かめ中');
   if (answer !== null && !workerFinished) lines.push('## 判断待ちへの答え', answer);
+  if (sendBack?.note) {
+    const [reason, ...detail] = sendBack.note.slice('差し戻し: '.length).split('\n');
+    lines.push('## 今回の差し戻し', `- ${reason}`, ...detail.join('\n').split('\n').slice(0, 80));
+  }
   if (!task.issue_id) return `${lines.join('\n')}\n`;
   const issue = ledger.getIssue(task.issue_id);
   if (!issue) return `${lines.join('\n')}\n`;

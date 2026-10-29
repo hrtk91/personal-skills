@@ -202,7 +202,7 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
         throw new Error('task doc add|list');
       }
       case 'priority': {const [id,d]=positionals;if(!id||!['first','up','down'].includes(d??''))throw new Error('task priority <task id> first|up|down');ledger.setPriority(id,d as 'first'|'up'|'down');out(line(ledger.get(id)!));return 0;}
-      case 'context': {const task=ledger.get(positionals[0]??'');if(!task)throw new Error(`台帳にありません: ${positionals[0]??''}`);const text=taskContext(ledger,task);if(text)out(text.trimEnd());return 0;}
+      case 'context': {const task=ledger.get(positionals[0]??'');if(!task)throw new Error(`台帳にありません: ${positionals[0]??''}`);const text=taskContext(ledger,task,new Date(),{issueBody:false});if(text)out(text.trimEnd());return 0;}
       case 'show': {
         const task = ledger.get(positionals[0] ?? '');
         if (!task) throw new Error(`台帳にありません: ${positionals[0] ?? ''}`);
