@@ -1,0 +1,7 @@
+[Unit]
+Description=Nightly task-ledger harness retrospective
+
+[Service]
+Type=oneshot
+EnvironmentFile=-%h/.config/task-ledger/env
+ExecStart=%h/repos/personal-skills/tools/task-ledger/retro/retro.sh

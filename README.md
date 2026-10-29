@@ -80,6 +80,9 @@ AIエージェントに、作業の進め方や判断基準を追加するため
 
 仕事台帳の仕事は `task add` に `--worker pi|codex|claude`、`--model <モデル>`、`--effort <強さ>` を付けて、作業役とモデルを個別に指定できます。例: `task add --title 調査 --why '依頼の背景' --worker claude --model opus --effort high`。未指定なら既定の Pi 作業役です。
 
+### 毎晩のハーネス振り返り
+`task-ledger-retro.timer` は毎晩 23:40 に見張り役（`claude -p --model opus`）を起こし、前回以降の台帳・チャンネル・deploy 記録から、根拠のある再発問題だけを最大 3 件の `--by 見張り役` Issue として提案します。見張り役はコードを変更しません。結果と Claude の session ID / 費用は `~/.local/share/task-ledger/retro/<日付>.md` に保存されます。設置は `tools/task-ledger/systemd/install.sh` が行います。手で実行するには `tools/task-ledger/retro/retro.sh`、期間を指定するには `tools/task-ledger/retro/retro.sh --since 2026-10-27T00:00:00Z` を実行します。
+
 ### UI・日々の振り返り
 
 | スキル | 概要 |

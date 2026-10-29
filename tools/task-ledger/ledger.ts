@@ -28,7 +28,7 @@ export type Goal = { id: string; repo: string; title: string; why: string; statu
 export const ISSUE_FIELDS = ['なぜ','今の状態','関係する所','やること','やってよいこと','やらないこと','終わりの条件','確かめのコマンド','触るファイル','種類','本番に出すか'] as const;
 export type IssueField = typeof ISSUE_FIELDS[number];
 export type IssueFields = Partial<Record<IssueField, string>>;
-export type Issue = { id: string; repo: string; title: string; body: string; fields: IssueFields; history: string[]; by: 'あなた' | 'Claude' | '作業役' | 'レビュー'; from: string | null; goal_id: string | null; stage: string | null; position: number; status: '開いている' | '仕事にした' | '済' | 'やめ'; created_at: string };
+export type Issue = { id: string; repo: string; title: string; body: string; fields: IssueFields; history: string[]; by: 'あなた' | 'Claude' | '作業役' | 'レビュー' | '見張り役'; from: string | null; goal_id: string | null; stage: string | null; position: number; status: '開いている' | '仕事にした' | '済' | 'やめ'; created_at: string };
 export type Doc = { id: string; repo: string; kind: '仕様' | '設計' | 'モック' | '決まり' | '説明' | '報告'; title: string; goal_id: string | null; path: string | null; body: string | null; version: number; updated_at: string };
 export type NewTask = {
   repo: string; title: string; why: string; brief?: string | null; check?: string | null;
