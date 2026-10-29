@@ -45,7 +45,7 @@ input="$work/input.md"
     node - "$channel" "$since" <<'NODE'
 const fs = require('fs');
 const since = Date.parse(process.argv[3]);
-for (const line of fs.readFileSync(process.argv[2], 'utf8').split(/\\r?\\n/)) {
+for (const line of fs.readFileSync(process.argv[2], 'utf8').split(/\r?\n/)) {
   if (!line || (!line.includes('stopped') && !line.includes('post'))) continue;
   let keep = true;
   try {
