@@ -11,7 +11,8 @@ HERDR_SOCKET_PATH=$HERDR_SOCKET_PATH
 HERDR_BIN_PATH=${HERDR_BIN_PATH:-$(command -v herdr)}
 TASK_HERDR_WORKSPACE=$HERDR_WORKSPACE_ID
 ENV
-cp "$here/task-ledger.service" "$here/task-ledger.timer" ~/.config/systemd/user/
+cp "$here/task-ledger.service" "$here/task-ledger.timer" "$here/task-dashboard.service" ~/.config/systemd/user/
 systemctl --user daemon-reload
-systemctl --user enable --now task-ledger.timer
+systemctl --user enable --now task-ledger.timer task-dashboard.service
 systemctl --user list-timers task-ledger.timer --no-pager
+systemctl --user status task-dashboard.service --no-pager

@@ -8,6 +8,10 @@ AIエージェントに、作業の進め方や判断基準を追加するため
 
 導入するskill・ルール・hookは、`harnessctl`のprofileで選択して適用します。CLIの導入方法と利用手順は[harnessctlの使い方](tools/README.md)を参照してください。
 
+## Task dashboard
+
+`tools/task-ledger/web/` は台帳SQLiteを表示するReact Routerアプリです。`tools/task-ledger/systemd/task-dashboard.service` は8790番で待ち受けるユーザーサービスで、既存の `tools/task-ledger/systemd/install.sh` が台帳ハーネスとともに有効化します。依存導入はプロジェクト内で行わず、環境にある `node_modules` を `web/node_modules` にリンクして使います。
+
 各スキルの詳しい使い方は、`skills/<スキル名>/SKILL.md` にあります。
 
 ## スキル一覧
