@@ -8,6 +8,7 @@ import { Ledger } from './ledger.ts';
 import { advance, herdrTabSweepCandidates, outsideTaskFiles, parseVerdict, realAdvanceDeps, sweepHerdrTabs, type AdvanceDeps } from './advance.ts';
 import { buildTrace, renderTrace } from './trace.ts';
 import { taskContext } from './context.ts';
+import { main } from './cli.ts';
 
 function git(cwd: string, ...args: string[]): string {
   return execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@x', ...args], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -276,6 +277,49 @@ test('a failing check goes back to the worker with the output written into its b
     assert.ok(!calls.some((call) => call.startsWith('review:')));
     assert.equal(readFileSync(join(f.workdir, 'handoff/t.md'), 'utf8'), '# 掛け算を足す\n');
     assert.match(taskContext(f.ledger, task), /## 今回の差し戻し[\s\S]*掛け算が無い/);
+  } finally { f.done(); }
+});
+
+test('a send-back keeps the task list note on one line and Issue recent reasons exclude detail logs', () => {
+  const f = fixture({ check: 'cat output.txt; exit 1' });
+  try {
+    writeFileSync(join(f.workdir, 'output.txt'), 'detail-output\\n');
+    const issue = f.ledger.addIssue({ repo: f.repo, title: 'Issue task', body: 'issue body', by: 'Claude' });
+    f.ledger.db.prepare('UPDATE tasks SET issue_id=? WHERE id=?').run(issue.id, 'repo-1');
+    advance(f.ledger, 'repo-1', deps(''), 1);
+    const task = f.ledger.get('repo-1')!;
+    assert.equal(task.note?.split('\n').length, 1);
+    assert.match(task.note!, /^差し戻し: .*（詳しく: .*sendback/);
+    assert.doesNotMatch(task.note!, /detail-output/);
+    const context = taskContext(f.ledger, task);
+    const recent = context.split('## 直近 7 日の差し戻し理由')[1] ?? '';
+    assert.doesNotMatch(recent, /detail-output/);
+    const dbPath = join(f.dir, 'cli.sqlite');
+    const cliLedger = new Ledger(dbPath);
+    const cliTask = cliLedger.add({ repo: f.repo, title: 'single-line', why: 'why', brief: 'handoff/t.md' });
+    cliLedger.setStatus(cliTask.id, '走行中', task.note);
+    const previousDb = process.env.TASK_LEDGER_DB;
+    process.env.TASK_LEDGER_DB = dbPath;
+    try {
+      const lines: string[] = [];
+      main(['list', '--all'], (line) => lines.push(line));
+      assert.equal(lines.length, 1);
+      assert.equal(lines[0]!.split('\n').length, 1);
+      assert.match(lines[0]!, /詳しく: .*sendback/);
+    } finally {
+      if (previousDb === undefined) delete process.env.TASK_LEDGER_DB; else process.env.TASK_LEDGER_DB = previousDb;
+      cliLedger.close();
+    }
+  } finally { f.done(); }
+});
+
+test('a send-back context is hidden once the worker has finished', () => {
+  const f = fixture({ check: 'echo details; exit 1' });
+  try {
+    advance(f.ledger, 'repo-1', deps(''), 1);
+    const task = f.ledger.get('repo-1')!;
+    f.ledger.setStatus(task.id, '確かめ中', '作業役が終わった');
+    assert.doesNotMatch(taskContext(f.ledger, f.ledger.get(task.id)!), /## 今回の差し戻し/);
   } finally { f.done(); }
 });
 

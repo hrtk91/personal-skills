@@ -358,7 +358,9 @@ function writeLog(id: string, name: string, text: string): string {
 function sendBack(ledger: Ledger, task: Task, deps: AdvanceDeps, reason: string, detail: string, said: string[], stop: (note: string) => unknown): void {
   if (task.attempts >= MAX_ATTEMPTS) return stop(`${MAX_ATTEMPTS} 回やって通らなかった。最後: ${reason}`);
   if (task.issue_id && task.brief === `handoff/${task.issue_id}.md`) ledger.addIssueHistory(task.issue_id, reason);
-  ledger.setStatus(task.id, '走行中', `差し戻し: ${reason}${detail ? `\n${detail}` : ''}`, { attempts: task.attempts + 1 });
+  const detailPath = detail ? writeLog(task.id, `sendback-${task.attempts}`, detail) : null;
+  const note = `差し戻し: ${reason}${detailPath ? `（詳しく: ${detailPath}）` : ''}`;
+  ledger.setStatus(task.id, '走行中', note, { attempts: task.attempts + 1 });
   ledger.releaseRunner(task.id);
   try {
     ledger.setRunner(task.id, { runner: deps.resend(task, runName(task)) });

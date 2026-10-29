@@ -575,6 +575,9 @@ class HerdrContractTest(unittest.TestCase):
         prompts = [text for agent, text in self.state()["prompts"] if agent.startswith("impl-")]
         self.assertTrue(prompts)
         self.assertIn("## 判断待ちへの答え\n判断待ちへの回答です", prompts[0])
+        # The issue-specific prompt contains the task context exactly once, without an additional Issue context section.
+        self.assertEqual(prompts[0].count("## 判断待ちへの答え"), 1)
+        self.assertNotIn("## Issue\\n", prompts[0])
         brief = issue_work / "handoff" / f"{issue_id}.md"
         self.assertTrue(brief.is_file())
         content = brief.read_text()
