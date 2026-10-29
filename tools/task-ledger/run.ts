@@ -20,7 +20,10 @@ const RUN_ONLY = ['RESUME', 'SKIP_IMPL', 'BASE', 'COMMIT_DIRTY', 'HERDR_RUN_SELF
 /** The environment for herdr-run.sh; per-task settings override inherited settings while absent values keep today's defaults. */
 export function workerEnv(extra: Record<string, string>, task?: Pick<Task, 'worker' | 'model' | 'effort'>): NodeJS.ProcessEnv {
   const worker: Worker = task?.worker ?? 'pi';
-  const env: NodeJS.ProcessEnv = { IMPL_AGENT: worker, PI_PROVIDER: 'openai', PI_MODEL: 'gpt-6-luna', PI_THINKING: 'high', AGENT_CHANNEL_SUPERVISOR: 'task-ledger', ...process.env };
+  // Inherited run settings are fallbacks only: a task's chosen worker must not be overwritten by
+  // the parent process (which may itself be a Pi/Codex worker starting the next ledger task).
+  const env: NodeJS.ProcessEnv = { ...process.env, PI_PROVIDER: process.env.PI_PROVIDER ?? 'openai', PI_MODEL: process.env.PI_MODEL ?? 'gpt-6-luna', PI_THINKING: process.env.PI_THINKING ?? 'high', AGENT_CHANNEL_SUPERVISOR: process.env.AGENT_CHANNEL_SUPERVISOR ?? 'task-ledger' };
+  env.IMPL_AGENT = worker;
   if (task?.model) env[worker === 'pi' ? 'PI_MODEL' : worker === 'codex' ? 'CODEX_MODEL' : 'CLAUDE_MODEL'] = task.model;
   if (task?.effort) env[worker === 'pi' ? 'PI_THINKING' : worker === 'codex' ? 'CODEX_EFFORT' : 'CLAUDE_EFFORT'] = task.effort;
   for (const key of RUN_ONLY) delete env[key];

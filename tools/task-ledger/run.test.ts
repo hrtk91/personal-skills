@@ -12,6 +12,8 @@ function fake(overrides: Partial<RunDeps> = {}) {
 test('task worker/model/effort become the corresponding herdr environment settings', () => {
   const saved = { ...process.env };
   try {
+    // Simulate task run being launched from a Pi worker: inherited run settings must not win.
+    process.env.IMPL_AGENT = 'pi';
     for (const [worker, model, effort, expected] of [
       ['pi', 'p-model', 'medium', ['pi', 'p-model', 'medium']],
       ['codex', 'c-model', 'high', ['codex', 'c-model', 'high']],
