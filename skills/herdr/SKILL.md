@@ -51,6 +51,8 @@ Codex は設計・実装・レビューを一旦 `gpt-6.1-sol / default / max` �
 
 Claude は `claude -p` を実装ペインで起動し、依頼を標準入力で渡す。`--output-format stream-json --verbose` の生ログは `$HERDR_WORK/claude-<名>.jsonl`、ペインには道具・短い本文・最後の結果を表示する。終了コード0かつ `handoff/<名>-report.md` がある場合に完了する。CLI が結果後も終了しないときは、エラーでない `result` と報告の両方を確認して CLI を止める。報告が無い場合は同じ session_id を `--resume` で一度だけ再開する。session_id はログに記録する。`CLAUDE_MODEL`・`CLAUDE_EFFORT` でモデルと強さを指定する。
 
+作業役の Claude は `--settings '{"disableAllHooks":true}' --strict-mcp-config` で起動し、ユーザーのフックと MCP サーバーを読まない（台帳のレビュー役 `advance.ts` と同じ）。ユーザーの Stop フック（終わり際に 1 時間待つもの）が `-p` の終わりを止め、連絡の受け取りや「いるか」の記録のフックは作業役で動くと司令塔の知らせを消してしまうため（10/28・10/29）。ペインの表示は、生ログを追いかけて 1 行ずつ出す。
+
 pi は通常のプロンプトを使い、`/goal` は使わない。既定は `openai-codex/gpt-6-luna`・thinking `high`（`PI_PROVIDER`・`PI_MODEL`・`PI_THINKING`）。モデル名による起動拒否はない。自動実行用の `agents/pi-system.md` を `--system-prompt` に渡す。ユーザーの SYSTEM.md は変えない。ローカルモデルを使う場合は、許可されたランタイムを先に起動しておく。
 
 ## プロジェクトごとの設定

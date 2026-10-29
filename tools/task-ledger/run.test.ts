@@ -2,6 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Ledger } from './ledger.ts';
 import { runOnce, workerEnv, type RunDeps } from './run.ts';
+import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 function fake(overrides: Partial<RunDeps> = {}) {
   const started: string[] = [];
@@ -90,6 +93,26 @@ test('a task that cannot be started goes to 判断待ち with the reason', () =>
   runOnce(ledger, fake({ start: () => { throw new Error('ワークスペースが無い'); } }).deps);
   assert.equal(ledger.get('r-1')!.status, '判断待ち');
   assert.match(ledger.get('r-1')!.note!, /ワークスペースが無い/);
+});
+
+test('only a previously attempted task with an existing copy gets RESUME=newtab', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'task-ledger-resume-'));
+  const ledger = new Ledger(':memory:');
+  try {
+    const copy = join(dir, 'copy'); mkdirSync(copy);
+    ledger.add({ repo: '/r', title: 'old', why: 'w', brief: 'handoff/old.md', files: ['old.ts'] });
+    ledger.setStatus('r-1', '走行中', null, { attempts: 1 });
+    ledger.setRunner('r-1', { workdir: copy });
+    ledger.setStatus('r-1', '判断待ち', 'stopped'); ledger.releaseRunner('r-1');
+    ledger.setStatus('r-1', '待ち', '答え: 続ける');
+    ledger.add({ repo: '/s', title: 'new', why: 'w', brief: 'handoff/new.md', files: ['new.ts'] });
+    const observed: Array<[string, Record<string, string>?]> = [];
+    const deps = fake({ start: (task, _name, env) => { observed.push([task.id, env]); return 4242; } }).deps;
+    runOnce(ledger, deps);
+    runOnce(ledger, deps);
+    assert.deepEqual(observed, [['r-1', { RESUME: 'newtab' }], ['s-1', {}]]);
+    assert.equal(ledger.get('r-1')!.status, '走行中');
+  } finally { ledger.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('a run started from inside a resent worker does not inherit its run-only settings', () => {

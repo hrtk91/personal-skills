@@ -2,8 +2,8 @@
 // herdr-run.sh reports its own start and end to the ledger (`task started` / `task ended`), so a pass only has
 // to start work and to catch the runs that vanished in between. Design: handoff/task-ledger-design.md
 import { spawn } from 'node:child_process';
-import { closeSync, mkdirSync, openSync, readFileSync } from 'node:fs';
-import { cpus } from 'node:os';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from 'node:fs';
+import { cpus, homedir } from 'node:os';
 import { basename, dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ACTIVE, defaultPath, type Ledger, type Task, type Worker } from './ledger.ts';
@@ -32,7 +32,7 @@ export function workerEnv(extra: Record<string, string>, task?: Pick<Task, 'work
 
 export type RunDeps = {
   /** Starts herdr-run.sh for the task and returns the process id, or throws. */
-  start: (task: Task, name: string) => number;
+  start: (task: Task, name: string, extraEnv?: Record<string, string>) => number;
   /** Starts `task advance <id>` (check, review, merge) in the background. */
   advance: (task: Task) => void;
   alive: (pid: number) => boolean;
@@ -68,7 +68,12 @@ export function runOnce(ledger: Ledger, deps: RunDeps): string[] {
   for (const waiting of ledger.ready().filter((candidate) => candidate.kind === '見た目')) said.push(`${waiting.id}: 見た目の仕事なので Claude の番`);
   if (!task) return said;
   try {
-    const pid = deps.start(task, runName(task));
+    const name = runName(task);
+    const workRoot = process.env.HERDR_WORK ?? process.env.CODEX_WORK ?? join(homedir(), '.cache', `herdr-${basename(task.repo)}`);
+    const copy = task.workdir ?? join(workRoot, 'wt', name);
+    // claimNext increments attempts before start; 2 means there was an earlier attempt before this launch.
+    const resume = task.attempts >= 2 && existsSync(copy) ? { RESUME: 'newtab' } : {};
+    const pid = deps.start(task, name, resume);
     ledger.setRunner(task.id, { runner: pid });
     said.push(`${task.id}: 出した（${runName(task)}、PID ${pid}）`);
   } catch (error) {
@@ -83,7 +88,7 @@ export function logPath(id: string): string {
 }
 
 export const realDeps: RunDeps = {
-  start(task, name) {
+  start(task, name, extraEnv = {}) {
     const workspace = process.env.HERDR_WORKSPACE_ID ?? process.env.TASK_HERDR_WORKSPACE;
     if (!workspace) throw new Error('herdr のワークスペースが分からない（HERDR_WORKSPACE_ID か TASK_HERDR_WORKSPACE）');
     mkdirSync(dirname(logPath(task.id)), { recursive: true });
@@ -91,7 +96,7 @@ export const realDeps: RunDeps = {
     try {
       const child = spawn('bash', [HERDR_RUN, name], {
         cwd: task.repo, detached: true, stdio: ['ignore', out, out],
-        env: workerEnv({ HERDR_WORKSPACE_ID: workspace, REPO: task.repo, TASK_ID: task.id, ...(task.issue_id && task.brief === `handoff/${task.issue_id}.md` ? { TASK_ISSUE_ID: task.issue_id } : {}) }, task),
+        env: workerEnv({ HERDR_WORKSPACE_ID: workspace, REPO: task.repo, TASK_ID: task.id, ...(task.issue_id && task.brief === `handoff/${task.issue_id}.md` ? { TASK_ISSUE_ID: task.issue_id } : {}), ...extraEnv }, task),
       });
       if (!child.pid) throw new Error('herdr-run.sh を起動できなかった');
       child.unref();

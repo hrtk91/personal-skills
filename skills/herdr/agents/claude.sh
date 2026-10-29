@@ -10,6 +10,21 @@ claude_send() { # <agent> <text> <報告印のパス> <pane>
 #!/bin/bash
 set -uo pipefail
 prompt=$1 raw=$2 session_file=$3 state=$4 report=$5 model=$6 effort=$7
+CLAUDE_FORMAT='
+import json, sys
+session_file = sys.argv[1]
+for line in sys.stdin:
+ try: x=json.loads(line)
+ except Exception: continue
+ t=x.get("type",""); p=x.get("message",x)
+ if t=="system" and x.get("subtype")=="init":
+  sid=str(x.get("session_id","")); open(session_file,"w").write(sid+"\n"); print("session_id: "+sid,flush=True)
+ if t=="assistant":
+  for c in p.get("content",[]) if isinstance(p,dict) else []:
+   if c.get("type")=="tool_use": print("tool: "+str(c.get("name","tool"))+" "+str(c.get("input",{}))[:180],flush=True)
+   elif c.get("type")=="text": print("Claude: "+" ".join(c.get("text","").split())[:240],flush=True)
+ if t=="result": print("result: "+" ".join(str(x.get("result"," ")).split())[:500],flush=True)
+'
 session=
 for attempt in 1 2; do
   args=(-p --model "$model" --effort "$effort" --permission-mode bypassPermissions --output-format stream-json --verbose --settings '{"disableAllHooks":true}' --strict-mcp-config)
@@ -19,6 +34,9 @@ for attempt in 1 2; do
   claude "${args[@]}" < "$prompt" >> "$raw" 2>&1 &
   claude_pid=$!
   trap 'kill "$claude_pid" 2>/dev/null || true' INT
+  # Show the run in the pane while it goes: follow the capture and print one short line per event.
+  tail -n +1 -F --pid="$claude_pid" "$raw" 2>/dev/null | python3 -u -c "$CLAUDE_FORMAT" "$session_file" &
+  follower=$!
   result_ok=0
   while kill -0 "$claude_pid" 2>/dev/null; do
     if [ -f "$report" ] && python3 - "$raw" <<'PYRESULT'
@@ -42,21 +60,9 @@ PYRESULT
   rc=$?
   set -e
   trap - INT
-  python3 - "$raw" "$session_file" <<'PYFORMAT'
-import json, sys
-raw, session_file = sys.argv[1:]
-for line in open(raw, errors='replace'):
- try: x=json.loads(line)
- except Exception: continue
- t=x.get('type',''); p=x.get('message',x)
- if t=='system' and x.get('subtype')=='init':
-  sid=str(x.get('session_id','')); open(session_file,'w').write(sid+'\n'); print('session_id: '+sid,flush=True)
- if t=='assistant':
-  for c in p.get('content',[]) if isinstance(p,dict) else []:
-   if c.get('type')=='tool_use': print('tool: '+str(c.get('name','tool'))+' '+str(c.get('input',{}))[:180],flush=True)
-   elif c.get('type')=='text': print('Claude: '+' '.join(c.get('text','').split())[:240],flush=True)
- if t=='result': print('result: '+' '.join(str(x.get('result',' ')).split())[:500],flush=True)
-PYFORMAT
+  # The follower stops with claude (tail --pid); give it a moment to print the last lines.
+  for _ in 1 2 3 4 5 6 7 8; do kill -0 "$follower" 2>/dev/null || break; sleep 0.25; done
+  kill "$follower" 2>/dev/null || true
   session=$(python3 - "$raw" <<'PY'
 import json,sys
 s=''
