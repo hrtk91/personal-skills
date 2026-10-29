@@ -25,3 +25,21 @@ test('loader emits decisions, ready queue, goal stages and recent rows; actions 
   submitIntent(l,repo,{intent:'create-goal',title:'New goal',why:'why'});assert.equal(l.listGoals(repo).length,2);
  } finally {l.close();rmSync(dir,{recursive:true,force:true});}
 });
+
+test('queue includes blocked waiting tasks with reasons after ready tasks',()=>{
+ const dir=mkdtempSync(join(tmpdir(),'goal-tab-blocked-'));const l=new Ledger(join(dir,'db.sqlite'));
+ try {
+  const repo='/tmp/blocked-project';
+  const active=l.add({repo,title:'Active overlap blocker',why:'test',brief:'brief',files:['shared.ts']});l.setStatus(active.id,'走行中');
+  const ready=l.add({repo,title:'Ready task',why:'test',brief:'brief',files:['free.ts']});
+  const overlapA=l.add({repo,title:'Overlap A',why:'test',brief:'brief',files:['shared.ts']});
+  const overlapB=l.add({repo,title:'Overlap B',why:'test',brief:'brief',files:['shared.ts']});
+  const prerequisite=l.add({repo,title:'After prerequisite',why:'test',brief:'brief',files:['other.ts']});l.setStatus(prerequisite.id,'走行中');
+  const after=l.add({repo,title:'After task',why:'test',brief:'brief',files:['after.ts'],after:[prerequisite.id]});
+  const data=loadGoalData(l,repo);
+  assert.deepEqual(data.queue.map(q=>q.id),[active.id,prerequisite.id,ready.id,overlapA.id,overlapB.id,after.id]);
+  assert.equal(data.queue.find(q=>q.id===overlapA.id)?.blockedBy,`${active.id} が終わるのを待っています（触るファイルが重なるため）`);
+  assert.equal(data.queue.find(q=>q.id===overlapB.id)?.blockedBy,`${active.id} が終わるのを待っています（触るファイルが重なるため）`);
+  assert.equal(data.queue.find(q=>q.id===after.id)?.blockedBy,`${prerequisite.id} が終わるのを待っています`);
+ } finally {l.close();rmSync(dir,{recursive:true,force:true});}
+});
