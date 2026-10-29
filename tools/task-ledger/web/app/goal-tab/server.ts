@@ -1,3 +1,6 @@
+import { existsSync, readdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { Ledger, ACTIVE, type Task, type Goal, type Issue } from "../../../ledger.ts";
 import { answerTask } from "../../../answer.ts";
 import type { DecisionItem, GoalTabData, GoalRow, IssueRow, TaskRow, TaskStatus, StageState, ProjectSummary } from "./types.js";
@@ -5,9 +8,16 @@ import type { DecisionItem, GoalTabData, GoalRow, IssueRow, TaskRow, TaskStatus,
 const RUNNING = new Set<string>(ACTIVE);
 const mapStatus = (s:string):TaskStatus => (s === '取り下げ' ? '取り下げ' : s) as TaskStatus;
 function repoName(repo:string) { return repo.split('/').filter(Boolean).at(-1) ?? repo; }
+// Every git repository under ~/repos is listed (10/29 「台帳にないプロジェクトも出す」): the ones with work in
+// the ledger first (most decisions, then most running), then the rest by name.
+const REPOS_DIR=process.env.TASK_DASHBOARD_REPOS_DIR??join(homedir(),'repos');
+function reposOnDisk():string[] {try{return readdirSync(REPOS_DIR,{withFileTypes:true}).filter(d=>d.isDirectory()&&existsSync(join(REPOS_DIR,d.name,'.git'))).map(d=>join(REPOS_DIR,d.name));}catch{return [];}}
 export function projects(ledger:Ledger):ProjectSummary[] {
-  const repos=[...new Set([...ledger.list({all:true}).map(t=>t.repo),...ledger.listGoals().map(g=>g.repo),...ledger.listIssues().map(i=>i.repo)])].sort();
-  return repos.map(repo=>{const ts=ledger.list({repo});return {repo,name:repoName(repo),waiting:ts.filter(t=>t.status==='判断待ち').length,running:ts.filter(t=>RUNNING.has(t.status)).length};});
+  const inLedger=new Set([...ledger.list({all:true}).map(t=>t.repo),...ledger.listGoals().map(g=>g.repo),...ledger.listIssues().map(i=>i.repo)]);
+  const summary=(repo:string):ProjectSummary=>{const ts=ledger.list({repo});return {repo,name:repoName(repo),waiting:ts.filter(t=>t.status==='判断待ち').length,running:ts.filter(t=>RUNNING.has(t.status)).length};};
+  const known=[...inLedger].map(summary).sort((a,b)=>b.waiting-a.waiting||b.running-a.running||a.name.localeCompare(b.name));
+  const rest=reposOnDisk().filter(r=>!inLedger.has(r)).map(summary).sort((a,b)=>a.name.localeCompare(b.name));
+  return [...known,...rest];
 }
 function row(ledger:Ledger,t:Task, goal?:Goal|null, issue?:Issue|null):TaskRow {
   const ev=ledger.events(t.id).at(-1); return {id:t.id,title:t.title,status:mapStatus(t.status),attempts:t.attempts,...(t.agent?{worker:t.agent}:{}),...(goal?{goalTitle:goal.title}:{}),...(issue?{issueTitle:issue.title}:{}),updatedAt:t.updated_at,...(ev?.note?{lastNote:ev.note}:{})};
