@@ -5,7 +5,7 @@ import styles from "./view.module.css";
 // The look of the dashboard's Goal tab (handoff/task-dashboard-mock.html). These parts only draw;
 // reading and writing the ledger live with the route that uses them.
 
-type Tone = "run" | "wait" | "ok" | "bad" | "idle" | "rev";
+export type Tone = "run" | "wait" | "ok" | "bad" | "idle" | "rev";
 
 const STATUS_TONE: Record<TaskStatus, Tone> = {
   "待ち": "idle", "走行中": "run", "確かめ中": "run", "レビュー中": "rev", "取り込み中": "run",
@@ -13,16 +13,16 @@ const STATUS_TONE: Record<TaskStatus, Tone> = {
 };
 const RUNNING: TaskStatus[] = ["走行中", "確かめ中", "レビュー中", "取り込み中"];
 
-function Chip({ tone, children }: { tone: Tone; children: ReactNode }) {
+export function Chip({ tone, children }: { tone: Tone; children: ReactNode }) {
   return <span className={`${styles.chip} ${styles[`c_${tone}`]}`}>{children}</span>;
 }
 
-function StatusChip({ status }: { status: TaskStatus }) {
+export function StatusChip({ status }: { status: TaskStatus }) {
   return <Chip tone={STATUS_TONE[status] ?? "idle"}>{status}</Chip>;
 }
 
 /** "3 分前", "2 時間前", "10/28" — short enough for a phone row. */
-function ago(iso: string, now: number): string {
+export function ago(iso: string, now: number): string {
   const minutes = Math.max(0, Math.round((now - Date.parse(iso)) / 60_000));
   if (minutes < 1) return "いま";
   if (minutes < 60) return `${minutes} 分前`;
@@ -128,7 +128,7 @@ export function GoalTabView({ data, submit, busy, consultHref }: { data: GoalTab
   );
 }
 
-function SectionHead({ title, hint }: { title: string; hint?: string }) {
+export function SectionHead({ title, hint }: { title: string; hint?: string }) {
   return <h2>{title}{hint ? <span className={styles.h2hint}>{hint}</span> : null}</h2>;
 }
 

@@ -161,7 +161,7 @@ textarea.t { width: 100%; min-height: 64px; resize: vertical; }
 }
 
 @media (max-width: 760px) {
-  .app { grid-template-columns: 1fr; }
+  .app { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
   .side {
     border-right: 0; border-bottom: 1px solid var(--line);
     padding: calc(10px + env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) 12px max(16px, env(safe-area-inset-left, 0px));

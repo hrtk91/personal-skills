@@ -1,0 +1,19 @@
+/* The Issue tab. Cards and chips come from goal-tab/view.module.css; this adds the Issue's inner rows. */
+
+.issues { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.issue { display: flex; flex-direction: column; gap: 6px; }
+.top { display: flex; gap: 10px; align-items: flex-start; justify-content: space-between; }
+.title { font-weight: 600; font-size: 14px; line-height: 1.5; min-width: 0; overflow-wrap: anywhere; }
+
+.tasks { list-style: none; margin: 4px 0 0; padding: 0 0 0 12px; border-left: 2px solid var(--line); display: flex; flex-direction: column; }
+.task { display: flex; gap: 10px; align-items: center; justify-content: space-between; padding: 6px 0; border-top: 1px solid var(--line); }
+.task:first-child { border-top: 0; }
+.taskTitle { min-width: 0; font-size: 13px; overflow-wrap: anywhere; }
+.none { margin: 2px 0 0; font-size: 12px; color: var(--faint); }
+
+.fields summary, .closed summary { cursor: pointer; font-size: 12px; color: var(--sub); padding: 4px 0; }
+.fields dl { margin: 6px 0 0; display: flex; flex-direction: column; gap: 8px; }
+.field dt { font-size: 11.5px; color: var(--faint); letter-spacing: 0.04em; }
+.field dd { margin: 2px 0 0; font-size: 13px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.closed { display: flex; flex-direction: column; gap: 10px; }
+.closed[open] summary { margin-bottom: 8px; }
