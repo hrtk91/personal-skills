@@ -15,8 +15,11 @@ export const ACTIVE: readonly Status[] = ['走行中', '確かめ中', 'レビ�
 // Whoever must act next when a task is in this state.
 const CLOSED: readonly Status[] = ['済', 'やめ'];
 
+export const WORKERS = ['pi', 'codex', 'claude'] as const;
+export type Worker = typeof WORKERS[number];
 export type Task = {
   id: string; repo: string; title: string; why: string; brief: string | null;
+  worker: Worker | null; model: string | null; effort: string | null;
   check: string | null; after: string[]; files: string[]; kind: Kind; deploy: boolean;
   status: Status; note: string | null; attempts: number; agent: string | null; commit: string | null;
   runner: number | null; workdir: string | null; issue_id: string | null; priority: number; created_at: string; updated_at: string;
@@ -29,6 +32,7 @@ export type Issue = { id: string; repo: string; title: string; body: string; fie
 export type Doc = { id: string; repo: string; kind: '仕様' | '設計' | 'モック' | '決まり' | '説明' | '報告'; title: string; goal_id: string | null; path: string | null; body: string | null; version: number; updated_at: string };
 export type NewTask = {
   repo: string; title: string; why: string; brief?: string | null; check?: string | null;
+  worker?: Worker | null; model?: string | null; effort?: string | null;
   after?: string[]; files?: string[]; kind?: Kind; deploy?: boolean; issue_id?: string | null;
 };
 export type Event = { task_id: string; at: string; from_status: Status | null; to_status: Status; note: string | null };
@@ -55,7 +59,8 @@ export class Ledger {
         "check" TEXT, after_json TEXT NOT NULL DEFAULT '[]', files_json TEXT NOT NULL DEFAULT '[]',
         kind TEXT NOT NULL DEFAULT '処理', deploy INTEGER NOT NULL DEFAULT 0,
         status TEXT NOT NULL, note TEXT, attempts INTEGER NOT NULL DEFAULT 0, agent TEXT, "commit" TEXT, runner INTEGER, workdir TEXT,
-        created_at TEXT NOT NULL, updated_at TEXT NOT NULL, issue_id TEXT, priority REAL NOT NULL DEFAULT 0) STRICT;
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL, issue_id TEXT, priority REAL NOT NULL DEFAULT 0,
+        worker TEXT, model TEXT, effort TEXT) STRICT;
       CREATE TABLE IF NOT EXISTS events(
         task_id TEXT NOT NULL REFERENCES tasks(id), at TEXT NOT NULL,
         from_status TEXT, to_status TEXT NOT NULL, note TEXT) STRICT;
@@ -68,7 +73,7 @@ export class Ledger {
       CREATE TABLE IF NOT EXISTS issues(id TEXT PRIMARY KEY, repo TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL DEFAULT '', by TEXT NOT NULL DEFAULT 'あなた', source TEXT, goal_id TEXT, stage TEXT, position INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT '開いている', created_at TEXT NOT NULL, fields_json TEXT NOT NULL DEFAULT '{}', history_json TEXT NOT NULL DEFAULT '[]') STRICT;
       CREATE TABLE IF NOT EXISTS docs(id TEXT PRIMARY KEY, repo TEXT NOT NULL, kind TEXT NOT NULL, title TEXT NOT NULL, goal_id TEXT, path TEXT, body TEXT, version INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL) STRICT;`);
     const taskColumns = (this.db.prepare('PRAGMA table_info(tasks)').all() as { name: string }[]).map((column) => column.name);
-    for (const [name, type] of [['runner', 'INTEGER'], ['workdir', 'TEXT'], ['issue_id', 'TEXT'], ['priority', 'REAL NOT NULL DEFAULT 0']]) if (!taskColumns.includes(name)) this.db.exec(`ALTER TABLE tasks ADD COLUMN ${name} ${type}`);
+    for (const [name, type] of [['runner', 'INTEGER'], ['workdir', 'TEXT'], ['issue_id', 'TEXT'], ['priority', 'REAL NOT NULL DEFAULT 0'], ['worker', 'TEXT'], ['model', 'TEXT'], ['effort', 'TEXT']]) if (!taskColumns.includes(name)) this.db.exec(`ALTER TABLE tasks ADD COLUMN ${name} ${type}`);
     // Ledgers made before the harness started tasks itself lack these columns.
     const issueColumns = (this.db.prepare('PRAGMA table_info(issues)').all() as { name: string }[]).map((column) => column.name);
     for (const [name, type] of [['fields_json', "TEXT NOT NULL DEFAULT '{}'"], ['history_json', "TEXT NOT NULL DEFAULT '[]'"]]) if (!issueColumns.includes(name)) this.db.exec(`ALTER TABLE issues ADD COLUMN ${name} ${type}`);
@@ -83,6 +88,7 @@ export class Ledger {
     if (!input.why.trim()) throw new Error('why（なぜやるか。ユーザーの言葉と日付）が空です');
     const kind = input.kind ?? '処理';
     if (!KINDS.includes(kind)) throw new Error(`kind は ${KINDS.join('・')} のどれか: ${kind}`);
+    if (input.worker != null && !WORKERS.includes(input.worker)) throw new Error(`worker は ${WORKERS.join('・')} のどれか: ${input.worker}`);
     const after = input.after ?? [];
     for (const id of after) if (!this.get(id)) throw new Error(`after の仕事が台帳にありません: ${id}`);
     const id = this.nextId(input.repo);
@@ -91,9 +97,9 @@ export class Ledger {
     const status: Status = input.brief?.trim() ? '待ち' : '依頼文待ち';
     const priority = Number((this.db.prepare('SELECT COALESCE(MAX(priority),-1)+1 AS n FROM tasks').get() as { n: number }).n);
     if (input.issue_id && !this.getIssue(input.issue_id)) throw new Error(`Issue が台帳にありません: ${input.issue_id}`);
-    this.db.prepare(`INSERT INTO tasks(id,repo,title,why,brief,"check",after_json,files_json,kind,deploy,status,created_at,updated_at,issue_id,priority)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(id, input.repo, title, input.why.trim(), input.brief?.trim() || null,
-      input.check?.trim() || null, JSON.stringify(after), JSON.stringify(input.files ?? []), kind, input.deploy ? 1 : 0, status, at, at, input.issue_id ?? null, priority);
+    this.db.prepare(`INSERT INTO tasks(id,repo,title,why,brief,"check",after_json,files_json,kind,deploy,status,created_at,updated_at,issue_id,priority,worker,model,effort)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(id, input.repo, title, input.why.trim(), input.brief?.trim() || null,
+      input.check?.trim() || null, JSON.stringify(after), JSON.stringify(input.files ?? []), kind, input.deploy ? 1 : 0, status, at, at, input.issue_id ?? null, priority, input.worker ?? null, input.model?.trim() || null, input.effort?.trim() || null);
     if (input.issue_id) this.db.prepare("UPDATE issues SET status='仕事にした' WHERE id=?").run(input.issue_id);
     this.event(id, null, status, null, at);
     return this.get(id)!;
@@ -262,6 +268,7 @@ function toTask(row: Record<string, unknown>): Task {
   return {
     id: String(row.id), repo: String(row.repo), title: String(row.title), why: String(row.why),
     brief: row.brief === null ? null : String(row.brief), check: row.check === null ? null : String(row.check),
+    worker: row.worker == null ? null : String(row.worker) as Worker, model: row.model == null ? null : String(row.model), effort: row.effort == null ? null : String(row.effort),
     after: JSON.parse(String(row.after_json)), files: JSON.parse(String(row.files_json)),
     kind: String(row.kind) as Kind, deploy: row.deploy === 1, status: String(row.status) as Status,
     note: row.note === null ? null : String(row.note), attempts: Number(row.attempts),

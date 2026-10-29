@@ -12,6 +12,33 @@ function fake(overrides: Partial<RunDeps> = {}) {
   return { deps, started };
 }
 
+test('task worker/model/effort become the corresponding herdr environment settings', () => {
+  const saved = { ...process.env };
+  try {
+    // Simulate task run being launched from a Pi worker: inherited run settings must not win.
+    process.env.IMPL_AGENT = 'pi';
+    for (const [worker, model, effort, expected] of [
+      ['pi', 'p-model', 'medium', ['pi', 'p-model', 'medium']],
+      ['codex', 'c-model', 'high', ['codex', 'c-model', 'high']],
+      ['claude', 'haiku', 'high', ['claude', 'haiku', 'high']],
+    ] as const) {
+      const env = workerEnv({}, { worker, model, effort });
+      const modelKey = worker === 'pi' ? 'PI_MODEL' : worker === 'codex' ? 'CODEX_MODEL' : 'CLAUDE_MODEL';
+      const effortKey = worker === 'pi' ? 'PI_THINKING' : worker === 'codex' ? 'CODEX_EFFORT' : 'CLAUDE_EFFORT';
+      assert.deepEqual([env.IMPL_AGENT, env[modelKey], env[effortKey]], [...expected]);
+    }
+    assert.equal(workerEnv({}).IMPL_AGENT, 'pi');
+    const ledger = new Ledger(':memory:');
+    ledger.add({ repo: '/r', title: 'Claude CLI task', why: 'w', brief: 'handoff/claude.md', worker: 'claude', model: 'haiku' });
+    let started: NodeJS.ProcessEnv | undefined;
+    runOnce(ledger, fake({ start: (task) => { started = workerEnv({ TASK_ID: task.id }, task); return 4242; } }).deps);
+    assert.equal(started?.IMPL_AGENT, 'claude');
+    assert.equal(started?.CLAUDE_MODEL, 'haiku');
+    assert.equal(started?.TASK_ID, 'r-1');
+    ledger.close();
+  } finally { process.env = saved; }
+});
+
 test('a pass starts the oldest ready task once, with its brief name, and records the runner', () => {
   const ledger = new Ledger(':memory:');
   ledger.add({ repo: '/r', title: 'A', why: 'w', brief: 'handoff/fix-a.md', files: ['a.ts'] });

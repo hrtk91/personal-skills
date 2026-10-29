@@ -4,7 +4,7 @@ import { Ledger } from './ledger.ts';
 import { taskContext } from './context.ts';
 import { runOnce, type RunDeps } from './run.ts';
 
-test('task context is empty without an Issue and includes Goal, Issue, docs, and the top recent return reasons', () => {
+test('task context includes worker settings and, when linked, Goal, Issue, docs, and recent return reasons', () => {
   let now = new Date('2026-10-28T12:00:00Z');
   const ledger = new Ledger(':memory:', () => now);
   const repo = '/r/app';
@@ -25,7 +25,7 @@ test('task context is empty without an Issue and includes Goal, Issue, docs, and
   ledger.setStatus(old.id, '走行中', '差し戻し: 古い理由');
   now = new Date('2026-10-28T12:00:00Z');
 
-  assert.equal(taskContext(ledger, unrelated, now), '');
+  assert.match(taskContext(ledger, unrelated, now), /worker: pi（既定）[\s\S]*model: 既定[\s\S]*effort: 既定/);
   ledger.setStatus(unrelated.id, '判断待ち', '判断が必要');
   assert.doesNotMatch(taskContext(ledger, ledger.get(unrelated.id)!, now), /## 判断待ちへの答え/);
   const context = taskContext(ledger, task, now);

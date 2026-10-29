@@ -269,7 +269,19 @@ run_agent() {
   local kind=$1 agent=$2 pane=$3 task=$4 mark=$WORK/done-$2
   local use_channel=0 channel_bin=${CHANNEL_BIN:-$SKILL_DIR/channel/bin/channel}
   local channel_log=${AGENT_CHANNEL:-$HOME/.cache/agent-channel/channel.jsonl} after_id= goal body supervisor=${AGENT_CHANNEL_SUPERVISOR:-}
-  local first=1 existing i s
+  local first=1 existing i s context
+  if [ "$kind" = claude ]; then
+    goal="$task"
+    if [ -n "${TASK_ID:-}" ] && [ -z "${TASK_ISSUE_ID:-}" ]; then
+      context=$("$TASK_BIN" context "$TASK_ID" 2>/dev/null) || context=
+      [ -z "$context" ] || goal=$(printf '%s\n\n%s' "$context" "$goal")
+    fi
+    goal="$goal 途中で質問せず最後までやり切り、報告ファイルを書き終えてください。"
+    rm -f "$mark"
+    claude_send "$agent" "$goal" "$mark" "$pane" || { log "$agent: Claude -p が正常終了し報告を書くまで完了しなかった"; return 1; }
+    log "$agent: Claude -p の終端結果と報告を確認した（session_id $(cat "$WORK/claude-$name.session" 2>/dev/null)）"
+    return 0
+  fi
   if [ "$kind" = pi ] && [ "${PI_CHANNEL:-1}" != 0 ] && [ -f "${PI_CHANNEL_EXT:-$SKILL_DIR/channel/pi/extension.ts}" ] && [ -f "$channel_bin" ]; then
     channel_log=$(python3 -c 'import os,sys; print(os.path.abspath(os.path.expanduser(sys.argv[1])))' "$channel_log")
     if after_id=$("$channel_bin" --log "$channel_log" last-id 2>/dev/null); then
