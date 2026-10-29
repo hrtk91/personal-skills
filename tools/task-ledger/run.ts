@@ -6,7 +6,7 @@ import { closeSync, mkdirSync, openSync, readFileSync } from 'node:fs';
 import { cpus } from 'node:os';
 import { basename, dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ACTIVE, defaultPath, type Ledger, type Task } from './ledger.ts';
+import { ACTIVE, defaultPath, type Ledger, type Task, type Worker } from './ledger.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const HERDR_RUN = process.env.TASK_HERDR_RUN ?? join(HERE, '../../skills/herdr/herdr-run.sh');
@@ -17,9 +17,12 @@ export const BUSY = Number(process.env.TASK_BUSY ?? 0.8);
 // next task) must not hand them on: RESUME=newtab from a resend made a fresh task look for a copy it never had (10/28).
 const RUN_ONLY = ['RESUME', 'SKIP_IMPL', 'BASE', 'COMMIT_DIRTY', 'HERDR_RUN_SELF', 'TASK_ID'];
 
-/** The environment for herdr-run.sh: Pi with luna, thinking high, no fast tier (10/25・10/26); the caller's settings win, its run-only ones are dropped. */
-export function workerEnv(extra: Record<string, string>): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { IMPL_AGENT: 'pi', PI_PROVIDER: 'openai', PI_MODEL: 'gpt-6-luna', PI_THINKING: 'high', AGENT_CHANNEL_SUPERVISOR: 'task-ledger', ...process.env };
+/** The environment for herdr-run.sh; per-task settings override inherited settings while absent values keep today's defaults. */
+export function workerEnv(extra: Record<string, string>, task?: Pick<Task, 'worker' | 'model' | 'effort'>): NodeJS.ProcessEnv {
+  const worker: Worker = task?.worker ?? 'pi';
+  const env: NodeJS.ProcessEnv = { IMPL_AGENT: worker, PI_PROVIDER: 'openai', PI_MODEL: 'gpt-6-luna', PI_THINKING: 'high', AGENT_CHANNEL_SUPERVISOR: 'task-ledger', ...process.env };
+  if (task?.model) env[worker === 'pi' ? 'PI_MODEL' : worker === 'codex' ? 'CODEX_MODEL' : 'CLAUDE_MODEL'] = task.model;
+  if (task?.effort) env[worker === 'pi' ? 'PI_THINKING' : worker === 'codex' ? 'CODEX_EFFORT' : 'CLAUDE_EFFORT'] = task.effort;
   for (const key of RUN_ONLY) delete env[key];
   return { ...env, HERDR_ENV: '1', ...extra };
 }
@@ -85,7 +88,7 @@ export const realDeps: RunDeps = {
     try {
       const child = spawn('bash', [HERDR_RUN, name], {
         cwd: task.repo, detached: true, stdio: ['ignore', out, out],
-        env: workerEnv({ HERDR_WORKSPACE_ID: workspace, REPO: task.repo, TASK_ID: task.id, ...(task.issue_id && task.brief === `handoff/${task.issue_id}.md` ? { TASK_ISSUE_ID: task.issue_id } : {}) }),
+        env: workerEnv({ HERDR_WORKSPACE_ID: workspace, REPO: task.repo, TASK_ID: task.id, ...(task.issue_id && task.brief === `handoff/${task.issue_id}.md` ? { TASK_ISSUE_ID: task.issue_id } : {}) }, task),
       });
       if (!child.pid) throw new Error('herdr-run.sh を起動できなかった');
       child.unref();

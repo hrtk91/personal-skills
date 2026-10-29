@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { Ledger } from './ledger.ts';
 import { taskContext } from './context.ts';
 
-test('task context is empty without an Issue and includes Goal, Issue, docs, and the top recent return reasons', () => {
+test('task context includes worker settings and, when linked, Goal, Issue, docs, and recent return reasons', () => {
   let now = new Date('2026-10-28T12:00:00Z');
   const ledger = new Ledger(':memory:', () => now);
   const repo = '/r/app';
@@ -24,7 +24,7 @@ test('task context is empty without an Issue and includes Goal, Issue, docs, and
   ledger.setStatus(old.id, '走行中', '差し戻し: 古い理由');
   now = new Date('2026-10-28T12:00:00Z');
 
-  assert.equal(taskContext(ledger, unrelated, now), '');
+  assert.match(taskContext(ledger, unrelated, now), /worker: pi（既定）[\s\S]*model: 既定[\s\S]*effort: 既定/);
   const context = taskContext(ledger, task, now);
   assert.match(context, /## Goal[\s\S]*Goal[\s\S]*きっかけ: ユーザーの言葉[\s\S]*今の工程: 設計/);
   assert.match(context, /## Issue[\s\S]*Issue[\s\S]*中身: 中身[\s\S]*起こした人: Claude/);

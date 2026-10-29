@@ -66,13 +66,15 @@ AIエージェントに、作業の進め方や判断基準を追加するため
 | `codex` | Codexを第二意見を得る相手として使います。 |
 | `codex-handoff` | Codexタスクの引継ぎ資料と新タスクの継続を、承認範囲・証拠つきで整理します。 |
 | `grok-second-opinion` | Grokへ前提と論点を渡し、別の角度から意見を得ます。 |
-| `herdr` | herdrのタブでCodexやpiに実装させ、別のエージェントのレビューまで自動でつなぎます。 |
+| `herdr` | herdrのタブでCodex・pi・Claude Code `-p` に実装させ、別のエージェントのレビューまで自動でつなぎます。 |
 | `personal-skills-auto-update` | WindowsとWSLのruntime cloneを安全に更新します。skillの導入は`harnessctl apply`で行います。 |
 | `personal-skills-ctl-daemon` | このリポジトリとローカルのスキルを同期するCLIやdaemonを設計します。 |
 | `retlaude` | Claudeセッションの振り返りを非同期で保存します。 |
 | `skill-benchmark` | 実運用の失敗や観測から原因仮説とeval caseを作り、介入前後の効果と回帰を比較します。 |
 | `skill-observation-recorder` | Codexで受けたユーザー訂正をセッション終了後に非同期で抽出・蓄積します。 |
 | `skill-usage-analytics` | Codexセッションで各スキルが使われた回数を集計します。 |
+
+仕事台帳の仕事は `task add` に `--worker pi|codex|claude`、`--model <モデル>`、`--effort <強さ>` を付けて、作業役とモデルを個別に指定できます。例: `task add --title 調査 --why '依頼の背景' --worker claude --model opus --effort high`。未指定なら既定の Pi 作業役です。
 
 ### UI・日々の振り返り
 

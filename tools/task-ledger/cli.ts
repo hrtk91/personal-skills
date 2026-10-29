@@ -5,14 +5,14 @@ import { execFileSync } from 'node:child_process';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { buildTrace, renderTrace, report, toOtlp, tracesSince } from './trace.ts';
-import { defaultPath, ISSUE_FIELDS, KINDS, Ledger, STATUSES, type Kind, type Status, type Task, type IssueField, type IssueFields } from './ledger.ts';
+import { defaultPath, ISSUE_FIELDS, KINDS, WORKERS, Ledger, STATUSES, type Kind, type Status, type Task, type IssueField, type IssueFields, type Worker } from './ledger.ts';
 import { assembleIssueBrief, issueTemplate, meaningful, parseIssueMarkdown } from './issue-brief.ts';
 import { realDeps, runOnce, type RunDeps } from './run.ts';
 import { taskContext } from './context.ts';
 import { advance, realAdvanceDeps, type AdvanceDeps } from './advance.ts';
 
 const USAGE = `使い方:
-  task add --title <題> --why <ユーザーの言葉と日付> [--brief <依頼文のパス>] [--check <確かめのコマンド>]
+  task add --title <題> --why <ユーザーの言葉と日付> [--brief <依頼文のパス>] [--check <確かめのコマンド>] [--worker pi|codex|claude] [--model <モデル>] [--effort <強さ>]
            [--after <id,...>] [--files <パス,...>] [--kind 処理|見た目|調べ] [--deploy] [--repo <パス>]
   task brief <id> <依頼文のパス> [--check <コマンド>]   依頼文を付ける（依頼文待ち → 待ち）
   task list [--all] [--repo <パス>] [--status <状態>]
@@ -68,7 +68,8 @@ function issueMarkdownPath(path: string): string {
 
 function line(task: Task): string {
   const extra = [task.after.length ? `後: ${task.after.join(',')}` : '', task.note ?? ''].filter(Boolean).join(' / ');
-  return `${task.id}\t${task.status}\t${task.title}${extra ? `\t(${extra})` : ''}`;
+  const worker = [task.worker, task.model, task.effort].filter(Boolean).join('/');
+  return `${task.id}\t${task.status}\t${task.title}${worker ? `\t[${worker}]` : ''}${extra ? `\t(${extra})` : ''}`;
 }
 
 export function main(argv: string[], out: (text: string) => void = console.log, deps: RunDeps = realDeps, advanceDeps: AdvanceDeps = realAdvanceDeps): number {
@@ -76,6 +77,7 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
   const { values, positionals } = parseArgs({ args: rest, allowPositionals: true, options: {
     title: { type: 'string' }, why: { type: 'string' }, brief: { type: 'string' }, check: { type: 'string' },
     after: { type: 'string' }, files: { type: 'string' }, kind: { type: 'string' }, deploy: { type: 'boolean' },
+    worker: { type: 'string' }, model: { type: 'string' }, effort: { type: 'string' },
     repo: { type: 'string' }, all: { type: 'boolean' }, status: { type: 'string' }, to: { type: 'string' },
     agent: { type: 'string' }, runner: { type: 'string' }, commit: { type: 'string' }, log: { type: 'string' }, workdir: { type: 'string' },
     since: { type: 'string' }, out: { type: 'string' }, issue: { type: 'string' }, body: { type: 'string' }, by: { type: 'string' }, from: { type: 'string' }, goal: { type: 'string' }, stage: { type: 'string' }, stages: { type: 'string' }, loose: { type: 'boolean' }, docKind: { type: 'string' }, path: { type: 'string' },
@@ -88,6 +90,7 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
       case 'add': {
         const root = repo ?? repoRoot(process.cwd());
         if (values.kind && !KINDS.includes(values.kind as Kind)) throw new Error(`--kind は ${KINDS.join('・')}`);
+        if (values.worker && !WORKERS.includes(values.worker as Worker)) throw new Error(`--worker は ${WORKERS.join('・')}`);
         const issue = values.issue ? ledger.getIssue(values.issue) : null;
         if (values.issue && !issue) throw new Error(`Issue が台帳にありません: ${values.issue}`);
         let title = values.title ?? '', why = values.why ?? '', brief = values.brief ? briefPath(root, values.brief) : null;
@@ -106,7 +109,7 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
           brief, check,
           after: values.after?.split(',').map((s) => s.trim()).filter(Boolean),
           files,
-          kind, deploy, issue_id: values.issue,
+          kind, deploy, issue_id: values.issue, worker: values.worker as Worker | undefined, model: values.model, effort: values.effort,
         });
         out(line(task));
         return 0;

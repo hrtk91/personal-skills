@@ -5,7 +5,7 @@ description: 実装を Codex や pi に振るとき、herdr のタブでエー�
 
 # herdr で実装とレビューをつなぐ
 
-エージェントの画面を herdr のタブで見られる形で、実装とレビューを自動でつなぐ。画面なしの `codex exec` は使わない。対応するエージェントは Codex と pi。`agents/<種類>.sh` を足せば増やせる。
+エージェントの画面を herdr のタブで見られる形で、実装とレビューを自動でつなぐ。画面なしの `codex exec` は使わない。対応するエージェントは Codex、pi、Claude Code `-p`。`agents/<種類>.sh` を足せば増やせる。
 
 ## 流れ
 
@@ -41,10 +41,15 @@ description: 実装を Codex や pi に振るとき、herdr のタブでエー�
 | `CODEX_TIER` | Codex の service tier | `default`（fast なし） |
 | `CODEX_EFFORT` | Codex の念入りさ | `max` |
 | `CODEX_REV_MODEL` / `CODEX_REV_TIER` / `CODEX_REV_EFFORT` | レビューの設定 | 対応する実装の設定を継承 |
+| `CLAUDE_MODEL` | Claude Code `-p` のモデル | `opus` |
+| `CLAUDE_EFFORT` | Claude Code `-p` の念入りさ | `high` |
+| `CLAUDE_TIMEOUT_SECONDS` | Claude Code `-p` の最大待ち時間 | `1800` |
 
 Codex は設計・実装・レビューを一旦 `gpt-6.1-sol / default / max` に一本化する。`gpt-6-astra` は `CODEX_MODEL=gpt-6-astra` または `CODEX_REV_MODEL=gpt-6-astra` と明示すれば使える。設計専用の制限や起動拒否はない。台本の外で設計だけ頼む場合も同じ既定を使う。
 
 旧名 `MODEL`・`TIER`・`EFFORT` も、対応する `CODEX_*` が無い場合に読む。レビュー専用の指定が最優先。`/goal` で依頼を渡し、セッション記録の目標イベントに今回の印のパスが載ったことを確かめる。`-s danger-full-access -a never` で動かすため、書いてよい場所は依頼文で絞る。worktree と元の Git ルートの信頼指定は起動引数に渡し、ユーザーの設定ファイルは編集しない。
+
+Claude は `claude -p` を実装ペインで起動し、依頼を標準入力で渡す。`--output-format stream-json --verbose` の生ログは `$HERDR_WORK/claude-<名>.jsonl`、ペインには道具・短い本文・最後の結果を表示する。終了コード0かつ `handoff/<名>-report.md` がある場合だけ完了。報告が無い場合は同じ session_id を `--resume` で一度だけ再開する。session_id はログに記録する。`CLAUDE_MODEL`・`CLAUDE_EFFORT` でモデルと強さを指定する。
 
 pi は通常のプロンプトを使い、`/goal` は使わない。既定は `openai-codex/gpt-6-luna`・thinking `high`（`PI_PROVIDER`・`PI_MODEL`・`PI_THINKING`）。モデル名による起動拒否はない。自動実行用の `agents/pi-system.md` を `--system-prompt` に渡す。ユーザーの SYSTEM.md は変えない。ローカルモデルを使う場合は、許可されたランタイムを先に起動しておく。
 

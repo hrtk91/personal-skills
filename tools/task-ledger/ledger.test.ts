@@ -19,6 +19,18 @@ test('a task without a brief waits for one, and a brief makes it ready', () => {
   assert.deepEqual(ledger.events(task.id).map((e) => e.to_status), ['依頼文待ち', '待ち']);
 });
 
+test('worker, model and effort are nullable and worker is restricted', () => {
+  const ledger = make();
+  const legacy = ledger.add({ ...base, title: 'legacy' });
+  assert.equal(legacy.worker, null);
+  assert.equal(legacy.model, null);
+  assert.equal(legacy.effort, null);
+  const configured = ledger.add({ ...base, title: 'claude', worker: 'claude', model: 'haiku', effort: 'high' });
+  assert.deepEqual([configured.worker, configured.model, configured.effort], ['claude', 'haiku', 'high']);
+  assert.throws(() => ledger.add({ ...base, title: 'bad', worker: 'other' as never }), /worker/);
+  ledger.close();
+});
+
 test('ids are per repository and readable', () => {
   const ledger = make();
   assert.equal(ledger.add({ ...base, title: 'A', brief: 'x' }).id, 'app-1');
@@ -102,8 +114,8 @@ test('new schema initialization is idempotent and preserves existing task rows',
     const old=new DatabaseSync(path);
     old.exec(`CREATE TABLE tasks(id TEXT PRIMARY KEY,repo TEXT NOT NULL,title TEXT NOT NULL,why TEXT NOT NULL,brief TEXT,"check" TEXT,after_json TEXT NOT NULL DEFAULT '[]',files_json TEXT NOT NULL DEFAULT '[]',kind TEXT NOT NULL DEFAULT '処理',deploy INTEGER NOT NULL DEFAULT 0,status TEXT NOT NULL,note TEXT,attempts INTEGER NOT NULL DEFAULT 0,agent TEXT,"commit" TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL) STRICT;
       INSERT INTO tasks(id,repo,title,why,status,created_at,updated_at) VALUES('app-1','/r/app','legacy','why','済','2026-01-01','2026-01-01');`); old.close();
-    const first=new Ledger(path);assert.equal(first.get('app-1')?.title,'legacy');first.close();
-    const second=new Ledger(path);assert.equal(second.get('app-1')?.title,'legacy');assert.deepEqual(second.listGoals(),[]);second.close();
+    const first=new Ledger(path);assert.equal(first.get('app-1')?.title,'legacy');assert.equal(first.get('app-1')?.worker,null);first.close();
+    const second=new Ledger(path);assert.equal(second.get('app-1')?.title,'legacy');assert.equal(second.get('app-1')?.model,null);assert.deepEqual(second.listGoals(),[]);second.close();
   }
   finally {rmSync(dir,{recursive:true,force:true});}
 });
