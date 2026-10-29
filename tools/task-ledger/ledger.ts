@@ -71,7 +71,9 @@ export class Ledger {
       CREATE INDEX IF NOT EXISTS spans_task ON spans(task_id, start);
       CREATE TABLE IF NOT EXISTS goals(id TEXT PRIMARY KEY, repo TEXT NOT NULL, title TEXT NOT NULL, why TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '進行中', stages_json TEXT NOT NULL DEFAULT '["下調べ","設計","モック","サーバー","画面","本番","様子見"]', position INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL) STRICT;
       CREATE TABLE IF NOT EXISTS issues(id TEXT PRIMARY KEY, repo TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL DEFAULT '', by TEXT NOT NULL DEFAULT 'あなた', source TEXT, goal_id TEXT, stage TEXT, position INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT '開いている', created_at TEXT NOT NULL, fields_json TEXT NOT NULL DEFAULT '{}', history_json TEXT NOT NULL DEFAULT '[]') STRICT;
-      CREATE TABLE IF NOT EXISTS docs(id TEXT PRIMARY KEY, repo TEXT NOT NULL, kind TEXT NOT NULL, title TEXT NOT NULL, goal_id TEXT, path TEXT, body TEXT, version INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL) STRICT;`);
+      CREATE TABLE IF NOT EXISTS docs(id TEXT PRIMARY KEY, repo TEXT NOT NULL, kind TEXT NOT NULL, title TEXT NOT NULL, goal_id TEXT, path TEXT, body TEXT, version INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL) STRICT;
+      CREATE TABLE IF NOT EXISTS task_sessions(task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, kind TEXT NOT NULL CHECK(kind IN ('review','worker')), session_id TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(task_id,kind)) STRICT;
+      CREATE TABLE IF NOT EXISTS consult_sessions(task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, kind TEXT NOT NULL CHECK(kind IN ('review','worker')), session_id TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(task_id,kind)) STRICT;`);
     const taskColumns = (this.db.prepare('PRAGMA table_info(tasks)').all() as { name: string }[]).map((column) => column.name);
     for (const [name, type] of [['runner', 'INTEGER'], ['workdir', 'TEXT'], ['issue_id', 'TEXT'], ['priority', 'REAL NOT NULL DEFAULT 0'], ['worker', 'TEXT'], ['model', 'TEXT'], ['effort', 'TEXT']]) if (!taskColumns.includes(name)) this.db.exec(`ALTER TABLE tasks ADD COLUMN ${name} ${type}`);
     // Ledgers made before the harness started tasks itself lack these columns.
@@ -81,6 +83,25 @@ export class Ledger {
   }
 
   close(): void { this.db.close(); }
+
+  setSessionId(taskId: string, kind: 'review' | 'worker', sessionId: string): void {
+    if (!this.get(taskId) || !sessionId.trim()) return;
+    this.db.prepare(`INSERT INTO task_sessions(task_id,kind,session_id,updated_at) VALUES(?,?,?,?)
+      ON CONFLICT(task_id,kind) DO UPDATE SET session_id=excluded.session_id,updated_at=excluded.updated_at`).run(taskId,kind,sessionId.trim(),this.now().toISOString());
+  }
+  sessionId(taskId: string, kind: 'review' | 'worker'): string | undefined {
+    const row=this.db.prepare('SELECT session_id FROM task_sessions WHERE task_id=? AND kind=?').get(taskId,kind) as {session_id:string}|undefined;
+    return row?.session_id;
+  }
+  setConsultSessionId(taskId:string,kind:'review'|'worker',sessionId:string):void {
+    if(!this.get(taskId)||!sessionId.trim())return;
+    this.db.prepare(`INSERT INTO consult_sessions(task_id,kind,session_id,updated_at) VALUES(?,?,?,?)
+      ON CONFLICT(task_id,kind) DO UPDATE SET session_id=excluded.session_id,updated_at=excluded.updated_at`).run(taskId,kind,sessionId.trim(),this.now().toISOString());
+  }
+  consultSessionId(taskId:string,kind:'review'|'worker'):string|undefined {
+    const row=this.db.prepare('SELECT session_id FROM consult_sessions WHERE task_id=? AND kind=?').get(taskId,kind) as {session_id:string}|undefined;
+    return row?.session_id;
+  }
 
   add(input: NewTask): Task {
     const title = input.title.trim();

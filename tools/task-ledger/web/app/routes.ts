@@ -1,2 +1,2 @@
 import { index, route, type RouteConfig } from "@react-router/dev/routes";
-export default [index("routes/home.tsx"), route("p/:name/:tab?", "routes/project.tsx")] satisfies RouteConfig;
+export default [index("routes/home.tsx"), route("p/:name/consult/:taskId", "routes/consult.tsx"), route("p/:name/:tab?", "routes/project.tsx")] satisfies RouteConfig;

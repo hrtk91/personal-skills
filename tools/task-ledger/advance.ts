@@ -76,6 +76,8 @@ export function advance(ledger: Ledger, id: string, deps: AdvanceDeps, pid = pro
         return { ok: found !== null, attributes: { ...(typeof got === 'string' ? {} : got.attributes), 'review.verdict': found?.verdict ?? '読めない' } };
       });
       const answer = typeof reply === 'string' ? reply : reply.answer;
+      const reviewSession = typeof reply === 'string' ? undefined : reply.attributes?.['review.session_id'];
+      if (typeof reviewSession === 'string') ledger.setSessionId(id, 'review', reviewSession);
       writeLog(id, `review-${task.attempts}`, answer);
       const verdict = parseVerdict(answer);
       if (!verdict) return stop('レビューの答えから決まった形の JSON を読めなかった');
@@ -279,9 +281,10 @@ export const realAdvanceDeps: AdvanceDeps = {
     const failed = result.status === 0 ? '' : `\n（レビュー役が終了コード ${result.status} で終わった）${result.stderr ?? ''}`;
     // The JSON result carries the answer and what the call cost; anything else is passed on as it came.
     try {
-      const json = JSON.parse(result.stdout ?? '') as { result?: string; total_cost_usd?: number; duration_ms?: number; num_turns?: number; usage?: Record<string, number> };
+      const json = JSON.parse(result.stdout ?? '') as { result?: string; session_id?: string; total_cost_usd?: number; duration_ms?: number; num_turns?: number; usage?: Record<string, number> };
       const usage = json.usage ?? {};
       const attributes: SpanAttributes = {};
+      if (typeof json.session_id === 'string' && json.session_id) attributes['review.session_id'] = json.session_id;
       for (const [key, value] of Object.entries({
         'review.cost_usd': json.total_cost_usd, 'review.turns': json.num_turns, 'review.input_tokens': usage.input_tokens,
         'review.output_tokens': usage.output_tokens, 'review.cache_read_tokens': usage.cache_read_input_tokens, 'review.cache_write_tokens': usage.cache_creation_input_tokens,
