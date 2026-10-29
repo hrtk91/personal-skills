@@ -17,6 +17,12 @@
   padding: 8px 10px; border-radius: 8px; color: var(--ink); text-decoration: none;
 }
 .proj:hover { background: var(--panel); }
+.pick { display: none; }
+.pickLabel { font-size: 11px; color: var(--sub); letter-spacing: 0.06em; }
+.pick select {
+  width: 100%; font: inherit; font-size: 16px; color: var(--ink); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; appearance: auto;
+}
 .proj.on { background: var(--panel); box-shadow: 0 0 0 1px var(--line); font-weight: 600; }
 .dots { display: flex; gap: 4px; }
 .dot {
@@ -156,11 +162,11 @@ textarea.t { width: 100%; min-height: 64px; resize: vertical; }
 @media (max-width: 760px) {
   .app { grid-template-columns: 1fr; }
   .side {
-    flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line);
-    padding: 10px max(16px, env(safe-area-inset-right, 0px)) 10px max(16px, env(safe-area-inset-left, 0px)); gap: 6px;
+    border-right: 0; border-bottom: 1px solid var(--line);
+    padding: calc(10px + env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) 12px max(16px, env(safe-area-inset-left, 0px));
   }
-  .brand, .foot { display: none; }
-  .proj { white-space: nowrap; }
+  .brand, .foot, .proj { display: none; }
+  .pick { display: grid; gap: 4px; }
   .main { padding: 16px max(16px, env(safe-area-inset-right, 0px)) calc(60px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); }
   .head { grid-template-columns: minmax(0, 1fr); }
   .counts { justify-content: flex-start; padding-left: 22px; }

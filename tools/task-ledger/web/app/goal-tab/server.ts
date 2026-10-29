@@ -20,7 +20,7 @@ export function projects(ledger:Ledger):ProjectSummary[] {
   return [...known,...rest];
 }
 function row(ledger:Ledger,t:Task, goal?:Goal|null, issue?:Issue|null):TaskRow {
-  const ev=ledger.events(t.id).at(-1); return {id:t.id,title:t.title,status:mapStatus(t.status),attempts:t.attempts,...(t.agent?{worker:t.agent}:{}),...(goal?{goalTitle:goal.title}:{}),...(issue?{issueTitle:issue.title}:{}),updatedAt:t.updated_at,...(ev?.note?{lastNote:ev.note}:{})};
+  const ev=ledger.events(t.id).at(-1); return {id:t.id,title:t.title,status:mapStatus(t.status),attempts:t.attempts,worker:[t.worker??"pi",t.model].filter(Boolean).join(" "),...(goal?{goalTitle:goal.title}:{}),...(issue?{issueTitle:issue.title}:{}),updatedAt:t.updated_at,...(ev?.note?{lastNote:ev.note}:{})};
 }
 export function loadGoalData(ledger:Ledger, repo:string, now=new Date()):GoalTabData {
  const ps=projects(ledger), project=ps.find(p=>p.repo===repo); if(!project) throw new Response('Project not found',{status:404});

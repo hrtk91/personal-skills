@@ -62,6 +62,17 @@ export function DashboardShell({ projects, current, tab, hrefFor, tabHref, foot,
     <div className={styles.app}>
       <nav className={styles.side} aria-label="プロジェクト">
         <div className={styles.brand}>task-ledger</div>
+        {/* On a phone the list becomes one picker: 30 names in a sideways strip hide the current one. */}
+        <label className={styles.pick}>
+          <span className={styles.pickLabel}>プロジェクト</span>
+          <select value={hrefFor(current)} onChange={(event) => { window.location.href = event.currentTarget.value; }}>
+            {projects.map((project) => (
+              <option key={project.repo} value={hrefFor(project)}>
+                {project.name}{project.waiting ? `（あなたの番 ${project.waiting}）` : ""}{project.running ? `（動いている ${project.running}）` : ""}
+              </option>
+            ))}
+          </select>
+        </label>
         {projects.map((project) => (
           <a key={project.repo} href={hrefFor(project)} className={project.repo === current.repo ? `${styles.proj} ${styles.on}` : styles.proj} aria-current={project.repo === current.repo ? "page" : undefined}>
             {project.name}
@@ -204,7 +215,7 @@ function Queue({ items, submit, busy, now }: { items: QueueItem[]; submit: (inte
                   <button type="button" disabled={busy || index === firstMovable} onClick={() => submit({ intent: "move-task", taskId: item.id, move: "up" })} aria-label="上へ">↑</button>
                   <button type="button" disabled={busy || index === items.length - 1} onClick={() => submit({ intent: "move-task", taskId: item.id, move: "down" })} aria-label="下へ">↓</button>
                 </span>
-              ) : <span className={styles.hint}>動いている</span>}
+              ) : null}
             </li>
           ))}
         </ol>
