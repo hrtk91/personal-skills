@@ -50,6 +50,8 @@ export interface QueueItem extends TaskRow {
   movable: boolean;
   /** Task ids this one waits for (--after), when they are not done yet. */
   after: string[];
+  /** Why this waiting task cannot start yet. */
+  blockedBy?: string;
 }
 
 export type StageState = "done" | "cur" | "stuck" | "todo";
