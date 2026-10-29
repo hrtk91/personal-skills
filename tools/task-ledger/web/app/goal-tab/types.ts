@@ -20,6 +20,8 @@ export interface DecisionOption { label: string; detail?: string; recommended?: 
 export interface DecisionItem {
   taskId: string;
   title: string;
+  /** The problem that started the task, in one plain line (the ledger's why). */
+  why?: string;
   goalTitle?: string;
   /** The ledger's note for the move into 判断待ち (why it stopped). */
   question: string;
@@ -33,6 +35,8 @@ export interface DecisionItem {
 export interface TaskRow {
   id: string;
   title: string;
+  /** The problem that started the task, in one plain line (the ledger's why). */
+  why?: string;
   status: TaskStatus;
   attempts: number;
   /** Who works on it (pi・codex・claude), when known. */

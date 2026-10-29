@@ -20,7 +20,7 @@ export function projects(ledger:Ledger):ProjectSummary[] {
   return [...known,...rest];
 }
 function row(ledger:Ledger,t:Task, goal?:Goal|null, issue?:Issue|null):TaskRow {
-  const ev=ledger.events(t.id).at(-1); return {id:t.id,title:t.title,status:mapStatus(t.status),attempts:t.attempts,worker:[t.worker??"pi",t.model].filter(Boolean).join(" "),...(goal?{goalTitle:goal.title}:{}),...(issue?{issueTitle:issue.title}:{}),updatedAt:t.updated_at,...(ev?.note?{lastNote:ev.note}:{})};
+  const ev=ledger.events(t.id).at(-1); return {id:t.id,title:t.title,status:mapStatus(t.status),attempts:t.attempts,worker:[t.worker??"pi",t.model].filter(Boolean).join(" "),...(goal?{goalTitle:goal.title}:{}),...(issue?{issueTitle:issue.title}:{}),updatedAt:t.updated_at,...(t.why?{why:t.why}:{}),...(ev?.note?{lastNote:ev.note}:{})};
 }
 export function loadGoalData(ledger:Ledger, repo:string, now=new Date()):GoalTabData {
  const ps=projects(ledger), project=ps.find(p=>p.repo===repo); if(!project) throw new Response('Project not found',{status:404});
@@ -34,7 +34,7 @@ export function loadGoalData(ledger:Ledger, repo:string, now=new Date()):GoalTab
    const report=t.brief??''; const pick=(key:string, label:string)=>parsed?.[key]??parsed?.fields?.[key]??parsed?.[label]??report.match(new RegExp(`^##?\\s*${label}\\s*\\n([\\s\\S]*?)(?=\\n##?\\s|$)`,'m'))?.[1]?.trim();
    const fields={goal:pick('goal','最終的なゴール'),how:pick('how','どう実現するか'),done:pick('done','やったこと'),undecided:pick('undecided','決められないこと')};
    const options=parsed?.options??parsed?.選択肢;
-   return {taskId:t.id,title:t.title,...(linkedGoal(t)?{goalTitle:linkedGoal(t)!.title}:{}),question:note||'【仮】判断が必要です。',...(Object.values(fields).some(Boolean)?{fields}:{}),...(Array.isArray(options)?{options}:{}),at:entered?.at??t.updated_at};
+   return {taskId:t.id,title:t.title,...(t.why?{why:t.why}:{}),...(linkedGoal(t)?{goalTitle:linkedGoal(t)!.title}:{}),question:note||'【仮】判断が必要です。',...(Object.values(fields).some(Boolean)?{fields}:{}),...(Array.isArray(options)?{options}:{}),at:entered?.at??t.updated_at};
  });
  const ready=ledger.ready().filter(t=>t.repo===repo), running=all.filter(t=>RUNNING.has(t.status)).sort((a,b)=>a.updated_at.localeCompare(b.updated_at));
  const queueTasks=[...running,...ready.filter(t=>!running.some(r=>r.id===t.id))];

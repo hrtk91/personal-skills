@@ -35,6 +35,41 @@ function where(row: TaskRow): string {
   return [row.goalTitle, row.issueTitle].filter(Boolean).join(" ・ ") || "Goal なし";
 }
 
+// A task reads top-down: what is wrong, what we do about it, and where it is now.
+const STEPS = ["待ち", "作業", "確かめ", "レビュー", "取り込み"] as const;
+const STEP_AT: Partial<Record<TaskStatus, number>> = { "待ち": 0, "走行中": 1, "確かめ中": 2, "レビュー中": 3, "取り込み中": 4, "済": 5 };
+
+/** "タイムライン: 黒のインナーカラーを選ばない" → the area and the rest. Titles without an area stay whole. */
+function splitTitle(title: string): { area?: string; text: string } {
+  const match = /^([^:：]{1,16})[:：]\s*(.+)$/.exec(title);
+  return match ? { area: match[1], text: match[2] } : { text: title };
+}
+
+function Steps({ status }: { status: TaskStatus }) {
+  const at = STEP_AT[status];
+  if (at === undefined) return <StatusChip status={status} />;
+  return (
+    <ol className={styles.steps} aria-label={`工程: ${status}`}>
+      {STEPS.map((step, index) => <li key={step} className={index < at ? styles.stepDone : index === at ? styles.stepNow : undefined}>{step}</li>)}
+    </ol>
+  );
+}
+
+function TaskStory({ title, why, status, meta, steps = true }: { title: string; why?: string; status: TaskStatus; meta?: string; steps?: boolean }) {
+  const { area, text } = splitTitle(title);
+  return (
+    <div className={styles.story}>
+      {area ? <span className={styles.area}>{area}</span> : null}
+      {why ? <p className={styles.line}><b className={styles.lbl}>困りごと</b><span>{why}</span></p> : null}
+      <p className={`${styles.line} ${styles.fix}`}><b className={styles.lbl}>やること</b><span>{text}</span></p>
+      <div className={styles.line}>
+        <b className={styles.lbl}>いま</b>
+        <span className={styles.nowRow}>{steps ? <Steps status={status} /> : <StatusChip status={status} />}{meta ? <span className={styles.s}>{meta}</span> : null}</span>
+      </div>
+    </div>
+  );
+}
+
 // ---- the frame around every tab ----
 
 export type DashboardTab = "goals" | "issues" | "docs" | "retro";
@@ -161,8 +196,8 @@ function Decision({ item, submit, busy, now, consultHref }: { item: DecisionItem
   };
   return (
     <article className={`${styles.card} ${styles.ask}`} aria-label={item.title}>
-      <div className={styles.hint}>{[item.goalTitle, item.title, ago(item.at, now)].filter(Boolean).join(" ・ ")}</div>
-      <p className={styles.q}>{item.question}</p>
+      <TaskStory title={item.title} why={item.why} status="判断待ち" meta={[item.goalTitle, `${ago(item.at, now)}から`].filter(Boolean).join(" ・ ")} />
+      <p className={styles.q}><b className={styles.lbl}>止まった理由</b>{item.question}</p>
       {fields.length ? (
         <dl className={styles.fmt}>
           {fields.map(([key, label]) => <div key={key} className={styles.fmtRow}><dt>{label}</dt><dd>{item.fields![key]}</dd></div>)}
@@ -201,15 +236,15 @@ function Queue({ items, submit, busy, now }: { items: QueueItem[]; submit: (inte
             <li key={item.id} className={styles.qi}>
               <span className={styles.no}>{index + 1}</span>
               <span className={styles.tt}>
-                {item.title}
-                <span className={styles.s}>
-                  {where(item)}
-                  {item.after.length ? ` ・ ${item.after.join("・")} の後` : ""}
-                  {RUNNING.includes(item.status) ? ` ・ ${item.worker ? `${item.worker} ・ ` : ""}${item.attempts > 1 ? `${item.attempts} 回目 ・ ` : ""}${ago(item.updatedAt, now)}から` : ""}
-                </span>
-                {item.lastNote && RUNNING.includes(item.status) && item.attempts > 1 ? <span className={styles.back}>{item.lastNote}</span> : null}
+                <TaskStory title={item.title} why={item.why} status={item.status} meta={[
+                  RUNNING.includes(item.status) ? [item.worker, item.attempts > 1 ? `${item.attempts} 回目` : null, `${ago(item.updatedAt, now)}から`].filter(Boolean).join(" ・ ") : null,
+                  item.after.length ? `${item.after.join("・")} の後` : null,
+                ].filter(Boolean).join(" ・ ")} />
+                {item.lastNote && RUNNING.includes(item.status) && item.attempts > 1 ? (
+                  <details className={styles.more}><summary>前の回で戻された理由</summary><p>{item.lastNote}</p></details>
+                ) : null}
+                {item.goalTitle || item.issueTitle ? <span className={styles.s}>{where(item)}</span> : null}
               </span>
-              <StatusChip status={item.status} />
               {item.movable ? (
                 <span className={styles.mv}>
                   <button type="button" disabled={busy || index === firstMovable} onClick={() => submit({ intent: "move-task", taskId: item.id, move: "first" })} title="いちばん先に">先に</button>
@@ -381,10 +416,9 @@ function Recent({ rows, now }: { rows: TaskRow[]; now: number }) {
         {rows.map((row) => (
           <li key={row.id} className={styles.li}>
             <span className={styles.grow}>
-              {row.title}
-              <span className={styles.s}>{[row.worker, row.attempts > 1 ? `${row.attempts} 回で` : null, ago(row.updatedAt, now)].filter(Boolean).join(" ・ ")}</span>
+              <TaskStory title={row.title} why={row.why} status={row.status} steps={false}
+                meta={[row.worker, row.attempts > 1 ? `${row.attempts} 回で` : null, ago(row.updatedAt, now)].filter(Boolean).join(" ・ ")} />
             </span>
-            <StatusChip status={row.status} />
           </li>
         ))}
       </ul>
