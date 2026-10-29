@@ -45,7 +45,7 @@ test('retro CLI reads JSON traces and filters open issues by creator', async () 
 
 test('issue Markdown import, required context validation, task generation and show/template', async () => {
   const dir=mkdtempSync(join(tmpdir(),'task-ledger-issue-'));process.env.TASK_LEDGER_DB=join(dir,'db.sqlite');const {main}=await import('./cli.ts');
-  const repo=join(dir,'repo');mkdirSync(join(repo,'handoff'),{recursive:true});
+  const repo=join(dir,'repo');mkdirSync(join(repo,'handoff'),{recursive:true});mkdirSync(join(repo,'tools'),{recursive:true});writeFileSync(join(repo,'tools','a.ts'),'');
   const path=join(dir,'issue.md');
   const run=runner(main);
   try {
@@ -60,6 +60,39 @@ test('issue Markdown import, required context validation, task generation and sh
     assert.match(brief,/## 関係する所[\s\S]*tools\/a\.ts/);
     assert.ok(!brief.includes('ignored'));
     assert.match(run('issue','show','repo-i2').text,/"goal": null/);
+  } finally {rmSync(dir,{recursive:true,force:true});delete process.env.TASK_LEDGER_DB;}
+});
+
+test('task add --issue validates check and file fields, supports overrides, and writes the issue brief', async () => {
+  const dir=mkdtempSync(join(tmpdir(),'task-ledger-issue-check-'));process.env.TASK_LEDGER_DB=join(dir,'db.sqlite');const {main}=await import('./cli.ts');
+  const repo=join(dir,'repo');mkdirSync(join(repo,'tools'),{recursive:true});writeFileSync(join(repo,'tools','a.ts'),'');
+  const run=runner(main);
+  try {
+    assert.equal(run('issue','add','--repo',repo,'--title','Guard','--なぜ','reason','--今の状態','known','--関係する所','tools/a.ts','--確かめのコマンド','差し戻しを含む仕事を流し、結果を見る','--触るファイル','tools/a.ts').code,0);
+    const prose=run('add','--repo',repo,'--issue','repo-i1');
+    assert.equal(prose.code,1);assert.match(prose.err,/コマンドに見えません/);assert.match(prose.err,/--check/);
+    const overridden=run('add','--repo',repo,'--issue','repo-i1','--check','node --test');
+    assert.equal(overridden.code,0,overridden.err);
+    assert.match(JSON.parse(run('show','repo-1').text.split('\n}')[0]+'\n}').check,/node --test/);
+    assert.equal(readFileSync(join(repo,'handoff','repo-i1.md'),'utf8'),run('issue','brief','repo-i1').text+'\n');
+
+    assert.equal(run('issue','add','--repo',repo,'--title','Files','--なぜ','reason','--今の状態','known','--関係する所','tools/a.ts','--確かめのコマンド','npm test','--触るファイル','tools/a.ts、tools/a.ts').code,0);
+    assert.equal(run('add','--repo',repo,'--issue','repo-i2').code,0);
+    assert.deepEqual(JSON.parse(run('show','repo-2').text.split('\n}')[0]+'\n}').files,['tools/a.ts','tools/a.ts']);
+
+    assert.equal(run('issue','add','--repo',repo,'--title','Missing','--なぜ','reason','--今の状態','known','--関係する所','tools/a.ts','--確かめのコマンド','npm test','--触るファイル','tools/a.ts、unknown/missing.ts').code,0);
+    const invalid=run('add','--repo',repo,'--issue','repo-i3');
+    assert.equal(invalid.code,1);assert.ok(invalid.err.includes('unknown/missing.ts'));assert.match(invalid.err,/--files/);
+    assert.equal(run('add','--repo',repo,'--issue','repo-i3','--files','tools/a.ts').code,0);
+
+    assert.equal(run('issue','add','--repo',repo,'--title','New target','--なぜ','reason','--今の状態','known','--関係する所','tools/a.ts','--確かめのコマンド','npm test','--触るファイル','tools/new.ts').code,0);
+    assert.equal(run('add','--repo',repo,'--issue','repo-i4').code,0);
+    assert.deepEqual(JSON.parse(run('show','repo-4').text.split('\n}')[0]+'\n}').files,['tools/new.ts']);
+
+    assert.equal(run('issue','add','--repo',repo,'--title','Existing brief','--なぜ','reason','--今の状態','known','--関係する所','tools/a.ts','--確かめのコマンド','npm test','--触るファイル','tools/a.ts').code,0);
+    writeFileSync(join(repo,'handoff','repo-i5.md'),'keep this brief');
+    assert.equal(run('add','--repo',repo,'--issue','repo-i5').code,0);
+    assert.equal(readFileSync(join(repo,'handoff','repo-i5.md'),'utf8'),'keep this brief');
   } finally {rmSync(dir,{recursive:true,force:true});delete process.env.TASK_LEDGER_DB;}
 });
 
