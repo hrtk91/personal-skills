@@ -221,7 +221,7 @@ class HerdrContractTest(unittest.TestCase):
                 "COMMIT_DIRTY", "COMMIT_NAME", "COMMIT_EMAIL", "DIRTY_COMMIT_NAME", "DIRTY_COMMIT_EMAIL", "AGENT", "IMPL_AGENT", "REV_AGENT",
                 # The parent Herdr session may carry a live TASK_ID / DB path. These offline contract tests
                 # must never mutate a caller's task ledger while exercising the fake harness.
-                "TASK_ID", "TASK_LEDGER_DB",
+                "TASK_ID", "TASK_ISSUE_ID", "TASK_LEDGER_DB",
             }:
                 self.env.pop(key)
         self.env.update({"PATH": str(self.bin) + os.pathsep + self.env["PATH"], "HERDR_WORKSPACE_ID": "test-workspace",
@@ -432,7 +432,8 @@ class HerdrContractTest(unittest.TestCase):
 
     def test_verification_rule_is_consistent_in_worker_instructions(self):
         for path in (SKILL / "agents/pi-system.md", SKILL / "agents/claude.sh", SKILL / "herdr-run.sh"):
-            self.assertIn(VERIFICATION_RULE, path.read_text())
+            with self.subTest(path=path.name):
+                self.assertIn(VERIFICATION_RULE, path.read_text())
 
     def test_legacy_work_directory_is_supported(self):
         self.config.pop("HERDR_WORK")
@@ -572,7 +573,11 @@ class HerdrContractTest(unittest.TestCase):
         content = brief.read_text()
         self.assertIn("## 今の状態", content)
         self.assertIn("## 関係する所", content)
-        self.assertFalse((self.repo / "handoff" / f"{issue_id}.md").exists())
+        # task add --issue materializes the canonical brief in the repo; the worker copy
+        # also receives it, but the brief must remain excluded from the worker commit.
+        repo_brief = self.repo / "handoff" / f"{issue_id}.md"
+        self.assertTrue(repo_brief.is_file())
+        self.assertEqual(repo_brief.read_text().strip(), self.ledger("issue", "brief", issue_id).stdout.strip())
         committed = self.git("show", "--format=", "--name-only", "HEAD", cwd=issue_work)
         self.assertNotIn(f"handoff/{issue_id}.md", committed.splitlines())
 
