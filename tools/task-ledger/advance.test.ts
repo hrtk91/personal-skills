@@ -5,14 +5,14 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Ledger } from './ledger.ts';
-import { advance, herdrTabSweepCandidates, parseVerdict, realAdvanceDeps, sweepHerdrTabs, type AdvanceDeps } from './advance.ts';
+import { advance, herdrTabSweepCandidates, outsideTaskFiles, parseVerdict, realAdvanceDeps, sweepHerdrTabs, type AdvanceDeps } from './advance.ts';
 
 function git(cwd: string, ...args: string[]): string {
   return execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@x', ...args], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
 /** A repository, a worker's worktree with one finished commit, and a task waiting at 確かめ中. */
-function fixture(options: { check?: string; attempts?: number } = {}) {
+function fixture(options: { check?: string; attempts?: number; files?: string[] } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'task-advance-'));
   process.env.TASK_LEDGER_DB = join(dir, 'ledger.sqlite');
   const repo = join(dir, 'repo'); mkdirSync(join(repo, 'handoff'), { recursive: true });
@@ -25,7 +25,7 @@ function fixture(options: { check?: string; attempts?: number } = {}) {
   writeFileSync(join(workdir, 'mul.js'), 'export const mul = (a, b) => a * b;\n');
   git(workdir, 'add', '-A'); git(workdir, 'commit', '-qm', 'worker');
   const ledger = new Ledger(':memory:');
-  ledger.add({ repo, title: '掛け算を足す', why: 'w', brief: 'handoff/t.md', check: options.check ?? 'test -f mul.js' });
+  ledger.add({ repo, title: '掛け算を足す', why: 'w', brief: 'handoff/t.md', check: options.check ?? 'test -f mul.js', files: options.files ?? [] });
   ledger.setStatus('repo-1', '走行中', null, { attempts: options.attempts ?? 1 });
   ledger.setRunner('repo-1', { workdir });
   ledger.setStatus('repo-1', '確かめ中', '作業役が終わった');
@@ -74,6 +74,36 @@ test('a report that cannot decide why conditions are unmet waits for a decision,
     assert.ok(!calls.includes('resend'));
     assert.ok(!calls.some((call) => call.startsWith('review:')));
   } finally { f.done(); }
+});
+
+test('changed paths outside task.files appear in the review request and review span', () => {
+  const f = fixture({ files: ['math.js', 'mul.js'] });
+  try {
+    writeFileSync(join(f.workdir, 'outside.txt'), 'unexpected\n');
+    git(f.workdir, 'add', 'outside.txt'); git(f.workdir, 'commit', '-qm', 'outside change');
+    writeFileSync(join(f.workdir, 'handoff/t-report.md'), '終わりの条件: 満たした\n');
+    const calls: string[] = [];
+    advance(f.ledger, 'repo-1', deps('{"verdict":"判断","reasons":[],"fixes":[]}', calls), 1);
+    assert.ok(calls.find((call) => call.startsWith('review:'))!.startsWith('review:触るファイルの外の変更: outside.txt（作業役の報告と照らすこと）'));
+    const reviewSpan = f.ledger.spans('repo-1').find((span) => span.name === 'レビュー')!;
+    assert.equal(reviewSpan.attributes['diff.outside_files'], '["outside.txt"]');
+  } finally { f.done(); }
+});
+
+test('changes entirely within task.files produce no outside notice or trace attribute', () => {
+  const f = fixture({ files: ['mul.js'] });
+  try {
+    writeFileSync(join(f.workdir, 'handoff/t-report.md'), '終わりの条件: 満たした\n');
+    const calls: string[] = [];
+    advance(f.ledger, 'repo-1', deps('{"verdict":"判断","reasons":[],"fixes":[]}', calls), 1);
+    assert.doesNotMatch(calls.find((call) => call.startsWith('review:'))!, /^review:触るファイルの外の変更:/);
+    const reviewSpan = f.ledger.spans('repo-1').find((span) => span.name === 'レビュー')!;
+    assert.equal(reviewSpan.attributes['diff.outside_files'], undefined);
+  } finally { f.done(); }
+});
+
+test('files allow exact paths and files beneath declared folders only', () => {
+  assert.deepEqual(outsideTaskFiles(['src/a.ts', 'skills/herdr/tests/test_x.py', 'other.txt'], ['src/a.ts', 'skills/herdr/tests']), ['other.txt']);
 });
 
 test('a report that says conditions are met proceeds to review', () => {
