@@ -2,8 +2,8 @@
 // One `task advance <id>` process carries one task as far as it can and leaves it at 済, 判断待ち, or back
 // with the worker (走行中) carrying the reason. Design: handoff/task-ledger-design.md (流れ 3〜5)
 import { spawn, spawnSync } from 'node:child_process';
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmdirSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmdirSync, statSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defaultPath, type Ledger, type SpanAttributes, type Status, type Task } from './ledger.ts';
 import { assembleIssueBrief } from './issue-brief.ts';
@@ -55,7 +55,7 @@ export function parseVerdict(answer: string): Verdict | null {
 
 export function advance(ledger: Ledger, id: string, deps: AdvanceDeps, pid = process.pid): string[] {
   const said: string[] = [];
-  if (!ledger.claimRunner(id, AFTER_WORK, pid)) return [`${id}: ほかが進めているか、進める段ではない`];
+  if (!ledger.claimRunner(id, AFTER_WORK, pid)) return [...said, `${id}: ほかが進めているか、進める段ではない`];
   const stop = (note: string) => { ledger.setStatus(id, '判断待ち', note); ledger.releaseRunner(id); said.push(`${id}: 判断待ち（${note}）`); return said; };
   for (;;) {
     const task = ledger.get(id)!;
@@ -100,6 +100,116 @@ export function advance(ledger: Ledger, id: string, deps: AdvanceDeps, pid = pro
       return said;
     }
   }
+}
+
+export type SweepCandidate = { tabId: string; name: string; reason: string; task: Task | null };
+type HerdrTab = { tab_id: string; label?: string };
+type HerdrPane = { tab_id: string; cwd?: string };
+type SweepOptions = {
+  now?: number;
+  roots?: string[];
+  tabs?: HerdrTab[];
+  panes?: HerdrPane[];
+  running?: (name: string) => boolean;
+  close?: (tabId: string) => void;
+  dryRun?: boolean;
+};
+
+/** Finds only tabs whose IDs are explicitly present in a herdr-run log. */
+export function herdrTabSweepCandidates(ledger: Ledger, options: SweepOptions = {}): SweepCandidate[] {
+  const now = options.now ?? Date.now();
+  const roots = options.roots ?? defaultHerdrRoots();
+  const tabs = options.tabs ?? herdrJson('tab', 'list').tabs;
+  const panes = options.panes ?? herdrJson('pane', 'list').panes;
+  const paneRoots = panes.map((pane) => pane.cwd).filter((cwd): cwd is string => !!cwd).map((cwd) => dirname(dirname(cwd)));
+  const eligibleTabs = new Set(tabs.filter((tab) => typeof tab.label === 'string').map((tab) => `${tab.tab_id}\0${tab.label}`));
+  const tasks = ledger.list({ all: true });
+  const byName = new Map<string, Task[]>();
+  for (const task of tasks.filter((item) => item.brief)) {
+    const name = basename(task.brief!, '.md');
+    byName.set(name, [...(byName.get(name) ?? []), task]);
+  }
+  const candidates: SweepCandidate[] = [];
+  for (const root of new Set([...roots, ...paneRoots])) {
+    let logs: string[];
+    try { logs = readdirSync(root).filter((file) => /^herdr-[A-Za-z0-9][A-Za-z0-9_-]*\.log$/.test(file)); } catch { continue; }
+    for (const file of logs) {
+      const name = file.slice('herdr-'.length, -'.log'.length);
+      let text = ''; let mtime = 0;
+      try { text = readFileSync(join(root, file), 'utf8'); mtime = statSync(join(root, file)).mtimeMs; } catch { continue; }
+      const tabId = [...text.matchAll(/タブ: ([^（\s]+)（/g)].at(-1)?.[1];
+      if (!tabId || !eligibleTabs.has(`${tabId}\0${name}`)) continue;
+      const matches = byName.get(name) ?? [];
+      if (matches.length > 1) continue; // Identical run names across repositories are ambiguous; fail closed.
+      const task = matches[0] ?? null;
+      if (task && ['判断待ち', '保留', '走行中', '確かめ中', 'レビュー中', '取り込み中'].includes(task.status)) continue;
+      if (options.running?.(name) ?? isRunActive(name)) continue;
+      const cwd = panes.filter((pane) => pane.tab_id === tabId).map((pane) => pane.cwd).filter((value): value is string => !!value);
+      let reason: string | null = null;
+      if (cwd.length > 0 && cwd.every((path) => !existsSync(path))) reason = `作業用フォルダが無い（${cwd.join('、')}）`;
+      if (!reason && task && ['済', 'やめ'].includes(task.status)) {
+        const finished = Date.parse(ledger.events(task.id).at(-1)?.at ?? task.updated_at);
+        if (now - finished >= 10 * 60_000) reason = `${task.status}から10分経過`;
+      }
+      if (!reason && !task && now - mtime >= 6 * 60 * 60_000) reason = '台帳外・ログ最終更新から6時間経過';
+      if (reason) candidates.push({ tabId, name, reason, task });
+    }
+  }
+  return candidates;
+}
+
+/** One harness pass: close eligible tabs, or only list them when dryRun is requested. */
+export function sweepHerdrTabs(ledger: Ledger, options: SweepOptions = {}): string[] {
+  let candidates: SweepCandidate[];
+  try { candidates = herdrTabSweepCandidates(ledger, options); } catch (error) {
+    return [`herdr タブ掃除を見送った（一覧を読めない: ${error instanceof Error ? error.message : String(error)}）`];
+  }
+  const said: string[] = [];
+  if (candidates.length === 0) return ['掃除候補なし'];
+  for (const candidate of candidates) {
+    if (options.dryRun ?? process.env.TASK_HERDR_SWEEP_DRY_RUN === '1') {
+      said.push(`掃除候補: ${candidate.tabId}（${candidate.name}）— ${candidate.reason}`);
+      continue;
+    }
+    try {
+      (options.close ?? ((tabId) => herdrCommand('tab', 'close', tabId)))(candidate.tabId);
+      if (candidate.task) {
+        const at = new Date().toISOString();
+        ledger.recordSpan({ task_id: candidate.task.id, attempt: candidate.task.attempts, name: '片付け', start: at, end: at, ok: true,
+          attributes: { 'cleanup.tab_id': candidate.tabId, 'cleanup.reason': candidate.reason } });
+      }
+      said.push(`タブを片付けた: ${candidate.tabId}（${candidate.name}）— ${candidate.reason}`);
+    } catch (error) { said.push(`タブを閉じられなかった: ${candidate.tabId}（${String(error)}）`); }
+  }
+  return said;
+}
+
+function defaultHerdrRoots(): string[] {
+  const cache = join(process.env.HOME ?? '', '.cache');
+  const configured = process.env.HERDR_WORK;
+  let roots: string[] = [];
+  try { roots = readdirSync(cache).filter((entry) => entry.startsWith('herdr-')).map((entry) => join(cache, entry)); } catch { /* no cache */ }
+  return [...new Set([...(configured ? [configured] : []), ...roots])];
+}
+
+function herdrJson(group: string, action: string): { tabs: HerdrTab[]; panes: HerdrPane[] } {
+  const result = JSON.parse(herdrCommand(group, action)) as { result?: { tabs?: HerdrTab[]; panes?: HerdrPane[] } };
+  return { tabs: result.result?.tabs ?? [], panes: result.result?.panes ?? [] };
+}
+function herdrCommand(...args: string[]): string {
+  const result = spawnSync(process.env.HERDR_BIN ?? 'herdr', args, { encoding: 'utf8', timeout: 20_000 });
+  if (result.status !== 0) throw new Error(result.stderr || `herdr ${args.join(' ')} failed`);
+  return result.stdout;
+}
+function isRunActive(name: string): boolean {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(`herdr-run\\.sh\\s+${escaped}(?:\\s|$)`);
+  try {
+    return readdirSync('/proc').some((entry) => {
+      if (!/^\d+$/.test(entry) || Number(entry) === process.pid) return false;
+      try { return pattern.test(readFileSync(`/proc/${entry}/cmdline`, 'utf8').replaceAll('\0', ' ')); } catch { return false; }
+    });
+  } catch { return false; }
 }
 
 function tryLock(path: string): boolean {

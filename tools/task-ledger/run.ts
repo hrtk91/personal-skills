@@ -7,6 +7,7 @@ import { cpus, homedir } from 'node:os';
 import { basename, dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ACTIVE, defaultPath, type Ledger, type Task, type Worker } from './ledger.ts';
+import { sweepHerdrTabs } from './advance.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const HERDR_RUN = process.env.TASK_HERDR_RUN ?? join(HERE, '../../skills/herdr/herdr-run.sh');
@@ -38,6 +39,8 @@ export type RunDeps = {
   alive: (pid: number) => boolean;
   /** The busier of CPU and memory, 0〜1. */
   load: () => number;
+  /** Sweeps finished herdr tabs at the start of every harness pass. */
+  sweep?: (ledger: Ledger) => string[];
 };
 
 /** The herdr-run task name: the brief's file name without `.md`. */
@@ -46,7 +49,7 @@ export function runName(task: Task): string {
 }
 
 export function runOnce(ledger: Ledger, deps: RunDeps): string[] {
-  const said: string[] = [];
+  const said: string[] = deps.sweep?.(ledger) ?? [];
   for (const task of ledger.list().filter((candidate) => ACTIVE.includes(candidate.status))) {
     if (task.runner === null || deps.alive(task.runner)) continue;
     ledger.setStatus(task.id, '判断待ち', `${task.status}の仕事を進めていたプロセス（PID ${task.runner}）が、終わりを書かずに消えた。ログ: ${logPath(task.id)}`);
@@ -113,6 +116,7 @@ export const realDeps: RunDeps = {
   alive(pid) {
     try { process.kill(pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === 'EPERM'; }
   },
+  sweep(ledger) { return sweepHerdrTabs(ledger); },
   load() {
     const cpu = Number(readFileSync('/proc/loadavg', 'utf8').split(' ')[0]) / cpus().length;
     const mem = Object.fromEntries(readFileSync('/proc/meminfo', 'utf8').split('\n').map((l) => l.split(/:\s+/)).filter((p) => p.length === 2).map(([k, v]) => [k, parseInt(v!, 10)]));

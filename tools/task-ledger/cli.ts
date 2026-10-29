@@ -10,7 +10,7 @@ import { defaultPath, ISSUE_FIELDS, KINDS, WORKERS, Ledger, STATUSES, type Kind,
 import { assembleIssueBrief, issueTemplate, meaningful, parseIssueMarkdown } from './issue-brief.ts';
 import { realDeps, runOnce, type RunDeps } from './run.ts';
 import { taskContext } from './context.ts';
-import { advance, realAdvanceDeps, type AdvanceDeps } from './advance.ts';
+import { advance, realAdvanceDeps, sweepHerdrTabs, type AdvanceDeps } from './advance.ts';
 
 const USAGE = `使い方:
   task add --title <題> --why <ユーザーの言葉と日付> [--brief <依頼文のパス>] [--check <確かめのコマンド>] [--worker pi|codex|claude] [--model <モデル>] [--effort <強さ>]
@@ -19,6 +19,7 @@ const USAGE = `使い方:
   task list [--all] [--repo <パス>] [--status <状態>]
   task goal add --title <題> [--why <きっかけ>] [--stages a,b,c] | goal list | goal move <id> up|down|first
   task issue add (--title <題> [欄オプション...] | --from <md>) [--by あなた|Claude|作業役|レビュー] [--goal <id>] [--stage <工程>]
+  task sweep --dry-run                                  herdr タブの片付け候補だけ表示
   task issue template | show <id> | brief <id>
   task issue list [--goal <id>|--loose] [--by <作成者>] [--open]
   task doc add --kind 仕様|設計|モック|決まり|説明|報告 --title <題> (--path <パス>|--body <中身>) [--goal <id>] | doc list [--goal <id>]
@@ -81,7 +82,7 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
     worker: { type: 'string' }, model: { type: 'string' }, effort: { type: 'string' },
     repo: { type: 'string' }, all: { type: 'boolean' }, status: { type: 'string' }, to: { type: 'string' },
     agent: { type: 'string' }, runner: { type: 'string' }, commit: { type: 'string' }, log: { type: 'string' }, workdir: { type: 'string' },
-    since: { type: 'string' }, json: { type: 'boolean' }, out: { type: 'string' }, issue: { type: 'string' }, body: { type: 'string' }, by: { type: 'string' }, from: { type: 'string' }, goal: { type: 'string' }, stage: { type: 'string' }, stages: { type: 'string' }, loose: { type: 'boolean' }, open: { type: 'boolean' }, docKind: { type: 'string' }, path: { type: 'string' },
+    since: { type: 'string' }, json: { type: 'boolean' }, 'dry-run': { type: 'boolean' }, out: { type: 'string' }, issue: { type: 'string' }, body: { type: 'string' }, by: { type: 'string' }, from: { type: 'string' }, goal: { type: 'string' }, stage: { type: 'string' }, stages: { type: 'string' }, loose: { type: 'boolean' }, open: { type: 'boolean' }, docKind: { type: 'string' }, path: { type: 'string' },
     'なぜ': { type: 'string' }, '今の状態': { type: 'string' }, '関係する所': { type: 'string' }, 'やること': { type: 'string' }, 'やってよいこと': { type: 'string' }, 'やらないこと': { type: 'string' }, '終わりの条件': { type: 'string' }, '確かめのコマンド': { type: 'string' }, '触るファイル': { type: 'string' }, '種類': { type: 'string' }, '本番に出すか': { type: 'string' },
   } });
   const ledger = new Ledger();
@@ -201,6 +202,9 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
       }
       case 'run':
         for (const said of runOnce(ledger, deps)) out(said);
+        return 0;
+      case 'sweep':
+        for (const said of sweepHerdrTabs(ledger, { dryRun: true })) out(said);
         return 0;
       case 'trace': {
         const task = ledger.get(positionals[0] ?? '');
