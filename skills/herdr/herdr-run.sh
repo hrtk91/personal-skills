@@ -218,9 +218,14 @@ make_patch() {
   read -r -a excludes <<< "$PATCH_EXCLUDE"
   for f in ${EXTRA:-}; do excludes+=(":(exclude,literal)$f"); done
   # 除外はパッチだけでなく、台本のコミットにも適用する
-  (cd "$W" && git reset -q HEAD -- . &&
+  # 作業役が git rm --cached で記録から外したファイルは、reset で記録に戻るので、足し直した後にもう一度外す
+  # （10/29、前の回のコミットに入ったリンクを作業役が外しても、ここで戻されて差し戻しが続いた）
+  local untracked="$WORK/untracked-by-worker-$name"
+  (cd "$W" && git diff --cached --name-only -z --diff-filter=D -- . > "$untracked" &&
+    git reset -q HEAD -- . &&
     git ls-files -z --cached --others --exclude-standard -- . "${excludes[@]}" |
       git --literal-pathspecs add -A --pathspec-from-file=- --pathspec-file-nul &&
+    { [ ! -s "$untracked" ] || git --literal-pathspecs rm -q --cached --ignore-unmatch --pathspec-from-file="$untracked" --pathspec-file-nul; } &&
     git diff --cached --binary -- . "${excludes[@]}" > "$WORK/patch-$name.diff")
 }
 
