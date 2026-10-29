@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Ledger } from './ledger.ts';
 import { taskContext } from './context.ts';
+import { runOnce, type RunDeps } from './run.ts';
 
 test('task context is empty without an Issue and includes Goal, Issue, docs, and the top recent return reasons', () => {
   let now = new Date('2026-10-28T12:00:00Z');
@@ -25,6 +26,8 @@ test('task context is empty without an Issue and includes Goal, Issue, docs, and
   now = new Date('2026-10-28T12:00:00Z');
 
   assert.equal(taskContext(ledger, unrelated, now), '');
+  ledger.setStatus(unrelated.id, '判断待ち', '判断が必要');
+  assert.doesNotMatch(taskContext(ledger, ledger.get(unrelated.id)!, now), /## 判断待ちへの答え/);
   const context = taskContext(ledger, task, now);
   assert.match(context, /## Goal[\s\S]*Goal[\s\S]*きっかけ: ユーザーの言葉[\s\S]*今の工程: 設計/);
   assert.match(context, /## Issue[\s\S]*Issue[\s\S]*中身: 中身[\s\S]*起こした人: Claude/);
@@ -34,5 +37,31 @@ test('task context is empty without an Issue and includes Goal, Issue, docs, and
   assert.match(context, /検査失敗（3回）/);
   assert.match(context, /要件違い（2回）/);
   assert.doesNotMatch(context, /4位|古い理由/);
+  ledger.close();
+});
+
+test('answer survives runOnce overwriting note and is hidden after the worker finishes', () => {
+  const ledger = new Ledger(':memory:');
+  const repo = '/r/app';
+  const task = ledger.add({ repo, title: 'resume', why: 'why', brief: 'handoff/resume.md' });
+  ledger.setStatus(task.id, '走行中', '作業開始');
+  ledger.setRunner(task.id, { workdir: '/tmp/existing-copy' });
+  ledger.setStatus(task.id, '判断待ち', '人の判断が必要');
+  ledger.releaseRunner(task.id);
+  ledger.setStatus(task.id, '待ち', '答え: 続ける');
+
+  const deps: RunDeps = {
+    start: () => 4242,
+    advance: () => {},
+    alive: () => true,
+    load: () => 0,
+  };
+  runOnce(ledger, deps);
+  const running = ledger.get(task.id)!;
+  assert.equal(running.note, 'ハーネスが出した');
+  assert.match(taskContext(ledger, running), /## 判断待ちへの答え\n続ける/);
+
+  ledger.setStatus(task.id, '確かめ中', '作業役が終わった');
+  assert.doesNotMatch(taskContext(ledger, ledger.get(task.id)!), /## 判断待ちへの答え/);
   ledger.close();
 });
