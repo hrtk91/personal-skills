@@ -80,7 +80,7 @@ NODE
 raw="$work/result.json"
 # Keep user HOME/auth configuration untouched. The tool allowlist permits only read operations and issue creation.
 allowed=(Read Grep Glob "Bash($TASK report *)" "Bash($TASK trace *)" "Bash($TASK issue list *)" "Bash($TASK issue add *)" 'Bash(sqlite3 -readonly *)' 'Bash(cat *)' 'Bash(ls *)')
-cat "$HERE/retro-prompt.md" "$input" | claude -p --model opus --output-format json --add-dir "$DATA" --allowedTools "${allowed[@]}" > "$raw"
+cat "$HERE/retro-prompt.md" "$input" | claude -p --model opus --output-format json --settings '{"disableAllHooks":true}' --strict-mcp-config --add-dir "$DATA" --allowedTools "${allowed[@]}" > "$raw"
 
 session=$(node -e 'const x=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); process.stdout.write(String(x.session_id??""))' "$raw")
 cost=$(node -e 'const x=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); process.stdout.write(String(x.total_cost_usd??"不明"))' "$raw")
