@@ -754,6 +754,12 @@ class HerdrContractTest(unittest.TestCase):
         log = (self.work / "herdr-contract.log").read_text()
         self.assertIn("起動前の確かめで環境の失敗（終了コード 127）", log)
 
+    def test_preflight_allows_a_not_yet_created_script_to_start_worker(self):
+        result = self.run_script(TASK_CHECK="bash tools/not-yet.sh")
+        self.assert_success(result)
+        self.assertGreaterEqual(len(self.state()["prompts"]), 1)
+        self.assertTrue(self.starts())
+
     def test_preflight_copies_an_uncommitted_handoff_doc_the_request_names(self):
         (self.repo / "handoff" / "other-notes.md").write_text("notes\n")
         (self.repo / "handoff" / "contract.md").write_text("Read `handoff/other-notes.md` and write handoff/contract-report.md\n")

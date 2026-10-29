@@ -109,8 +109,8 @@ preflight || return 1
 # 作業役を起こす前に、worktree 上で確かめを一度流して依存コマンドの欠落を検出する。
 # 実装前に不成立な通常の検査 (多くは終了 1) は続行し、command not found (127) のみ環境失敗にする。
 if [ -n "${TASK_CHECK:-}" ]; then
-  local_check_output=$(cd "$W" && bash -c "$TASK_CHECK" 2>&1); local_check_rc=$?
-  if [ "$local_check_rc" = 127 ]; then
+  local_check_output=$(cd "$W" && timeout 300 bash -c "$TASK_CHECK" 2>&1); local_check_rc=$?
+  if [ "$local_check_rc" = 127 ] && grep -qi 'command not found' <<< "$local_check_output"; then
     log "起動前の確かめで環境の失敗（終了コード 127）: $local_check_output"
     echo environment-failed > "$WORK/reviewed-$name"
     return 2

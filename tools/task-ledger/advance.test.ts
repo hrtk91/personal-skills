@@ -172,6 +172,22 @@ test('a missing command is an environment failure: no retry, no attempt consumed
   } finally { f.done(); }
 });
 
+test('a missing script with exit 127 is a worker failure, not an environment failure', () => {
+  const f = fixture({ check: 'bash tools/not-yet.sh' });
+  try {
+    const calls: string[] = [];
+    advance(f.ledger, 'repo-1', deps('', calls), 1);
+    const task = f.ledger.get('repo-1')!;
+    assert.equal(task.status, '走行中');
+    assert.equal(task.attempts, 2);
+    assert.ok(calls.includes('resend'));
+    assert.doesNotMatch(task.note ?? '', /環境の失敗/);
+    const span = f.ledger.spans('repo-1').find((item) => item.name === '確かめ')!;
+    assert.equal(span.attributes['step.exit_code'], 127);
+    assert.equal(span.attributes['failure.kind'], undefined);
+  } finally { f.done(); }
+});
+
 test('a failing check goes back to the worker with the output written into its brief', () => {
   const f = fixture({ check: 'echo 掛け算が無い; exit 1' });
   try {
