@@ -4,6 +4,8 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 TASK_DIR=$(cd "$HERE/.." && pwd)
 TASK="$TASK_DIR/bin/task"
+# The prompt says `task …`; put it on PATH so that spelling runs.
+export PATH="$TASK_DIR/bin:$PATH"
 DATA="$HOME/.local/share/task-ledger/retro"
 LAST="$DATA/last"
 LOCK="$DATA/retro.lock"
