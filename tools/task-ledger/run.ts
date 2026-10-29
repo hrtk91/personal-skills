@@ -75,7 +75,7 @@ export function runOnce(ledger: Ledger, deps: RunDeps): string[] {
     const workRoot = process.env.HERDR_WORK ?? process.env.CODEX_WORK ?? join(homedir(), '.cache', `herdr-${basename(task.repo)}`);
     const copy = task.workdir ?? join(workRoot, 'wt', name);
     // claimNext increments attempts before start; 2 means there was an earlier attempt before this launch.
-    const resume = task.attempts >= 2 && existsSync(copy) ? { RESUME: 'newtab' } : {};
+    const resume: Record<string, string> = task.attempts >= 2 && existsSync(copy) ? { RESUME: 'newtab' } : {};
     const pid = deps.start(task, name, resume);
     ledger.setRunner(task.id, { runner: pid });
     said.push(`${task.id}: 出した（${runName(task)}、PID ${pid}）`);
