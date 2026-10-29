@@ -25,6 +25,8 @@ test('task context is empty without an Issue and includes Goal, Issue, docs, and
   now = new Date('2026-10-28T12:00:00Z');
 
   assert.equal(taskContext(ledger, unrelated, now), '');
+  ledger.setStatus(unrelated.id, '判断待ち', '答え: 続行し、既存の写しを使う');
+  assert.match(taskContext(ledger, ledger.get(unrelated.id)!, now), /## 判断待ちへの答え\n続行し、既存の写しを使う/);
   const context = taskContext(ledger, task, now);
   assert.match(context, /## Goal[\s\S]*Goal[\s\S]*きっかけ: ユーザーの言葉[\s\S]*今の工程: 設計/);
   assert.match(context, /## Issue[\s\S]*Issue[\s\S]*中身: 中身[\s\S]*起こした人: Claude/);

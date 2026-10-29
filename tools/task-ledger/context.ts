@@ -3,12 +3,12 @@ import type { Ledger, Task } from './ledger.ts';
 /** Renders the optional knowledge context attached to a task's Issue/Goal. */
 // `issueBody: false` when the Issue's body is already in the brief this context is appended to.
 export function taskContext(ledger: Ledger, task: Task, now = new Date(), options: { issueBody?: boolean } = {}): string {
-  if (!task.issue_id) return '';
-  const issue = ledger.getIssue(task.issue_id);
-  if (!issue) return '';
-  const goal = issue.goal_id ? ledger.getGoal(issue.goal_id) : null;
-  if (!goal && !issue) return '';
   const lines: string[] = [];
+  if (task.note?.startsWith('答え: ')) lines.push('## 判断待ちへの答え', task.note.slice('答え: '.length));
+  if (!task.issue_id) return lines.length ? `${lines.join('\n')}\n` : '';
+  const issue = ledger.getIssue(task.issue_id);
+  if (!issue) return lines.length ? `${lines.join('\n')}\n` : '';
+  const goal = issue.goal_id ? ledger.getGoal(issue.goal_id) : null;
   if (goal) {
     lines.push('## Goal', `- ${goal.title}`, `- きっかけ: ${goal.why || '（記録なし）'}`, `- 今の工程: ${issue.stage || '（未指定）'}`);
   }
