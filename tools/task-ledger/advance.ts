@@ -84,10 +84,13 @@ export function advance(ledger: Ledger, id: string, deps: AdvanceDeps, pid = pro
       const workdir = task.workdir!;
       const base = deps.sh(`git merge-base HEAD ${quote(gitHead(task.repo, deps))}`, workdir, 60_000).output.trim();
       const diffPath = writeLog(id, `diff-${task.attempts}`, deps.sh(`git diff ${quote(base)} HEAD`, workdir, 60_000).output);
+      const changedPaths = deps.sh(`git diff --name-only ${quote(base)} HEAD`, workdir, 60_000).output.split('\n').filter(Boolean);
+      const harnessFiles = task.brief ? [task.brief, ...['-report.md', '-design.md', '-review.md'].map((suffix) => task.brief!.replace(/\.md$/, suffix))] : [];
+      const outsideFiles = outsideTaskFiles(changedPaths, [...task.files, ...harnessFiles]);
       const checkPath = logPath(id).replace(/\.log$/, `-check-${task.attempts}.log`);
-      const reply = timed(ledger, task, 'レビュー', () => deps.review(reviewPrompt(task, diffPath, checkPath), workdir, [dirname(diffPath)]), (got) => {
+      const reply = timed(ledger, task, 'レビュー', () => deps.review(reviewPrompt(task, diffPath, checkPath, outsideFiles), workdir, [dirname(diffPath)]), (got) => {
         const found = parseVerdict(typeof got === 'string' ? got : got.answer);
-        return { ok: found !== null, attributes: { ...(typeof got === 'string' ? {} : got.attributes), 'review.verdict': found?.verdict ?? '読めない' } };
+        return { ok: found !== null, attributes: { ...(typeof got === 'string' ? {} : got.attributes), ...(outsideFiles.length ? { 'diff.outside_files': JSON.stringify(outsideFiles) } : {}), 'review.verdict': found?.verdict ?? '読めない' } };
       });
       const answer = typeof reply === 'string' ? reply : reply.answer;
       const reviewSession = typeof reply === 'string' ? undefined : reply.attributes?.['review.session_id'];
@@ -371,10 +374,19 @@ function sendBack(ledger: Ledger, task: Task, deps: AdvanceDeps, reason: string,
   }
 }
 
-export function reviewPrompt(task: Task, diffPath: string, checkPath: string): string {
+export function outsideTaskFiles(changedPaths: string[], files: string[]): string[] {
+  return changedPaths.filter((changed) => !files.some((allowed) => {
+    const file = allowed.replaceAll('\\', '/').replace(/\/$/, '');
+    const path = changed.replaceAll('\\', '/');
+    return path === file || path.startsWith(`${file}/`);
+  }));
+}
+
+export function reviewPrompt(task: Task, diffPath: string, checkPath: string, outsideFiles: string[] = []): string {
   const read = (path: string) => (existsSync(path) ? readFileSync(path, 'utf8') : '（無い）');
   const report = task.brief!.replace(/\.md$/, '-report.md');
-  return `${read(join(HERE, 'review-prompt.md'))}
+  const outsideNotice = outsideFiles.length ? `触るファイルの外の変更: ${outsideFiles.join('、')}（作業役の報告と照らすこと）\n\n` : '';
+  return `${outsideNotice}${read(join(HERE, 'review-prompt.md'))}
 ## この仕事
 - 題: ${task.title}
 - なぜ: ${task.why}
