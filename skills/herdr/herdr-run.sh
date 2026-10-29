@@ -429,7 +429,7 @@ rules_read=""; for f in $RULES $CONTEXT_FILES $DESIGN_RULES; do [ -f "$W/$f" ] &
 design_instruction="10 行程度: 触るファイル・やり方・既存とかぶる所。最後に 1 行「結論: 続行」か「結論: STOP（理由）」。STOP は先に組み直さないと依頼が成り立たないときだけ。STOP ならそこで終える"
 [ -z "$DESIGN_RULES" ] || design_instruction="$DESIGN_RULES の手順と結論の書式に従う。結論が STOP なら実装せずそこで終える"
 if [ "${SKIP_IMPL:-}" != 1 ]; then
-  run_agent "$IMPL_AGENT" "impl-$short" "$p_impl" "$REQ${rules_read} を読み、まず設計の下見を $DESIGN に書いてから（$design_instruction）、その依頼どおりに作業し、報告を $REPORT に書いてください（結論 3 行／変えたファイル／流したテストと出力／確かめたことと推測／残った問題）。作業場所はこの写し（$W）だけ。$REPO 本体には一切書き込まない。自分ではコミットしない。"
+  run_agent "$IMPL_AGENT" "impl-$short" "$p_impl" "$REQ${rules_read} を読み、まず設計の下見を $DESIGN に書いてから（$design_instruction）、その依頼どおりに作業し、報告を $REPORT に書いてください（結論 3 行／変えたファイル／流したテストと出力／確かめたことと推測／残った問題）。報告の先頭近くに必ず機械可読な 1 行「終わりの条件: 満たした」または「終わりの条件: 満たしていない — <満たしていない条件を依頼文の書き方で、；で区切る>」を書く。決められない理由がある場合は「終わりの条件: 満たしていない — 決められない: <理由>」とする。作業場所はこの写し（$W）だけ。$REPO 本体には一切書き込まない。自分ではコミットしない。"
   rc=$?
   if [ "$rc" != 0 ]; then
     make_patch || log "パッチを作れなかった"

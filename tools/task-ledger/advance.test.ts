@@ -44,6 +44,50 @@ function deps(answer: string, calls: string[] = []): AdvanceDeps {
   };
 }
 
+test('a report that says conditions are unmet returns to the worker without starting review', () => {
+  const f = fixture();
+  try {
+    writeFileSync(join(f.workdir, 'handoff/t-report.md'), '結論\n\n終わりの条件: 満たしていない — 偽物の claude を起動する；検査を通す\n');
+    const calls: string[] = [];
+    const said = advance(f.ledger, 'repo-1', deps('', calls), 1);
+    const task = f.ledger.get('repo-1')!;
+    assert.equal(task.status, '走行中');
+    assert.equal(task.attempts, 2);
+    assert.equal(task.runner, 777);
+    assert.ok(calls.includes('resend'));
+    assert.ok(!calls.some((call) => call.startsWith('review:')));
+    assert.match(readFileSync(join(f.workdir, 'handoff/t.md'), 'utf8'), /作業役の報告が、終わりの条件を満たしていないと書いている/);
+    assert.match(readFileSync(join(f.workdir, 'handoff/t.md'), 'utf8'), /偽物の claude を起動する；検査を通す/);
+    assert.ok(f.ledger.spans('repo-1').some((span) => span.name === '報告を見る' && span.attributes['report.status'] === '未完了'));
+    assert.match(said.join('\n'), /差し戻した/);
+  } finally { f.done(); }
+});
+
+test('a report that cannot decide why conditions are unmet waits for a decision, without review or resend', () => {
+  const f = fixture();
+  try {
+    writeFileSync(join(f.workdir, 'handoff/t-report.md'), '終わりの条件: 満たしていない — 決められない: 外部サービスの権限が必要\n');
+    const calls: string[] = [];
+    advance(f.ledger, 'repo-1', deps('', calls), 1);
+    assert.equal(f.ledger.get('repo-1')!.status, '判断待ち');
+    assert.match(f.ledger.get('repo-1')!.note!, /外部サービスの権限が必要/);
+    assert.ok(!calls.includes('resend'));
+    assert.ok(!calls.some((call) => call.startsWith('review:')));
+  } finally { f.done(); }
+});
+
+test('a report that says conditions are met proceeds to review', () => {
+  const f = fixture();
+  try {
+    writeFileSync(join(f.workdir, 'handoff/t-report.md'), '終わりの条件: 満たした\n');
+    const calls: string[] = [];
+    advance(f.ledger, 'repo-1', deps('{"verdict":"判断","reasons":[],"fixes":[]}', calls), 1);
+    assert.ok(calls.some((call) => call.startsWith('review:')));
+    assert.equal(f.ledger.get('repo-1')!.status, '判断待ち');
+    assert.ok(f.ledger.spans('repo-1').some((span) => span.name === '報告を見る' && span.attributes['report.status'] === '満たした'));
+  } finally { f.done(); }
+});
+
 test('checked and approved work is merged with the task mark and the worktree is cleaned up', () => {
   const f = fixture();
   try {

@@ -66,6 +66,20 @@ export function advance(ledger: Ledger, id: string, deps: AdvanceDeps, pid = pro
       if (check.code !== 0) { sendBack(ledger, task, deps, `確かめのコマンド \`${task.check}\` が落ちた（終了コード ${check.code}）。`, tail(check.output), said, stop); return said; }
       ledger.setStatus(id, 'レビュー中', `確かめが通った。出力: ${path}`);
       said.push(`${id}: 確かめが通った`);
+      const reportPath = join(task.workdir!, task.brief!.replace(/\.md$/, '-report.md'));
+      const reportCheck = timed(ledger, task, '報告を見る', () => {
+        try { return readFileSync(reportPath, 'utf8'); } catch { return null; }
+      }, (text) => ({ ok: text !== null, attributes: { 'report.status': text === null ? '読めない' : classifyCompletion(text).kind } }));
+      if (reportCheck !== null) {
+        const completion = classifyCompletion(reportCheck);
+        if (completion.kind === '未完了' && completion.line) {
+          const reason = `作業役の報告が、終わりの条件を満たしていないと書いている: ${completion.line}`;
+          if (completion.undecidable !== null) return stop(`作業役が終わりの条件を満たせない理由を決められない: ${completion.undecidable}`);
+          sendBack(ledger, task, deps, reason,
+            `依頼文の「やってよいこと」に入っている手でそれを満たしてから、報告を書き直す。満たせない理由が作業役では決められないことなら、その理由を報告に書いて「終わりの条件: 満たしていない — 決められない: <理由>」と書く。`, said, stop);
+          return said;
+        }
+      }
     } else if (task.status === 'レビュー中') {
       const workdir = task.workdir!;
       const base = deps.sh(`git merge-base HEAD ${quote(gitHead(task.repo, deps))}`, workdir, 60_000).output.trim();
@@ -305,6 +319,14 @@ function checkTwice(ledger: Ledger, task: Task, said: string[], command: () => S
   const second = run(2);
   if (second.code === 0) said.push(`${task.id}: 確かめは 1 回目に落ち、流し直して通った（1 回目: ${firstLog}）`);
   return second.code === 0 ? { code: 0, output: `${second.output}\n\n[1 回目は落ちた（終了コード ${first.code}）: ${firstLog}]` } : second;
+}
+
+function classifyCompletion(text: string): { kind: '満たした' | '未完了' | '行なし'; line: string | null; undecidable: string | null } {
+  const line = text.split(/\r?\n/).find((item) => /^終わりの条件:/.test(item)) ?? null;
+  if (!line) return { kind: '行なし', line: null, undecidable: null };
+  if (!/^終わりの条件: *満たしていない/.test(line)) return { kind: '満たした', line, undecidable: null };
+  const undecidable = line.match(/決められない:\s*(.*)$/)?.[1]?.trim() ?? null;
+  return { kind: '未完了', line, undecidable };
 }
 
 /** Runs one harness step and records it in the task's trace (handoff/task-ledger-trace-design.md). */
