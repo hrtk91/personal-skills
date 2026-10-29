@@ -127,12 +127,13 @@ test('only a previously attempted task with an existing copy gets RESUME=newtab'
 test('a run started from inside a resent worker does not inherit its run-only settings', () => {
   const saved = { ...process.env };
   try {
-    Object.assign(process.env, { RESUME: 'newtab', SKIP_IMPL: '1', HERDR_RUN_SELF: '/x', TASK_ID: 'old-1', PI_MODEL: 'custom' });
+    Object.assign(process.env, { RESUME: 'newtab', SKIP_IMPL: '1', HERDR_RUN_SELF: '/x', TASK_ID: 'old-1', TASK_CHECK: 'npm test', PI_MODEL: 'custom' });
     const env = workerEnv({ TASK_ID: 'new-2', REPO: '/r' });
     assert.equal(env.RESUME, undefined);
     assert.equal(env.SKIP_IMPL, undefined);
     assert.equal(env.HERDR_RUN_SELF, undefined);
     assert.equal(env.TASK_ID, 'new-2');
+    assert.equal(env.TASK_CHECK, undefined);
     assert.equal(env.PI_MODEL, 'custom');
     assert.equal(env.HERDR_ENV, '1');
     assert.equal(workerEnv({ RESUME: 'newtab' }).RESUME, 'newtab');

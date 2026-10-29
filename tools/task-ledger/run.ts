@@ -16,7 +16,7 @@ export const BUSY = Number(process.env.TASK_BUSY ?? 0.8);
 
 // Settings that belong to one run of herdr-run.sh. A pass that runs inside a worker's run (its `task ended` starts the
 // next task) must not hand them on: RESUME=newtab from a resend made a fresh task look for a copy it never had (10/28).
-const RUN_ONLY = ['RESUME', 'SKIP_IMPL', 'BASE', 'COMMIT_DIRTY', 'HERDR_RUN_SELF', 'TASK_ID'];
+const RUN_ONLY = ['RESUME', 'SKIP_IMPL', 'BASE', 'COMMIT_DIRTY', 'HERDR_RUN_SELF', 'TASK_ID', 'TASK_CHECK'];
 
 /** The environment for herdr-run.sh; per-task settings override inherited settings while absent values keep today's defaults. */
 export function workerEnv(extra: Record<string, string>, task?: Pick<Task, 'worker' | 'model' | 'effort'>): NodeJS.ProcessEnv {
@@ -99,7 +99,7 @@ export const realDeps: RunDeps = {
     try {
       const child = spawn('bash', [HERDR_RUN, name], {
         cwd: task.repo, detached: true, stdio: ['ignore', out, out],
-        env: workerEnv({ HERDR_WORKSPACE_ID: workspace, REPO: task.repo, TASK_ID: task.id, ...(task.issue_id && task.brief === `handoff/${task.issue_id}.md` ? { TASK_ISSUE_ID: task.issue_id } : {}), ...extraEnv }, task),
+        env: workerEnv({ HERDR_WORKSPACE_ID: workspace, REPO: task.repo, TASK_ID: task.id, ...(task.check ? { TASK_CHECK: task.check } : {}), ...(task.issue_id && task.brief === `handoff/${task.issue_id}.md` ? { TASK_ISSUE_ID: task.issue_id } : {}), ...extraEnv }, task),
       });
       if (!child.pid) throw new Error('herdr-run.sh を起動できなかった');
       child.unref();
