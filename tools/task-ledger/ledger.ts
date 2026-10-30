@@ -47,6 +47,7 @@ export function defaultPath(): string {
 }
 
 function spawnDecisionRefresh(id: string, ledgerPath: string): void {
+  if (process.env.NODE_TEST_CONTEXT && !process.env.TASK_BIN) return;
   const command = process.env.TASK_BIN || join(import.meta.dirname, 'bin/task');
   const reportFailure = (error: unknown) => {
     const reason = error instanceof Error ? error.message : String(error);

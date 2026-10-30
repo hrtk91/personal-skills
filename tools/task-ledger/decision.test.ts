@@ -53,12 +53,12 @@ test('TASK_BIN is used from a relocated ledger bundle, and a missing command rep
  } finally {ledger.close();if(oldBin===undefined)delete process.env.TASK_BIN;else process.env.TASK_BIN=oldBin;rmSync(dir,{recursive:true,force:true});}
 });
 
-test('refresh child receives the open temporary ledger path when TASK_BIN is unset',async()=>{
+test('explicit TASK_BIN refresh child receives the open temporary ledger path',async()=>{
  const dir=mkdtempSync(join(tmpdir(),'decision-ledger-env-')),db=join(dir,'ledger.sqlite'),oldBin=process.env.TASK_BIN,oldDb=process.env.TASK_LEDGER_DB,oldClaude=process.env.TASK_CLAUDE_BIN;
  const received=join(dir,'received-ledger');const claude=join(dir,'claude');writeFileSync(claude,`#!/bin/sh\nprintf '%s' "$TASK_LEDGER_DB" > '${received}'\ncat '${join(dir,'response')}'\n`);chmodSync(claude,0o755);writeFileSync(join(dir,'response'),good);
  const ledger=new Ledger(db);
  try {
-  delete process.env.TASK_BIN;process.env.TASK_LEDGER_DB=join(dir,'wrong-parent-default.sqlite');process.env.TASK_CLAUDE_BIN=claude;
+  process.env.TASK_BIN=join(import.meta.dirname,'bin/task');process.env.TASK_LEDGER_DB=join(dir,'wrong-parent-default.sqlite');process.env.TASK_CLAUDE_BIN=claude;
   const task=ledger.add({repo:dir,title:'isolated ledger',why:'verify child ledger propagation',brief:'brief.md'});
   ledger.setStatus(task.id,'判断待ち','blocked');
   let card=null;
@@ -69,6 +69,16 @@ test('refresh child receives the open temporary ledger path when TASK_BIN is uns
   assert.equal(readFileSync(received,'utf8'),db);
   assert.equal(ledger.decisionCard(task.id,ledger.events(task.id).at(-1)!.at)?.json.situation,'目的と停止状況。');
  } finally {ledger.close();if(oldBin===undefined)delete process.env.TASK_BIN;else process.env.TASK_BIN=oldBin;if(oldDb===undefined)delete process.env.TASK_LEDGER_DB;else process.env.TASK_LEDGER_DB=oldDb;if(oldClaude===undefined)delete process.env.TASK_CLAUDE_BIN;else process.env.TASK_CLAUDE_BIN=oldClaude;rmSync(dir,{recursive:true,force:true});}
+});
+
+test('NODE_TEST_CONTEXT never starts the default task child when TASK_BIN is unset',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'decision-test-safe-')),bundle=join(dir,'bundle'),binDir=join(bundle,'bin'),marker=join(dir,'spawned');mkdirSync(binDir,{recursive:true});
+ copyFileSync(new URL('./ledger.ts',import.meta.url),join(bundle,'ledger.ts'));
+ mkdirSync(join(bundle,'decision'),{recursive:true});copyFileSync(new URL('./decision/index.ts',import.meta.url),join(bundle,'decision/index.ts'));
+ const fake=join(binDir,'task');writeFileSync(fake,`#!/bin/sh\nprintf spawned > '${marker}'\n`);chmodSync(fake,0o755);
+ const script=`process.env.NODE_TEST_CONTEXT='test';delete process.env.TASK_BIN;const {Ledger}=await import(${JSON.stringify(pathToFileURL(join(bundle,'ledger.ts')).href)});const l=new Ledger(${JSON.stringify(join(dir,'db.sqlite'))});const t=l.add({repo:'/tmp',title:'safe test',why:'no default child',brief:'x'});l.setStatus(t.id,'判断待ち','blocked');await new Promise(r=>setTimeout(r,150));l.close();`;
+ try {const result=spawnSync(process.execPath,['--experimental-strip-types','--no-warnings','--input-type=module','-e',script],{encoding:'utf8'});assert.equal(result.status,0,result.stderr);assert.equal(existsSync(marker),false);}
+ finally {rmSync(dir,{recursive:true,force:true});}
 });
 
 test('an in-memory ledger never starts a decision refresh child',async()=>{
