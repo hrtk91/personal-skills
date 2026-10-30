@@ -1,8 +1,8 @@
 // One pass of the harness: notice runs that died without reporting, then start the next task that may start.
 // herdr-run.sh reports its own start and end to the ledger (`task started` / `task ended`), so a pass only has
 // to start work and to catch the runs that vanished in between. Design: handoff/task-ledger-design.md
-import { spawn } from 'node:child_process';
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { cpus, homedir } from 'node:os';
 import { basename, dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -76,6 +76,9 @@ export function runOnce(ledger: Ledger, deps: RunDeps): string[] {
     const copy = task.workdir ?? join(workRoot, 'wt', name);
     // claimNext increments attempts before start; 2 means there was an earlier attempt before this launch.
     const resume: Record<string, string> = task.attempts >= 2 && existsSync(copy) ? { RESUME: 'newtab' } : {};
+    // A task returned to 待ち after an earlier run starts from a clean copy. Retries within
+    // the same attempt still use RESUME=newtab and retain their existing worktree.
+    if (task.attempts === 1 && (existsSync(copy) || existsSync(join(workRoot, `reviewed-${name}`)) || existsSync(join(workRoot, `patch-${name}.diff`)))) cleanupPreviousRun(task, name, copy, workRoot);
     const pid = deps.start(task, name, resume);
     ledger.setRunner(task.id, { runner: pid });
     said.push(`${task.id}: 出した（${runName(task)}、PID ${pid}）`);
@@ -84,6 +87,27 @@ export function runOnce(ledger: Ledger, deps: RunDeps): string[] {
     said.push(`${task.id}: 出せなかったので判断待ち`);
   }
   return said;
+}
+
+function cleanupPreviousRun(task: Task, name: string, copy: string, workRoot: string): void {
+  if (existsSync(copy)) {
+    const dirty = spawnSync('git', ['-C', copy, 'diff', '--binary', 'HEAD'], { encoding: 'buffer' });
+    if (dirty.error) throw dirty.error;
+    if (dirty.status !== 0 && dirty.status !== 1) throw new Error(`前回 worktree の diff を取得できない: ${dirty.stderr?.toString() ?? ''}`);
+    if (dirty.stdout.length > 0) {
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    let patch = join(workRoot, `patch-${name}-prev-${stamp}.diff`);
+    let suffix = 1;
+    while (existsSync(patch)) patch = join(workRoot, `patch-${name}-prev-${stamp}-${suffix++}.diff`);
+      writeFileSync(patch, dirty.stdout);
+    }
+    const removed = spawnSync('git', ['-C', task.repo, 'worktree', 'remove', '--force', copy], { encoding: 'utf8' });
+    if (removed.status !== 0) throw new Error(`前回 worktree を片付けられない: ${removed.stderr}`);
+  }
+  const branch = spawnSync('git', ['-C', task.repo, 'branch', '-D', `herdr/${name}`], { encoding: 'utf8' });
+  if (branch.status !== 0 && !branch.stderr.includes('not found')) throw new Error(`前回ブランチを片付けられない: ${branch.stderr}`);
+  rmSync(join(workRoot, `reviewed-${name}`), { force: true });
+  rmSync(join(workRoot, `patch-${name}.diff`), { force: true });
 }
 
 export function logPath(id: string): string {

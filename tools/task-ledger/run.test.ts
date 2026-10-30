@@ -3,7 +3,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Ledger } from './ledger.ts';
 import { runOnce, workerEnv, type RunDeps } from './run.ts';
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -136,6 +137,55 @@ test('only a previously attempted task with an existing copy gets RESUME=newtab'
     assert.deepEqual(observed, [['r-1', { RESUME: 'newtab' }], ['s-1', {}]]);
     assert.equal(ledger.get('r-1')!.status, '走行中');
   } finally { ledger.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('reissuing a waiting task removes its old worktree and markers while preserving a dirty diff', () => {
+  const root = mkdtempSync(join(tmpdir(), 'task-ledger-requeue-'));
+  const repo = join(root, 'repo'); const workRoot = join(root, 'work'); const copy = join(workRoot, 'wt', 'requeue');
+  mkdirSync(repo); mkdirSync(join(workRoot, 'wt'), { recursive: true });
+  const git = (...args: string[]) => execFileSync('git', ['-C', repo, ...args], { stdio: 'ignore' });
+  const ledger = new Ledger(':memory:'); const oldHerdrWork = process.env.HERDR_WORK; process.env.HERDR_WORK = workRoot;
+  try {
+    git('init', '-q'); git('config', 'user.name', 'Test'); git('config', 'user.email', 'test@example.invalid');
+    writeFileSync(join(repo, 'tracked.txt'), 'original\n'); git('add', 'tracked.txt'); git('commit', '-qm', 'base');
+    git('worktree', 'add', '-qb', 'herdr/requeue', copy, 'HEAD');
+    writeFileSync(join(copy, 'tracked.txt'), 'changed\n');
+    writeFileSync(join(workRoot, 'reviewed-requeue'), 'stopped');
+    writeFileSync(join(workRoot, 'patch-requeue.diff'), 'old patch');
+    const taskId = ledger.add({ repo, title: 'requeue', why: 'w', brief: 'handoff/requeue.md' }).id;
+    ledger.setStatus(taskId, '走行中', null, { attempts: 1 });
+    ledger.setRunner(taskId, { workdir: copy });
+    ledger.setStatus(taskId, '判断待ち', 'stopped', { attempts: 0 }); ledger.releaseRunner(taskId);
+    ledger.setStatus(taskId, '待ち', '再出し');
+    let recreated = false;
+    const deps = fake({ start: (task, name, env) => {
+      assert.equal(task.attempts, 1); assert.deepEqual(env, {});
+      assert.equal(existsSync(copy), false);
+      assert.equal(existsSync(join(workRoot, 'reviewed-requeue')), false);
+      assert.equal(existsSync(join(workRoot, 'patch-requeue.diff')), false);
+      const saved = readdirSync(workRoot).find((file) => /^patch-requeue-prev-.*\.diff$/.test(file));
+      assert.ok(saved); assert.match(readFileSync(join(workRoot, saved), 'utf8'), /changed/);
+      execFileSync('git', ['-C', repo, 'worktree', 'add', '-qb', `herdr/${name}`, copy, 'HEAD']);
+      recreated = true; return 4242;
+    } }).deps;
+    runOnce(ledger, deps);
+    assert.equal(recreated, true, ledger.get(taskId)?.note ?? 'start was not called'); assert.equal(existsSync(copy), true);
+  } finally { ledger.close(); if (oldHerdrWork === undefined) delete process.env.HERDR_WORK; else process.env.HERDR_WORK = oldHerdrWork; rmSync(root, { recursive: true, force: true }); }
+});
+
+test('same-attempt resend keeps the existing worktree and uses RESUME=newtab', () => {
+  const root = mkdtempSync(join(tmpdir(), 'task-ledger-resume-existing-'));
+  const repo = join(root, 'repo'); const copy = join(root, 'copy'); mkdirSync(repo);
+  execFileSync('git', ['-C', repo, 'init', '-q']);
+  const ledger = new Ledger(':memory:');
+  try {
+    mkdirSync(copy); const taskId = ledger.add({ repo, title: 'retry', why: 'w', brief: 'handoff/retry.md' }).id;
+    ledger.setStatus(taskId, '走行中', null, { attempts: 2 }); ledger.setRunner(taskId, { workdir: copy });
+    ledger.setStatus(taskId, '判断待ち', 'stopped'); ledger.releaseRunner(taskId); ledger.setStatus(taskId, '待ち', '再開');
+    let env: Record<string, string> | undefined;
+    runOnce(ledger, fake({ start: (_task, _name, extra) => { env = extra; return 4242; } }).deps);
+    assert.deepEqual(env, { RESUME: 'newtab' }); assert.equal(existsSync(copy), true);
+  } finally { ledger.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
 test('a run started from inside a resent worker does not inherit its run-only settings', () => {
