@@ -22,7 +22,12 @@ test('watch push and push-audit cover recipients, excluded transitions, Claude n
     l.setStatus(b.id,'判断待ち','other repo');assert.equal(readFileSync(log,'utf8').trim().split('\n').length,4);
     const claude=l.add({repo:'/repo/a',title:'self',why:'why',brief:'brief'});l.setStatus(claude.id,'判断待ち','Claude: self');assert.equal(readFileSync(log,'utf8').trim().split('\n').length,4);
     const noWatch=l.add({repo:'/repo/no',title:'none',why:'why',brief:'brief'});l.setStatus(noWatch.id,'判断待ち','no watcher');
+    // Simulate a task-run process predating push support: status event exists, but no push_log row.
+    const legacy=l.add({repo:'/repo/no',title:'legacy done',why:'why',brief:'brief'}),legacyAt='2026-10-30T14:56:08.790Z';
+    l.db.prepare('UPDATE tasks SET status=? WHERE id=?').run('済',legacy.id);
+    l.db.prepare('INSERT INTO events(task_id,at,from_status,to_status,note,kind) VALUES(?,?,?,?,?,NULL)').run(legacy.id,legacyAt,'取り込み中','済','legacy process');
     let auditOutput='';const auditCode=main(['push-audit'],s=>auditOutput+=s+'\\n');assert.equal(auditCode,0,auditOutput+'\\n'+readFileSync(log,'utf8'));
+    assert.match(auditOutput,new RegExp(`${legacy.id} 済: 判定できない（送信記録なし・旧プロセス等）`));
     // Simulate a dropped channel write: audit must flag the event and return 1.
     const rows=readFileSync(log,'utf8').trim().split('\n');writeFileSync(log,rows.slice(1).join('\n')+'\n');
     let output='';assert.equal(main(['push-audit'],s=>output+=s+'\n'),1);assert.match(output,/抜けた/);

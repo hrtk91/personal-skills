@@ -132,6 +132,12 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
           const logged=ledger.db.prepare('SELECT outcome,detail FROM push_log WHERE task_id=? AND at=?').get(e.task_id,e.at) as {outcome:string;detail:string}|undefined;
           if(logged?.outcome==='unwatched'){out(`${e.task_id} ${e.to_status}: 送っていない（受け持ちなし）`);continue;}
           const match=rows.find(r=>r.kind==='post'&&typeof r.body==='string'&&r.body.includes(`[event:${e.at}]`)&&r.body.startsWith(`${e.task_id} ${e.to_status}:`));
+          if(!logged){
+            if(match){out(`${e.task_id} ${e.to_status}: 届いた（送信記録なし）`);continue;}
+            // Older task-run processes may have changed status without the push code.
+            // With no push_log row, the audit cannot distinguish that from a lost push.
+            out(`${e.task_id} ${e.to_status}: 判定できない（送信記録なし・旧プロセス等）`);continue;
+          }
           if(!match){out(`${e.task_id} ${e.to_status}: 抜けた`);missing++;continue;}
           const delay=Math.max(0,(Date.parse(match.at??match.timestamp??e.at)-Date.parse(e.at))/1000);maxDelay=Math.max(maxDelay,delay);out(`${e.task_id} ${e.to_status}: 届いた（遅れ ${delay.toFixed(3)} 秒）`);if(delay>30){out(`${e.task_id}: 遅れすぎ`);failed++;}
         }
