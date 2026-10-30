@@ -1,0 +1,8 @@
+{
+  "name": "task-ledger",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --experimental-strip-types --test --test-concurrency=1 *.test.ts"
+  }
+}
