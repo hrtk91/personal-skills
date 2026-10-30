@@ -85,11 +85,12 @@ export interface GoalRow {
 
 export interface ClaudeUsageSummary {
   pending?: true;
+  error?: string;
   now?: { sevenDay: { percent: number | null; resetsAt: string | null }; fiveHour: { percent: number | null; resetsAt: string | null } };
-  pace?: { perHour: number | null; exhaustAt: string | null; since: string | null };
+  pace?: { perHour: number | null; exhaustAt: string | null; since: string | null; hours: number | null };
   capacity?: Record<"sevenDay" | "fiveHour", { perPercent: number | null; median: number | null; low: number | null; high: number | null; intervals: number }>;
-  today?: { caller: string; reason: string | null; weighted: number }[];
-  week?: { caller: string; reason: string | null; weighted: number }[];
+  today?: { byCaller: { caller: string; weighted: number }[]; byCallerReason: { caller: string; reason: string | null; weighted: number }[] };
+  week?: { byCaller: { caller: string; weighted: number }[]; byCallerReason: { caller: string; reason: string | null; weighted: number }[] };
   days?: { day: string; caller: string; weighted: number }[];
   readMs?: number;
 }

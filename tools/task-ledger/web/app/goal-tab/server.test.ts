@@ -5,7 +5,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Ledger } from '../../../ledger.ts';
-import { loadGoalData,submitIntent } from './server.ts';
+import { claudeUsageLoadingForTest, claudeUsageReadCountForTest, expireClaudeUsageCacheForTest, loadGoalData, resetClaudeUsageForTest, submitIntent } from './server.ts';
 
 function setupClaudeUsageEnv(prefix:string) {
  const dir=mkdtempSync(join(tmpdir(),prefix));
@@ -16,8 +16,14 @@ function setupClaudeUsageEnv(prefix:string) {
 }
 
 test('loader emits decisions, ready queue, goal stages and recent rows; actions mutate a temporary ledger',async()=>{
- const dir=setupClaudeUsageEnv('goal-tab-');const l=new Ledger(join(dir,'db.sqlite'));
+ const dir=setupClaudeUsageEnv('goal-tab-');const l=new Ledger(join(dir,'db.sqlite'));resetClaudeUsageForTest();
  try {
+  const projectDir=join(process.env.CLAUDE_PROJECTS_DIR!,'large');mkdirSync(projectDir,{recursive:true});
+  const transcript=join(projectDir,'large.jsonl'), timestamp=new Date().toISOString();
+  const lines=Array.from({length:12000},(_,i)=>JSON.stringify({type:'assistant',timestamp,requestId:`req-${i}`,cwd:'/tmp/example-project',entrypoint:'cli',message:{id:`msg-${i}`,model:'claude-sonnet',usage:{input_tokens:100,cache_read_input_tokens:10,cache_creation_input_tokens:5,output_tokens:20}}}));
+  writeFileSync(transcript,lines.join('\n')+'\n');
+  const usageDir=process.env.CLAUDE_USAGE_DIR!;mkdirSync(usageDir,{recursive:true});const observed=new Date(), reset=Math.floor((observed.getTime()+86400000)/1000);
+  writeFileSync(join(usageDir,'limits.jsonl'),[{at:new Date(observed.getTime()-7200000).toISOString(),seven_day:20,seven_day_resets_at:reset,five_hour:30,five_hour_resets_at:reset},{at:observed.toISOString(),seven_day:30,five_hour:40,seven_day_resets_at:reset,five_hour_resets_at:reset}].map(x=>JSON.stringify(x)).join('\n')+'\n');
   const repo='/tmp/example-project';const goal=l.addGoal({repo,title:'Ship it',stages:['Build','Ship']});
   const issue=l.addIssue({repo,title:'Build thing',goal_id:goal.id,stage:'Build',by:'Claude'});
   const decision=l.add({repo,title:'Need decision',why:'test',brief:'brief',issue_id:issue.id});l.setStatus(decision.id,'判断待ち','Need approval');
@@ -28,13 +34,16 @@ test('loader emits decisions, ready queue, goal stages and recent rows; actions 
   const first=loadGoalData(l,repo,new Date(Date.now()+1000));
   const concurrent=loadGoalData(l,repo,new Date(Date.now()+1000));
   assert.deepEqual(first.claudeUsage,{pending:true});assert.deepEqual(concurrent.claudeUsage,{pending:true});
+  let timerFired=false;await new Promise<void>(resolve=>setTimeout(()=>{timerFired=true;resolve();},0));assert.equal(timerFired,true);assert.equal(claudeUsageReadCountForTest(),1);
   let data=first;
   for(let i=0;i<100&&data.claudeUsage.pending;i++){await new Promise(resolve=>setTimeout(resolve,10));data=loadGoalData(l,repo,new Date(Date.now()+1000));}
   assert.equal(data.claudeUsage.pending,undefined);
-  assert.ok((data.claudeUsage.readMs??-1)>=0);
+  assert.ok((data.claudeUsage.readMs??-1)>=0);assert.equal(claudeUsageReadCountForTest(),1);
+  assert.equal(data.claudeUsage.pace?.hours,2);assert.equal(data.claudeUsage.today?.byCaller.length,1);assert.equal(data.claudeUsage.today?.byCallerReason.length,1);assert.equal(data.claudeUsage.week?.byCaller.length,1);assert.equal(data.claudeUsage.week?.byCallerReason.length,1);
   const usageJson=JSON.stringify(data.claudeUsage);
   assert.equal(usageJson.includes('events'),false);assert.ok(Buffer.byteLength(usageJson)<50*1024);
   assert.deepEqual(loadGoalData(l,repo,new Date(Date.now()+1000)).claudeUsage,data.claudeUsage);
+  expireClaudeUsageCacheForTest();assert.deepEqual(loadGoalData(l,repo,new Date(Date.now()+1000)).claudeUsage,data.claudeUsage);assert.equal(claudeUsageReadCountForTest(),2);for(let i=0;i<100&&claudeUsageLoadingForTest();i++)await new Promise(resolve=>setTimeout(resolve,10));assert.equal(claudeUsageLoadingForTest(),false);
   assert.equal(data.decisions[0].question,'背景と停止理由。');assert.equal(data.decisions[0].situation,'背景と停止理由。');assert.equal(data.decisions[0].options?.[0].to,'待ち');assert.equal(data.decisions[0].options?.[0].answer,'続ける');assert.equal(data.queue[0].id,run.id);assert(data.queue.some(q=>q.id===ready.id&&q.movable));
   assert.equal(data.goals[0].stages[0].state,'stuck');assert(data.recent.some(r=>r.id===done.id));
   submitIntent(l,repo,{intent:'answer',taskId:decision.id,text:'approve'});assert.equal(l.get(decision.id)?.status,'待ち');
@@ -44,6 +53,22 @@ test('loader emits decisions, ready queue, goal stages and recent rows; actions 
   assert.throws(()=>submitIntent(l,repo,{intent:'move-task',taskId:run.id,move:'up'}), (e:any)=>e.status===400);
   submitIntent(l,repo,{intent:'move-goal',goalId:goal.id,move:'up'});
   submitIntent(l,repo,{intent:'create-goal',title:'New goal',why:'why'});assert.equal(l.listGoals(repo).length,2);
+ } finally {l.close();rmSync(dir,{recursive:true,force:true});delete process.env.CLAUDE_PROJECTS_DIR;delete process.env.CLAUDE_USAGE_DIR;}
+});
+
+test('usage scan errors are reported and returned instead of remaining pending',async()=>{
+ const dir=setupClaudeUsageEnv('goal-tab-error-');const l=new Ledger(join(dir,'db.sqlite'));resetClaudeUsageForTest();
+ try {
+  const repo='/tmp/usage-error';l.add({repo,title:'error target',why:'test',brief:'test'});
+  const blocker=join(dir,'usage-blocker');writeFileSync(blocker,'not a directory');process.env.CLAUDE_USAGE_DIR=blocker;
+  mkdirSync(join(process.env.CLAUDE_PROJECTS_DIR!,'p'),{recursive:true});writeFileSync(join(process.env.CLAUDE_PROJECTS_DIR!,'p','one.jsonl'),JSON.stringify({type:'assistant',timestamp:new Date().toISOString(),requestId:'failure',message:{usage:{input_tokens:1}}})+'\n');
+  const oldError=console.error;let logged=false;console.error=()=>{logged=true;};
+  try {
+   loadGoalData(l,repo);
+   let result=loadGoalData(l,repo).claudeUsage;
+   for(let i=0;i<100&&result.pending;i++){await new Promise(resolve=>setTimeout(resolve,10));result=loadGoalData(l,repo).claudeUsage;}
+   assert.equal(typeof result.error,'string');assert.equal(result.pending,undefined);assert.equal(logged,true);assert.equal(claudeUsageReadCountForTest(),1);
+  } finally {console.error=oldError;}
  } finally {l.close();rmSync(dir,{recursive:true,force:true});delete process.env.CLAUDE_PROJECTS_DIR;delete process.env.CLAUDE_USAGE_DIR;}
 });
 

@@ -1,48 +1,63 @@
 import { existsSync, readdirSync } from "node:fs";
 import { spawn } from "node:child_process";
+import { Worker } from "node:worker_threads";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { Ledger, ACTIVE, filesOverlap, type Task, type Goal, type Issue } from "../../../ledger.ts";
 import { answerTask } from "../../../answer.ts";
 import { metrics } from "../../../metrics.ts";
-import { getClaudeUsage } from "../../../claude-usage.ts";
 import type { DecisionItem, GoalTabData, GoalRow, IssueRow, TaskRow, TaskStatus, StageState, ProjectSummary, ClaudeUsageSummary } from "./types.js";
 
 const RUNNING = new Set<string>(ACTIVE);
 let usageCache: { at: number; summary: ClaudeUsageSummary } | null = null;
-let usageLoading: Promise<void> | null = null;
+let usageLoading = false;
+let usageReadCount = 0;
+export function claudeUsageReadCountForTest() { return usageReadCount; }
+export function resetClaudeUsageForTest() { usageCache = null; usageLoading = false; usageReadCount = 0; }
+export function expireClaudeUsageCacheForTest() { if (usageCache) usageCache.at = Date.now() - 60_001; }
+export function claudeUsageLoadingForTest() { return usageLoading; }
 function usageSummary(now: number): ClaudeUsageSummary {
- if (usageCache && Date.now() - usageCache.at < 60_000) return usageCache.summary;
- if (!usageLoading) {
-  usageLoading = Promise.resolve().then(() => {
-   const started = performance.now();
-   try {
-    const raw = getClaudeUsage(7, now), groups = (rows: typeof raw.rows) => {
-     const sums = new Map<string, { caller: string; reason: string | null; weighted: number }>();
-     for (const r of rows) { const k = r.caller, v = sums.get(k) ?? { caller: r.caller, reason: null, weighted: 0 }; v.weighted += r.weighted; sums.set(k,v); }
-     const callers = [...sums.values()].sort((a,b)=>b.weighted-a.weighted).slice(0,8);
-     sums.clear();
-     for (const r of rows) { const k = `${r.caller}\t${r.reason??''}`, v = sums.get(k) ?? { caller:r.caller, reason:r.reason, weighted:0 }; v.weighted += r.weighted; sums.set(k,v); }
-     return [...callers,...[...sums.values()].sort((a,b)=>b.weighted-a.weighted).slice(0,8)];
-    };
-    const remaining = raw.remaining, capacity = (c: typeof raw.capacity.sevenDay) => ({ perPercent:c.perPercent, median:c.medianPerPercent, low:c.rangePerPercent.low, high:c.rangePerPercent.high, intervals:c.intervals });
-    const today = new Date(now).toLocaleDateString('sv-SE');
-    const byDay = new Map<string, { day:string; caller:string; weighted:number }>();
-    for (const r of raw.rows) { const k = `${r.day}\t${r.caller}`, v = byDay.get(k) ?? { day:r.day, caller:r.caller, weighted:0 }; v.weighted += r.weighted; byDay.set(k,v); }
-    const summary: ClaudeUsageSummary = {
-     now: { sevenDay:{percent:remaining?.sevenDay??null,resetsAt:remaining?.sevenDayResetsAt===null||remaining?.sevenDayResetsAt===undefined?null:new Date(remaining.sevenDayResetsAt*1000).toISOString()}, fiveHour:{percent:remaining?.fiveHour??null,resetsAt:remaining?.fiveHourResetsAt===null||remaining?.fiveHourResetsAt===undefined?null:new Date(remaining.fiveHourResetsAt*1000).toISOString()} },
-     pace:{perHour:remaining?.pacePerHour??null,exhaustAt:remaining?.exhaustAt??null,since:remaining?.paceSince??null},
-     capacity:{sevenDay:capacity(raw.capacity.sevenDay),fiveHour:capacity(raw.capacity.fiveHour)},
-     today:groups(raw.rows.filter(r=>r.day===today)),
-     week:groups(raw.rows),
-     days:[...byDay.values()].sort((a,b)=>a.day.localeCompare(b.day)||a.caller.localeCompare(b.caller)),
-     readMs:performance.now()-started,
-    };
-    usageCache = { at:Date.now(), summary };
-   } finally { usageLoading = null; }
-  }).catch(() => {});
+ const fresh = usageCache && Date.now() - usageCache.at < 60_000;
+ if (!fresh && !usageLoading) {
+  usageLoading = true;
+  usageReadCount++;
+  const started = performance.now();
+  const worker = new Worker(join(process.cwd(), '..', 'claude-usage-worker.ts'), { workerData: { now } });
+  let settled = false;
+  const finish = (summary?: ClaudeUsageSummary, error?: string) => {
+   if (settled) return; settled = true; usageLoading = false;
+   if (error) {
+    console.error('Claude usage read failed:', error);
+    if (!usageCache) usageCache = { at: Date.now(), summary: { error } };
+   } else if (summary) usageCache = { at: Date.now(), summary };
+   void worker.terminate();
+  };
+  worker.once('message', (message: any) => {
+   if (!message?.ok) { finish(undefined, String(message?.error ?? 'Unknown worker error')); return; }
+   const raw = message.result;
+   const groups = (rows: typeof raw.rows) => {
+    const callerSums = new Map<string, number>(), reasonSums = new Map<string, { caller: string; reason: string | null; weighted: number }>();
+    for (const r of rows) { callerSums.set(r.caller, (callerSums.get(r.caller) ?? 0) + r.weighted); const key = JSON.stringify([r.caller,r.reason]); const v = reasonSums.get(key) ?? { caller:r.caller, reason:r.reason, weighted:0 }; v.weighted += r.weighted; reasonSums.set(key,v); }
+    return { byCaller:[...callerSums].map(([caller,weighted])=>({caller,weighted})).sort((a,b)=>b.weighted-a.weighted).slice(0,8), byCallerReason:[...reasonSums.values()].sort((a,b)=>b.weighted-a.weighted).slice(0,8) };
+   };
+   const remaining = raw.remaining, capacity = (c: typeof raw.capacity.sevenDay) => ({ perPercent:c.perPercent, median:c.medianPerPercent, low:c.rangePerPercent.low, high:c.rangePerPercent.high, intervals:c.intervals });
+   const today = new Date(now).toLocaleDateString('sv-SE');
+   const byDay = new Map<string, { day:string; caller:string; weighted:number }>();
+   for (const r of raw.rows) { const k = `${r.day}\t${r.caller}`, v = byDay.get(k) ?? { day:r.day, caller:r.caller, weighted:0 }; v.weighted += r.weighted; byDay.set(k,v); }
+   const summary: ClaudeUsageSummary = {
+    now:{sevenDay:{percent:remaining?.sevenDay??null,resetsAt:remaining?.sevenDayResetsAt==null?null:new Date(remaining.sevenDayResetsAt*1000).toISOString()},fiveHour:{percent:remaining?.fiveHour??null,resetsAt:remaining?.fiveHourResetsAt==null?null:new Date(remaining.fiveHourResetsAt*1000).toISOString()}},
+    pace:{perHour:remaining?.pacePerHour??null,exhaustAt:remaining?.exhaustAt??null,since:remaining?.paceSince??null,hours:remaining?.paceSince&&remaining.observedAt?Math.max(0,(Date.parse(remaining.observedAt)-Date.parse(remaining.paceSince))/3600000):null},
+    capacity:{sevenDay:capacity(raw.capacity.sevenDay),fiveHour:capacity(raw.capacity.fiveHour)},
+    today:groups(raw.rows.filter((r:any)=>r.day===today)), week:groups(raw.rows),
+    days:[...byDay.values()].sort((a,b)=>a.day.localeCompare(b.day)||a.caller.localeCompare(b.caller)), readMs:performance.now()-started,
+   };
+   finish(summary);
+  });
+  worker.once('error', error => finish(undefined, error.stack ?? error.message));
+  worker.once('exit', code => { if (!settled && code !== 0) finish(undefined, `worker exited with code ${code}`); });
  }
- return { pending:true };
+ if (fresh || (usageCache && !usageLoading)) return usageCache!.summary;
+ return usageCache?.summary ?? { pending:true };
 }
 const mapStatus = (s:string):TaskStatus => (s === '取り下げ' ? '取り下げ' : s) as TaskStatus;
 function repoName(repo:string) { return repo.split('/').filter(Boolean).at(-1) ?? repo; }
