@@ -18,6 +18,8 @@ import { getClaudeUsage, renderClaudeUsage } from './claude-usage.ts';
 const USAGE = `使い方:
   task add --title <題> --why <ユーザーの言葉と日付> [--brief <依頼文のパス>] [--check <確かめのコマンド>] [--worker pi|codex|claude] [--model <モデル>] [--effort <強さ>]
            [--after <id,...>] [--files <パス,...>] [--kind 処理|見た目|調べ] [--deploy] [--repo <パス>]
+  task watch --repo <パス> [--name <宛先>] [--off] | task watchers
+  task push-audit [--since <時刻>] [--repo <パス>]
   task brief <id> <依頼文のパス> [--check <コマンド>]   依頼文を付ける（依頼文待ち → 待ち）
   task list [--all] [--repo <パス>] [--status <状態>]
   task goal add --title <題> [--why <きっかけ>] [--stages a,b,c] | goal list | goal move <id> up|down|first
@@ -104,7 +106,7 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
     title: { type: 'string' }, why: { type: 'string' }, brief: { type: 'string' }, check: { type: 'string' },
     after: { type: 'string' }, files: { type: 'string' }, kind: { type: 'string' }, deploy: { type: 'boolean' },
     worker: { type: 'string' }, model: { type: 'string' }, effort: { type: 'string' },
-    repo: { type: 'string' }, all: { type: 'boolean' }, status: { type: 'string' }, to: { type: 'string' },
+    repo: { type: 'string' }, name: { type: 'string' }, off: { type: 'boolean' }, all: { type: 'boolean' }, status: { type: 'string' }, to: { type: 'string' },
     agent: { type: 'string' }, runner: { type: 'string' }, commit: { type: 'string' }, log: { type: 'string' }, workdir: { type: 'string' },
     since: { type: 'string' }, json: { type: 'boolean' }, days: { type: 'string' }, 'dry-run': { type: 'boolean' }, weeks: { type: 'string' }, out: { type: 'string' }, issue: { type: 'string' }, body: { type: 'string' }, by: { type: 'string' }, from: { type: 'string' }, goal: { type: 'string' }, stage: { type: 'string' }, stages: { type: 'string' }, loose: { type: 'boolean' }, open: { type: 'boolean' }, docKind: { type: 'string' }, path: { type: 'string' },
     'なぜ': { type: 'string' }, '今の状態': { type: 'string' }, '関係する所': { type: 'string' }, 'やること': { type: 'string' }, 'やってよいこと': { type: 'string' }, 'やらないこと': { type: 'string' }, '終わりの条件': { type: 'string' }, '確かめのコマンド': { type: 'string' }, '触るファイル': { type: 'string' }, '種類': { type: 'string' }, '本番に出すか': { type: 'string' }, 'task-specific': { type: 'boolean' },
@@ -113,6 +115,28 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
   try {
     const repo = values.repo ? repoRoot(values.repo) : undefined;
     switch (command) {
+      case 'watch': {
+        if(!values.repo) throw new Error('task watch --repo <パス> [--name <宛先>] [--off]');
+        const root=repoRoot(values.repo);
+        if(values.off){ledger.unwatch(root);out(`解除しました: ${root}`);return 0;}
+        const name=values.name??execFileSync(process.env.TASK_CHANNEL_BIN??join(import.meta.dirname,'../../skills/herdr/channel/bin/channel'),['supervisor'],{encoding:'utf8',timeout:5000}).trim();
+        if(!name)throw new Error('channel supervisor が宛先を返しません');ledger.watch(root,name);out(`${root} -> ${name}`);return 0;
+      }
+      case 'watchers': for(const w of ledger.watchers())out(`${w.repo}\t${w.name}\t${w.at}`); return 0;
+      case 'push-audit': {
+        const since=values.since?new Date(values.since):null;if(since&&Number.isNaN(since.getTime()))throw new Error(`--since が日時として読めない: ${values.since}`);
+        const log=process.env.AGENT_CHANNEL??join(process.env.HOME??'',' .cache/agent-channel/channel.jsonl'.trim());
+        let rows:any[]=[];if(existsSync(log))rows=readFileSync(log,'utf8').split(/\r?\n/).filter(Boolean).flatMap(x=>{try{return[JSON.parse(x)]}catch{return[]}});
+        const candidates=ledger.db.prepare("SELECT e.task_id,e.at,e.to_status,e.note,t.repo FROM events e JOIN tasks t ON t.id=e.task_id WHERE e.to_status IN ('判断待ち','済','やめ') AND (e.note IS NULL OR e.note NOT LIKE 'Claude:%') ORDER BY e.at").all() as {task_id:string;at:string;to_status:string;note:string|null;repo:string}[];
+        let missing=0,maxDelay=0,failed=0;for(const e of candidates){if(since&&new Date(e.at)<since)continue;if(repo&&repoRoot(e.repo)!==repo)continue;
+          const logged=ledger.db.prepare('SELECT outcome,detail FROM push_log WHERE task_id=? AND at=?').get(e.task_id,e.at) as {outcome:string;detail:string}|undefined;
+          if(logged?.outcome==='unwatched'){out(`${e.task_id} ${e.to_status}: 送っていない（受け持ちなし）`);continue;}
+          const match=rows.find(r=>r.kind==='post'&&typeof r.body==='string'&&r.body.includes(`[event:${e.at}]`)&&r.body.startsWith(`${e.task_id} ${e.to_status}:`));
+          if(!match){out(`${e.task_id} ${e.to_status}: 抜けた`);missing++;continue;}
+          const delay=Math.max(0,(Date.parse(match.at??match.timestamp??e.at)-Date.parse(e.at))/1000);maxDelay=Math.max(maxDelay,delay);out(`${e.task_id} ${e.to_status}: 届いた（遅れ ${delay.toFixed(3)} 秒）`);if(delay>30){out(`${e.task_id}: 遅れすぎ`);failed++;}
+        }
+        out(`抜け ${missing+failed} 件・最大の遅れ ${maxDelay.toFixed(3)} 秒`);return missing||failed?1:0;
+      }
       case 'add': {
         const root = repo ?? repoRoot(process.cwd());
         if (values.kind && !KINDS.includes(values.kind as Kind)) throw new Error(`--kind は ${KINDS.join('・')}`);

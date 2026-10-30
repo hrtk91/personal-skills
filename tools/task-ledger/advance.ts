@@ -344,7 +344,7 @@ git worktree remove --force "$T" >/dev/null 2>&1; rm -rf "$T"; exit $rc`, repo, 
   const cleaned = timed(ledger, task, '片付け', () => deps.sh(`bash ${quote(HERDR_RUN)} --cleanup ${quote(runName(task))}`, repo, 120_000), exitCode);
   const remainingFindings = collectRemainingFindings(ledger.events(task.id));
   const reviewNote = remainingFindings.length ? `残りにした指摘: ${JSON.stringify(remainingFindings)}` : '';
-  ledger.setStatus(task.id, '済', [cleaned.code === 0 ? '取り込んだ' : `取り込んだが片付けに失敗: ${tail(cleaned.output, 3)}`, reviewNote].filter(Boolean).join('。'), { commit });
+  ledger.setStatus(task.id, '済', [cleaned.code === 0 ? '取り込んだ' : `取り込んだが片付けに失敗: ${tail(cleaned.output, 3)}`, task.deploy ? '本番に出した' : '', reviewNote].filter(Boolean).join('。'), { commit });
   ledger.releaseRunner(task.id);
   said.push(`${task.id}: 済（${commit.slice(0, 7)}）`);
 }

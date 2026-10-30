@@ -16,7 +16,7 @@ function git(cwd: string, ...args: string[]): string {
 }
 
 /** A repository, a worker's worktree with one finished commit, and a task waiting at 確かめ中. */
-function fixture(options: { check?: string; attempts?: number; files?: string[] } = {}) {
+function fixture(options: { check?: string; attempts?: number; files?: string[]; deploy?: boolean } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'task-advance-'));
   process.env.TASK_LEDGER_DB = join(dir, 'ledger.sqlite');
   const repo = join(dir, 'repo'); mkdirSync(join(repo, 'handoff'), { recursive: true });
@@ -29,17 +29,18 @@ function fixture(options: { check?: string; attempts?: number; files?: string[] 
   writeFileSync(join(workdir, 'mul.js'), 'export const mul = (a, b) => a * b;\n');
   git(workdir, 'add', '-A'); git(workdir, 'commit', '-qm', 'worker');
   const ledger = new Ledger(':memory:');
-  ledger.add({ repo, title: '掛け算を足す', why: 'w', brief: 'handoff/t.md', check: options.check ?? 'test -f mul.js', files: options.files ?? [] });
+  ledger.add({ repo, title: '掛け算を足す', why: 'w', brief: 'handoff/t.md', check: options.check ?? 'test -f mul.js', files: options.files ?? [], deploy: options.deploy });
   ledger.setStatus('repo-1', '走行中', null, { attempts: options.attempts ?? 1 });
   ledger.setRunner('repo-1', { workdir });
   ledger.setStatus('repo-1', '確かめ中', '作業役が終わった');
   return { dir, repo, workdir, ledger, done: () => { rmSync(dir, { recursive: true, force: true }); delete process.env.TASK_LEDGER_DB; } };
 }
 
-function deps(answer: string, calls: string[] = []): AdvanceDeps {
+function deps(answer: string, calls: string[] = [], deployCode = 0): AdvanceDeps {
   return {
     sh: (command, cwd, timeout) => {
       calls.push(command);
+      if (command.includes('TASK_ID=')) return { code: deployCode, output: deployCode === 0 ? 'deployed' : 'deploy failed' };
       return command.includes('--cleanup') ? { code: 0, output: '' } : realAdvanceDeps.sh(command, cwd, timeout);
     },
     review: (prompt) => { calls.push(`review:${prompt}`); return answer; },
@@ -256,6 +257,20 @@ test('an uncommitted copy of a file the branch adds is moved aside so the merge 
     assert.equal(readFileSync(join(f.repo, 'handoff/t-report.md'), 'utf8'), '報告\n');
     assert.equal(readFileSync(join(f.dir, 'logs/repo-1-untracked/handoff/t-report.md'), 'utf8'), '本体の古い写し\n');
   } finally { f.done(); }
+});
+
+test('deploy success and failure are delivered to the repository watcher with their outcome', () => {
+  const old={channel:process.env.AGENT_CHANNEL,from:process.env.AGENT_CHANNEL_NAME,bin:process.env.TASK_CHANNEL_BIN};
+  for(const deployCode of [0,1]){
+    const f=fixture({deploy:true});const log=join(f.dir,`deploy-${deployCode}.jsonl`);process.env.AGENT_CHANNEL=log;delete process.env.AGENT_CHANNEL_NAME;process.env.TASK_CHANNEL_BIN=join(import.meta.dirname,'../../skills/herdr/channel/bin/channel');
+    try{
+      writeFileSync(join(f.workdir,'handoff/t-report.md'),'報告\\n');git(f.workdir,'add','-A');git(f.workdir,'commit','-qm','report');f.ledger.watch(f.repo,'claude-deploy');
+      advance(f.ledger,'repo-1',deps('{"verdict":"通す","reasons":[],"fixes":[]}',[],deployCode),1);
+      const task=f.ledger.get('repo-1')!;assert.equal(task.status,deployCode===0?'済':'判断待ち');assert.match(task.note??'',deployCode===0?/本番に出した/:/本番に出せなかった/);
+      const rows=readFileSync(log,'utf8').trim().split(/\r?\n/).map(x=>JSON.parse(x));assert.equal(rows.length,1);assert.equal(rows[0].from,'task-ledger');assert.equal(rows[0].to,'claude-deploy');assert.match(rows[0].body,deployCode===0?/済:[\s\S]*本番に出した/:/判断待ち:[\s\S]*本番に出せなかった/);
+    }finally{f.done();}
+  }
+  for(const [key,value] of Object.entries({AGENT_CHANNEL:old.channel,AGENT_CHANNEL_NAME:old.from,TASK_CHANNEL_BIN:old.bin}))if(value===undefined)delete process.env[key];else process.env[key]=value;
 });
 
 test('when the repository changed the same lines meanwhile, the worker gets the conflict marks to settle', () => {
