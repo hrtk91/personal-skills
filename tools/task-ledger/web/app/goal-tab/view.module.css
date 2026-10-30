@@ -202,3 +202,31 @@ textarea.t { width: 100%; min-height: 64px; resize: vertical; }
 .recChip { font-size: .72rem; font-weight: 600; padding: 0 7px; border-radius: 99px; background: var(--run-bg); color: var(--run); white-space: nowrap; }
 .situ { display: grid; gap: 4px; min-width: 0; }
 .situ p { margin: 0; line-height: 1.75; }
+
+/* Harness retrospective: pass rate up top, then where tasks fail, as plain bars with the place to fix. */
+.retro { display: grid; gap: 18px; }
+.retroHead { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: end; justify-content: space-between; }
+.big { margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; min-width: 0; }
+.big b { font-size: 2rem; line-height: 1; font-variant-numeric: tabular-nums; }
+.big span { color: var(--sub); }
+.weeks { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.weeks li { display: flex; align-items: baseline; gap: 4px; font-variant-numeric: tabular-nums; }
+.weeks li .s { display: inline; }
+.retroCol { display: grid; gap: 8px; min-width: 0; }
+.h3 { margin: 0; font-size: 13px; font-weight: 600; display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
+.bars { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.barRow { display: grid; grid-template-columns: minmax(0, 15rem) minmax(0, 1fr) 2.5rem; gap: 10px; align-items: center; }
+.barLabel { min-width: 0; display: flex; flex-wrap: wrap; gap: 2px 8px; align-items: baseline; font-size: 13px; }
+.fixAt { font-size: 11px; color: var(--faint); }
+.barTrack { height: 8px; border-radius: 99px; background: var(--idle-bg); overflow: hidden; }
+.barFill { display: block; height: 100%; border-radius: 99px; background: var(--wait); }
+.barNum { text-align: right; font-variant-numeric: tabular-nums; font-size: 13px; }
+.retroFacts { margin: 0; display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); }
+.retroFacts dt { font-size: 12px; color: var(--sub); }
+.retroFacts dd { margin: 2px 0 0; display: grid; gap: 2px; font-variant-numeric: tabular-nums; }
+.retroTitle { display: block; font-size: 13px; }
+.retroTitle .s { display: inline; margin-left: 6px; }
+@media (max-width: 560px) {
+  .barRow { grid-template-columns: minmax(0, 1fr) 2.5rem; }
+  .barTrack { grid-column: 1 / -1; grid-row: 2; }
+}

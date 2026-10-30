@@ -159,6 +159,7 @@ export function GoalTabView({ data, submit, busy, consultHref }: { data: GoalTab
       <Goals goals={data.goals} submit={submit} busy={busy} />
       <NewGoal submit={submit} busy={busy} />
       <Recent rows={data.recent} now={now} />
+      <Retro metrics={data.metrics} />
     </div>
   );
 }
@@ -437,6 +438,96 @@ function Recent({ rows, now }: { rows: TaskRow[]; now: number }) {
           </li>
         ))}
       </ul>
+    </section>
+  );
+}
+
+// ---- the harness retrospective: where tasks fail, and what to fix to make them pass first time ----
+
+const FIX_AT: Record<string, string> = {
+  "レビューの差し戻し": "下の内訳",
+  "作業役の検査が落ちた": "作業役",
+  "作業役の自己申告（未完了）": "依頼文",
+  "台本・環境の失敗": "ハーネス",
+  "本体との食い違い": "取り込みの順番",
+  "取り込み後の検査が落ちた": "検査の流し方",
+  "本番に出せなかった": "本番に出す台本",
+};
+const REVIEW_FIX_AT: Record<string, string> = {
+  "終わりの条件が未達": "依頼文",
+  "依頼文の食い違い": "依頼文",
+  "実装の誤り": "作業役",
+  "検査が中身を確かめていない": "作業役",
+  "報告が不正確": "作業役",
+  "依頼の外の変更": "作業役",
+};
+
+function span(ms: number | null) {
+  if (ms === null) return "—";
+  const min = ms / 60000;
+  return min < 90 ? `${Math.max(1, Math.round(min))} 分` : `${(min / 60).toFixed(1)} 時間`;
+}
+
+function sum(records: Array<Record<string, number>>) {
+  const total: Record<string, number> = {};
+  for (const record of records) for (const [key, n] of Object.entries(record)) total[key] = (total[key] ?? 0) + n;
+  return Object.entries(total).sort((a, b) => b[1] - a[1]);
+}
+
+function Bars({ rows, fixAt }: { rows: Array<[string, number]>; fixAt: Record<string, string> }) {
+  const max = Math.max(1, ...rows.map(([, n]) => n));
+  return (
+    <ul className={styles.bars}>
+      {rows.map(([label, n]) => (
+        <li key={label} className={styles.barRow}>
+          <span className={styles.barLabel}>{label}{fixAt[label] ? <span className={styles.fixAt}>{fixAt[label]}</span> : null}</span>
+          <span className={styles.barTrack}><span className={styles.barFill} style={{ width: `${(n / max) * 100}%` }} /></span>
+          <span className={styles.barNum}>{n}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function Retro({ metrics }: { metrics?: GoalTabData["metrics"] }) {
+  const weeks = [...(metrics?.weeks ?? [])].sort((a, b) => b.week.localeCompare(a.week));
+  if (!weeks.length) return null;
+  const done = weeks.reduce((n, w) => n + w.completed, 0);
+  const first = weeks.reduce((n, w) => n + w.firstPass, 0);
+  const failures = sum(weeks.map((w) => w.failures)).filter(([kind]) => kind !== "作業役への差し戻し" && kind !== "その他");
+  const others = sum(weeks.map((w) => w.failures)).filter(([kind]) => kind === "作業役への差し戻し" || kind === "その他").reduce((n, [, v]) => n + v, 0);
+  const review = sum(weeks.map((w) => w.reviewKinds));
+  const latest = weeks[0]!;
+  const titles = sum(weeks.flatMap((w) => w.frequentTitles.map((t) => ({ [t.title]: t.count })))).slice(0, 3);
+  return (
+    <section className={styles.section}>
+      <SectionHead title="ハーネスの振り返り" hint={`この ${weeks.length} 週。仕事がどこで落ちて、どこを直せば 1 回で通るか`} />
+      <div className={`${styles.card} ${styles.retro}`}>
+        <div className={styles.retroHead}>
+          <p className={styles.big}><b>{done ? Math.round((first / done) * 100) : 0}%</b><span>が 1 回で通った（済んだ {done} 件のうち {first} 件）</span></p>
+          <ol className={styles.weeks}>
+            {weeks.map((w) => (
+              <li key={w.week}><span className={styles.s}>{w.week.slice(5).replace("-", "/")} の週</span><b>{w.firstPass}</b><span className={styles.s}>/ {w.completed}</span></li>
+            ))}
+          </ol>
+        </div>
+        <div className={styles.retroCol}>
+          <h3 className={styles.h3}>落ちた所<span className={styles.h2hint}>右の小さな字が直す所</span></h3>
+          <Bars rows={failures} fixAt={FIX_AT} />
+          {others ? <p className={styles.s}>ほか {others} 回は、種類を決められなかった差し戻し。</p> : null}
+        </div>
+        {review.length ? (
+          <div className={styles.retroCol}>
+            <h3 className={styles.h3}>レビューで戻された理由<span className={styles.h2hint}>1 回に 2〜3 個付くことがある</span></h3>
+            <Bars rows={review} fixAt={REVIEW_FIX_AT} />
+          </div>
+        ) : null}
+        <dl className={styles.retroFacts}>
+          <div><dt>判断待ちで止まっていた時間</dt><dd>{span(latest.medianDecisionMs)}<span className={styles.s}>今週の真ん中の値。私かあなたの返事待ち</span></dd></div>
+          <div><dt>始めてから済むまで</dt><dd>{span(latest.medianRunningToDoneMs)}<span className={styles.s}>今週の真ん中の値</span></dd></div>
+          {titles.length ? <div><dt>何度も落ちた仕事</dt><dd>{titles.map(([title, n]) => <span key={title} className={styles.retroTitle}>{title}<span className={styles.s}>{n} 回</span></span>)}</dd></div> : null}
+        </dl>
+      </div>
     </section>
   );
 }
