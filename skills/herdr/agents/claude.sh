@@ -7,8 +7,15 @@ claude_send() { # <agent> <text> <報告印のパス> <pane>
   if [[ "$agent" == impl-* ]]; then
     text="$text 報告の先頭近くに必ず機械可読な 1 行「終わりの条件: 満たした」または「終わりの条件: 満たしていない — <満たしていない条件を依頼文の書き方で、；で区切る>」を書く。決められない理由がある場合は「終わりの条件: 満たしていない — 決められない: <理由>」とする。終わりの条件の確かめは、使う人が実際に通る入口（依頼文に書かれたスクリプト・コマンド・起動の台本）で流し、そのコマンドと出力の要所を貼る。手で組んだ代わりの命令で流したもの、手で作った成果物は「代わりの道」と書き、満たしたとは書かない。"
   fi
-  printf '%s\n' "$text" > "$prompt"
-  rm -f "$raw" "$session" "$state" "$W/$REPORT"
+  if [ "${SEND_BACK:-}" = 1 ] && [ -f "$session" ] && [ -f "$prompt" ]; then
+    cp "$prompt" "$prompt.previous"
+    printf '差し戻しの文と現在の依頼文の差分だけを確認して作業を続けてください。\n\n差分:\n' > "$prompt"
+    diff -u "$prompt.previous" <(printf '%s\n' "$text") >> "$prompt" || true
+  else
+    printf '%s\n' "$text" > "$prompt"
+  fi
+  rm -f "$raw" "$state" "$W/$REPORT"
+  [ "${SEND_BACK:-}" = 1 ] || rm -f "$session"
   cat > "$helper" <<'CLAUDE_HELPER'
 #!/bin/bash
 set -uo pipefail
@@ -45,6 +52,7 @@ for line in sys.stdin:
  if t=="result": print("result: "+" ".join(str(x.get("result"," ")).split())[:500],flush=True)
 '
 session=
+[ "${SEND_BACK:-}" = 1 ] && [ -f "$session_file" ] && session=$(cat "$session_file")
 : >> "$raw"
 for attempt in 1 2; do
   raw_start=$(wc -c < "$raw")
@@ -110,7 +118,7 @@ echo failed > "$state"; exit 1
 CLAUDE_HELPER
   chmod +x "$helper"
   local model=${CLAUDE_MODEL:-opus} effort=${CLAUDE_EFFORT:-high} timeout=${CLAUDE_TIMEOUT_SECONDS:-1800}
-  cmd=$(printf 'bash %q %q %q %q %q %q %q %q %q %q %q' "$helper" "$prompt" "$raw" "$session" "$state" "$W/$REPORT" "$model" "$effort" "$L" "$agent" "$timeout")
+  cmd=$(printf 'SEND_BACK=%q bash %q %q %q %q %q %q %q %q %q %q %q' "${SEND_BACK:-}" "$helper" "$prompt" "$raw" "$session" "$state" "$W/$REPORT" "$model" "$effort" "$L" "$agent" "$timeout")
   herdr pane send-text "$4" "$cmd" >/dev/null || return 1
   herdr pane send-keys "$4" Enter >/dev/null || return 1
   local i ticks=$(( (timeout + 1) / 2 ))

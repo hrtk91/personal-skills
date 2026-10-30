@@ -26,9 +26,18 @@ export function createDecisionCard(ledger:Ledger,task:Task,enteredAt:string,note
   const report=reportPath?readFileSync(reportPath,'utf8').split('\n').slice(0,40).join('\n'):'なし';
   const input=`${prompt}\n\n## 仕事の題\n${task.title}\n\n## 困りごと（why）\n${task.why}\n\n## 依頼文の先頭 80 行\n${brief}\n\n## 止まった理由\n${note}\n\n## 作業役の報告の先頭 40 行\n${report}`;
   const model=process.env.TASK_DECISION_MODEL||'opus',bin=process.env.TASK_CLAUDE_BIN||'claude',deadline=Date.now()+120_000;
+  const events=ledger.events(task.id),last=events.at(-1),prior=events.at(-2);
+  const session=ledger.claudeSession(task.id,'review');
+  const fromReview=last?.to_status==='判断待ち'&&last.from_status==='レビュー中'&&prior?.to_status==='レビュー中'&&!!session&&session.cwd===(task.workdir??task.repo);
+  const cardOnly=`レビューの文脈から判断カードだけを作ってください。状況: ${note}\nJSON の形式は次のとおり。余計な文章を付けないこと: {"situation":"...","options":[{"label":"...","detail":"...","recommended":true,"to":"待ち|取り込み中|保留|やめ","answer":"..."},{"label":"...","detail":"...","recommended":false,"to":"待ち|取り込み中|保留|やめ","answer":"..."}]}`;
   for(let attempt=0;attempt<2;attempt++){
    const remaining=deadline-Date.now();if(remaining<=0)break;
-   const result=execFileSync(bin,['-p','--model',model,'--settings','{"disableAllHooks":true}','--strict-mcp-config','--tools',''],{encoding:'utf8',timeout:remaining,input,stdio:['pipe','pipe','pipe']});
+   const fork=fromReview&&attempt===0;
+   const args=['-p','--model',model,'--settings','{"disableAllHooks":true}','--strict-mcp-config','--tools',''];
+   if(fork)args.push('--resume',session!.session_id,'--fork-session');
+   let result:string;
+   try { result=execFileSync(bin,args,{encoding:'utf8',timeout:remaining,input:fork?cardOnly:input,stdio:['pipe','pipe','pipe']}); }
+   catch { if(fork)continue; throw new Error('decision claude failed'); }
    const parsed=parseDecision(result);if(parsed){saveDecisionCard(ledger,task.id,enteredAt,parsed,model);return parsed;}
   }
  } catch { /* Decision cards are best-effort and never prevent entering 判断待ち. */ }

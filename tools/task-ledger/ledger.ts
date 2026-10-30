@@ -94,7 +94,8 @@ export class Ledger {
       CREATE TABLE IF NOT EXISTS issues(id TEXT PRIMARY KEY, repo TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL DEFAULT '', by TEXT NOT NULL DEFAULT 'あなた', source TEXT, goal_id TEXT, stage TEXT, position INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT '開いている', created_at TEXT NOT NULL, fields_json TEXT NOT NULL DEFAULT '{}', history_json TEXT NOT NULL DEFAULT '[]') STRICT;
       CREATE TABLE IF NOT EXISTS docs(id TEXT PRIMARY KEY, repo TEXT NOT NULL, kind TEXT NOT NULL, title TEXT NOT NULL, goal_id TEXT, path TEXT, body TEXT, version INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL) STRICT;
       CREATE TABLE IF NOT EXISTS task_sessions(task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, kind TEXT NOT NULL CHECK(kind IN ('review','worker')), session_id TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(task_id,kind)) STRICT;
-      CREATE TABLE IF NOT EXISTS consult_sessions(task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, kind TEXT NOT NULL CHECK(kind IN ('review','worker')), session_id TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(task_id,kind)) STRICT;`);
+      CREATE TABLE IF NOT EXISTS consult_sessions(task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, kind TEXT NOT NULL CHECK(kind IN ('review','worker')), session_id TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(task_id,kind)) STRICT;
+      CREATE TABLE IF NOT EXISTS claude_sessions(task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, role TEXT NOT NULL CHECK(role IN ('review','worker')), session_id TEXT NOT NULL, cwd TEXT NOT NULL, head TEXT, created_at TEXT NOT NULL, last_used_at TEXT NOT NULL, uses INTEGER NOT NULL DEFAULT 1, PRIMARY KEY(task_id,role)) STRICT;`);
     const eventColumns = (this.db.prepare('PRAGMA table_info(events)').all() as { name: string }[]).map((column) => column.name);
     if (!eventColumns.includes('kind')) this.db.exec('ALTER TABLE events ADD COLUMN kind TEXT');
     const taskColumns = (this.db.prepare('PRAGMA table_info(tasks)').all() as { name: string }[]).map((column) => column.name);
@@ -115,6 +116,15 @@ export class Ledger {
   sessionId(taskId: string, kind: 'review' | 'worker'): string | undefined {
     const row=this.db.prepare('SELECT session_id FROM task_sessions WHERE task_id=? AND kind=?').get(taskId,kind) as {session_id:string}|undefined;
     return row?.session_id;
+  }
+  claudeSession(taskId: string, role: 'review' | 'worker'): {session_id:string; cwd:string; head:string|null; uses:number} | undefined {
+    return this.db.prepare('SELECT session_id,cwd,head,uses FROM claude_sessions WHERE task_id=? AND role=?').get(taskId, role) as {session_id:string;cwd:string;head:string|null;uses:number}|undefined;
+  }
+  saveClaudeSession(taskId:string, role:'review'|'worker', sessionId:string, cwd:string, head:string|null, uses=1):void {
+    if (!this.get(taskId) || !sessionId.trim()) return;
+    const now=this.now().toISOString();
+    this.db.prepare(`INSERT INTO claude_sessions(task_id,role,session_id,cwd,head,created_at,last_used_at,uses) VALUES(?,?,?,?,?,?,?,?)
+      ON CONFLICT(task_id,role) DO UPDATE SET session_id=excluded.session_id,cwd=excluded.cwd,head=excluded.head,created_at=excluded.created_at,last_used_at=excluded.last_used_at,uses=excluded.uses`).run(taskId,role,sessionId.trim(),cwd,head,now,now,uses);
   }
   setConsultSessionId(taskId:string,kind:'review'|'worker',sessionId:string):void {
     if(!this.get(taskId)||!sessionId.trim())return;
