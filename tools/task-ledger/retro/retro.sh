@@ -41,6 +41,8 @@ input="$work/input.md"
   echo '## 対象期間の trace'
   # report JSON includes status and span attributes, providing the structured trace evidence.
   echo
+  echo '## 直近2週のハーネス集計'
+  "$TASK" metrics --json --weeks 2
   echo '## channel stopped / post 記録'
   channel="$HOME/.cache/agent-channel/channel.jsonl"
   if [[ -f "$channel" ]]; then

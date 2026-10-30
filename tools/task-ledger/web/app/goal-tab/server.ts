@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { Ledger, ACTIVE, filesOverlap, type Task, type Goal, type Issue } from "../../../ledger.ts";
 import { answerTask } from "../../../answer.ts";
+import { metrics } from "../../../metrics.ts";
 import type { DecisionItem, GoalTabData, GoalRow, IssueRow, TaskRow, TaskStatus, StageState, ProjectSummary } from "./types.js";
 
 const RUNNING = new Set<string>(ACTIVE);
@@ -61,7 +62,7 @@ export function loadGoalData(ledger:Ledger, repo:string, now=new Date()):GoalTab
  });
  const goalIssueIds=new Set(issues.filter(i=>i.goal_id).map(i=>i.id)), cutoff=now.getTime()-7*86400000;
  const recent=all.filter(t=>['済','やめ','取り下げ'].includes(t.status)&&(!t.issue_id||!goalIssueIds.has(t.issue_id))&&Date.parse(t.updated_at)>=cutoff).sort((a,b)=>b.updated_at.localeCompare(a.updated_at)).slice(0,30).map(t=>row(ledger,t));
- return {project,projects:ps,decisions,queue,goals:goalRows,recent,readAt:now.toISOString()};
+ return {project,projects:ps,decisions,queue,goals:goalRows,recent,metrics:metrics(ledger,{repo,weeks:4}),readAt:now.toISOString()};
 }
 export function submitIntent(ledger:Ledger, repo:string, data:Record<string,string>) {
  const text=(k:string)=>data[k]??'';

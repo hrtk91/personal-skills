@@ -37,7 +37,7 @@ export type NewTask = {
   worker?: Worker | null; model?: string | null; effort?: string | null;
   after?: string[]; files?: string[]; kind?: Kind; deploy?: boolean; issue_id?: string | null;
 };
-export type Event = { task_id: string; at: string; from_status: Status | null; to_status: Status; note: string | null };
+export type Event = { task_id: string; at: string; from_status: Status | null; to_status: Status; note: string | null; kind: string | null };
 export type SpanAttributes = Record<string, string | number | boolean>;
 /** One step inside the harness (a check run, the review, the merge…), for tracing. Design: handoff/task-ledger-trace-design.md */
 export type Span = { task_id: string; attempt: number; name: string; start: string; end: string; ok: boolean; attributes: SpanAttributes };
@@ -83,7 +83,7 @@ export class Ledger {
         worker TEXT, model TEXT, effort TEXT) STRICT;
       CREATE TABLE IF NOT EXISTS events(
         task_id TEXT NOT NULL REFERENCES tasks(id), at TEXT NOT NULL,
-        from_status TEXT, to_status TEXT NOT NULL, note TEXT) STRICT;
+        from_status TEXT, to_status TEXT NOT NULL, note TEXT, kind TEXT) STRICT;
       CREATE TABLE IF NOT EXISTS decision_cards(task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, entered_at TEXT NOT NULL, json TEXT NOT NULL, model TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(task_id,entered_at)) STRICT;
       CREATE INDEX IF NOT EXISTS events_task ON events(task_id, at);
       CREATE TABLE IF NOT EXISTS spans(
@@ -95,6 +95,8 @@ export class Ledger {
       CREATE TABLE IF NOT EXISTS docs(id TEXT PRIMARY KEY, repo TEXT NOT NULL, kind TEXT NOT NULL, title TEXT NOT NULL, goal_id TEXT, path TEXT, body TEXT, version INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL) STRICT;
       CREATE TABLE IF NOT EXISTS task_sessions(task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, kind TEXT NOT NULL CHECK(kind IN ('review','worker')), session_id TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(task_id,kind)) STRICT;
       CREATE TABLE IF NOT EXISTS consult_sessions(task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, kind TEXT NOT NULL CHECK(kind IN ('review','worker')), session_id TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(task_id,kind)) STRICT;`);
+    const eventColumns = (this.db.prepare('PRAGMA table_info(events)').all() as { name: string }[]).map((column) => column.name);
+    if (!eventColumns.includes('kind')) this.db.exec('ALTER TABLE events ADD COLUMN kind TEXT');
     const taskColumns = (this.db.prepare('PRAGMA table_info(tasks)').all() as { name: string }[]).map((column) => column.name);
     for (const [name, type] of [['runner', 'INTEGER'], ['workdir', 'TEXT'], ['issue_id', 'TEXT'], ['priority', 'REAL NOT NULL DEFAULT 0'], ['worker', 'TEXT'], ['model', 'TEXT'], ['effort', 'TEXT']]) if (!taskColumns.includes(name)) this.db.exec(`ALTER TABLE tasks ADD COLUMN ${name} ${type}`);
     // Ledgers made before the harness started tasks itself lack these columns.
@@ -180,7 +182,11 @@ export class Ledger {
   private nextEntityId(repo:string,kind:'g'|'i'|'d'):string{const base=repo.split('/').filter(Boolean).at(-1)?.toLowerCase().replace(/[^a-z0-9-]+/g,'-').replace(/^-|-$/g,'')||'task',table=kind==='g'?'goals':kind==='i'?'issues':'docs',rows=this.db.prepare(`SELECT id FROM ${table} WHERE repo=?`).all(repo) as {id:string}[],re=new RegExp(`^${base}-${kind}(\\d+)$`),n=rows.reduce((m,r)=>Math.max(m,Number(re.exec(r.id)?.[1]??0)),0)+1;return `${base}-${kind}${n}`;}
 
   events(id: string): Event[] {
-    return this.db.prepare('SELECT task_id,at,from_status,to_status,note FROM events WHERE task_id=? ORDER BY at, rowid').all(id) as Event[];
+    return this.db.prepare('SELECT task_id,at,from_status,to_status,note,kind FROM events WHERE task_id=? ORDER BY at, rowid').all(id) as Event[];
+  }
+
+  setEventKind(taskId: string, at: string, kind: string): void {
+    this.db.prepare('UPDATE events SET kind=? WHERE task_id=? AND at=?').run(kind, taskId, at);
   }
 
   recordSpan(span: Span): void {
@@ -291,7 +297,7 @@ export class Ledger {
   }
 
   private event(id: string, from: Status | null, to: Status, note: string | null, at: string): void {
-    this.db.prepare('INSERT INTO events(task_id,at,from_status,to_status,note) VALUES(?,?,?,?,?)').run(id, at, from, to, note);
+    this.db.prepare('INSERT INTO events(task_id,at,from_status,to_status,note,kind) VALUES(?,?,?,?,?,NULL)').run(id, at, from, to, note);
   }
 
   private nextId(repo: string): string {
