@@ -8,9 +8,13 @@ claude_send() { # <agent> <text> <報告印のパス> <pane>
     text="$text 報告の先頭近くに必ず機械可読な 1 行「終わりの条件: 満たした」または「終わりの条件: 満たしていない — <満たしていない条件を依頼文の書き方で、；で区切る>」を書く。決められない理由がある場合は「終わりの条件: 満たしていない — 決められない: <理由>」とする。終わりの条件の確かめは、使う人が実際に通る入口（依頼文に書かれたスクリプト・コマンド・起動の台本）で流し、そのコマンドと出力の要所を貼る。手で組んだ代わりの命令で流したもの、手で作った成果物は「代わりの道」と書き、満たしたとは書かない。"
   fi
   if [ "${SEND_BACK:-}" = 1 ] && [ -f "$session" ] && [ -f "$full" ]; then
+    # 前の会話を --resume で続けるときは、前回の依頼から増えた行（差し戻しの文など）だけを渡す。
+    # 依頼の本文は 1 行の長い文なので、diff -u の前後の行を付けると全文を送り直すことになる（10/30）。
+    local added
     printf '%s\n' "$text" > "$full.new"
-    printf '差し戻しの文と現在の依頼文の差分だけを確認して作業を続けてください。\n\n差分:\n' > "$prompt"
-    diff -u "$full" "$full.new" >> "$prompt" || true
+    added=$(diff --old-line-format= --unchanged-line-format= --new-line-format='%L' "$full" "$full.new") || true
+    [ -n "$added" ] || added='（依頼の文は前回と同じ）'
+    printf '前の作業はレビューで差し戻された。前回の依頼から変わった所は次のとおり。これに従って直し、報告 %s を全体の内容で書き直す（前回の報告は消してある。終わりの条件の 1 行も書く）。\n\n%s\n' "$REPORT" "$added" > "$prompt"
     mv "$full.new" "$full"
   else
     printf '%s\n' "$text" > "$full"

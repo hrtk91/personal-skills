@@ -641,23 +641,43 @@ class HerdrContractTest(unittest.TestCase):
         self.assertEqual(len(self.state()["prompts"]), 2)  # one per role, no resubmission
         self.assertEqual(len(self.starts()), 2)
 
-    def test_claude_sendback_resumes_with_delta_and_second_sendback_still_sends_only_delta(self):
-        self.assert_success(self.run_script(IMPL_AGENT="claude", REV_AGENT="codex"))
-        self.run_script(RESUME="newtab", SEND_BACK="1", IMPL_AGENT="claude", REV_AGENT="codex")
-        self.run_script(RESUME="newtab", SEND_BACK="1", IMPL_AGENT="claude", REV_AGENT="codex")
+    def ledger_send_back(self, task_id, reason):
+        # The same ledger write advance.ts's sendBack makes: back to 走行中 with a 「差し戻し: 」 note.
+        script = ("import { Ledger } from %s; const l = new Ledger(process.env.TASK_LEDGER_DB);"
+                  " l.setStatus(process.argv[1], '走行中', '差し戻し: ' + process.argv[2]); l.close();"
+                  % json.dumps((SKILL.parents[1] / "tools/task-ledger/ledger.ts").as_uri()))
+        done = subprocess.run(["node", "--no-warnings", "--input-type=module", "-e", script, task_id, reason],
+            env=self.env | {"TASK_LEDGER_DB": str(self.root / "ledger.sqlite")}, text=True, capture_output=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+
+    def test_claude_sendback_resumes_and_sends_only_the_sendback_text(self):
+        # Through the real ledger with a TASK_ID: the send-back reason reaches the worker only via `task context`.
+        task_id = self.ledger_task()
+        ledger = {"TASK_ID": task_id, "TASK_LEDGER_DB": str(self.root / "ledger.sqlite"), "TASK_RUN_AFTER": "0",
+            "IMPL_AGENT": "claude", "REV_AGENT": "codex"}
+        first = self.run_script(**ledger)
+        self.assertEqual(first.returncode, 0, (self.work / "herdr-contract.log").read_text())
+        self.ledger_send_back(task_id, "REASON-ONE: mul.js の符号を直す")
+        self.run_script(RESUME="newtab", SEND_BACK="1", **ledger)
+        self.ledger_send_back(task_id, "REASON-TWO: 報告に検査の出力を貼る")
+        self.run_script(RESUME="newtab", SEND_BACK="1", **ledger)
         calls = [json.loads(line) for line in (self.root / "claude-calls.jsonl").read_text().splitlines()]
-        self.assertEqual(len(calls), 3)
+        self.assertEqual(len(calls), 3, (self.work / "herdr-contract.log").read_text())
         self.assertNotIn("--resume", calls[0]["args"])
-        self.assertIn("--resume", calls[1]["args"])
-        self.assertIn("--resume", calls[2]["args"])
+        session = (self.work / "claude-contract.session").read_text().strip()
+        for call in calls[1:]:
+            self.assertIn("--resume", call["args"])
+            self.assertEqual(call["args"][call["args"].index("--resume") + 1], session)
         full_prompt = (self.work / "claude-contract.full.md").read_text()
-        self.assertIn("差分:", calls[1]["input"])
-        self.assertIn("差分:", calls[2]["input"])
-        self.assertLess(len(calls[1]["input"]), len(full_prompt))
-        self.assertLess(len(calls[2]["input"]), len(full_prompt))
-        self.assertNotIn("Dummy task", calls[1]["input"])
-        self.assertNotIn("Dummy task", calls[2]["input"])
-        self.assertTrue((self.work / "claude-contract.full.md").is_file())
+        # Each resumed call carries its own send-back reason, and not the whole request again.
+        self.assertIn("REASON-ONE: mul.js の符号を直す", calls[1]["input"])
+        self.assertIn("REASON-TWO: 報告に検査の出力を貼る", calls[2]["input"])
+        self.assertNotIn("REASON-ONE", calls[2]["input"])
+        for call in calls[1:]:
+            self.assertLess(len(call["input"]), len(full_prompt) // 2)
+            self.assertNotIn("その依頼どおりに作業し", call["input"])
+            self.assertIn("handoff/contract-report.md", call["input"])
+        self.assertIn("REASON-TWO", full_prompt)
 
     def test_failed_worker_resume_retries_once_with_full_prompt_without_resume(self):
         self.assert_success(self.run_script(IMPL_AGENT="claude", REV_AGENT="codex"))

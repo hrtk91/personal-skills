@@ -96,11 +96,11 @@ export function advance(ledger: Ledger, id: string, deps: AdvanceDeps, pid = pro
       const canResume = previous && previous.cwd === workdir && previous.uses < 4;
       let sessionId = canResume ? previous.session_id : randomUUID();
       let uses = canResume ? previous.uses + 1 : 1;
-      const deltaPath = previous?.head ? writeLog(id, `review-delta-${task.attempts}`, deps.sh(`git diff ${quote(previous.head)} HEAD`, workdir, 60_000).output) : diffPath;
+      const deltaPath = canResume && previous.head ? writeLog(id, `review-delta-${task.attempts}`, deps.sh(`git diff ${quote(previous.head)} HEAD`, workdir, 60_000).output) : diffPath;
       const reportPathNow = task.brief ? join(workdir, task.brief.replace(/\.md$/, '-report.md')) : '';
       const reportNow = reportPathNow && existsSync(reportPathNow) ? readFileSync(reportPathNow, 'utf8') : '（報告なし）';
       const sendbackNote = [...ledger.events(id)].reverse().find((event) => event.note?.startsWith('差し戻し:'))?.note ?? 'なし';
-      const resumePrompt = `前回のレビュー以後の変化だけを確認してください。\n差分: ${deltaPath}\n差し戻しの文: ${sendbackNote}\n作業役の報告（現在版）:\n${reportNow}\n確かめのコマンド ${task.check ?? '（無い）'} の出力:\n${tail(existsSync(checkPath) ? readFileSync(checkPath, 'utf8') : '（確かめ出力なし）', 60)}\n対象外ファイルの変更: ${outsideFiles.length ? outsideFiles.join('、') : 'なし'}\n\n${readFileSync(join(HERE, 'review-prompt.md'), 'utf8')}\n前回と同じ JSON 形式で判定してください.`;
+      const resumePrompt = `前回のレビュー以後の変化だけを確認してください。\n差分: ${deltaPath}\n差し戻しの文: ${sendbackNote}\n作業役の報告（現在版）:\n${reportNow}\n確かめのコマンド ${task.check ?? '（無い）'} の出力:\n${tail(existsSync(checkPath) ? readFileSync(checkPath, 'utf8') : '（確かめ出力なし）', 60)}\n対象外ファイルの変更: ${outsideFiles.length ? outsideFiles.join('、') : 'なし'}\n\n前回と同じ見方で判定し、最後に前回と同じ形の JSON を 1 つだけ出してください:\n${verdictShape()}`;
       const reply = timed(ledger, task, 'レビュー', () => {
         let result = deps.review(canResume ? resumePrompt : fullPrompt, workdir, [dirname(diffPath)], canResume ? { sessionId, resumePrompt } : { sessionId });
         let answer = typeof result === 'string' ? result : result.answer;
@@ -423,6 +423,11 @@ export function outsideTaskFiles(changedPaths: string[], files: string[]): strin
     const path = changed.replaceAll('\\', '/');
     return path === file || path.startsWith(`${file}/`);
   }));
+}
+
+/** The verdict JSON line of review-prompt.md, so a resumed review is asked for the same shape without the whole prompt. */
+function verdictShape(): string {
+  return readFileSync(join(HERE, 'review-prompt.md'), 'utf8').split('\n').find((line) => line.startsWith('{"verdict"')) ?? '{"verdict":"通す|直す|判断","reasons":["…"],"fixes":["…"]}';
 }
 
 export function reviewPrompt(task: Task, diffPath: string, checkPath: string, outsideFiles: string[] = []): string {

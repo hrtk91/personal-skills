@@ -538,7 +538,7 @@ test('review sessions resume only through use four, then start over; cwd changes
     const d=deps('');d.review=(prompt,_cwd,_dirs,session)=>{calls.push({prompt,session});return {answer:'{"verdict":"判断","reasons":["hold"],"fixes":[]}',attributes:{'review.session_id':`sid-${calls.length}`}};};
     for(let i=0;i<5;i++){f.ledger.setStatus('repo-1','レビュー中',`差し戻し: reason-${i}`);advance(f.ledger,'repo-1',d,100+i);}
     assert.equal(calls.length,5);assert.match(calls[0]!.prompt,/## 依頼文/);assert.equal(calls[0]!.session?.sessionId!==undefined,true);assert.equal(calls[0]!.session?.resumePrompt,undefined);
-    for(let i=1;i<4;i++){assert.equal(calls[i]!.session?.sessionId,`sid-${i}`);assert.ok(calls[i]!.session?.resumePrompt);assert.match(calls[i]!.prompt,/前回のレビュー以後の変化だけ/);}
+    for(let i=1;i<4;i++){assert.equal(calls[i]!.session?.sessionId,`sid-${i}`);assert.ok(calls[i]!.session?.resumePrompt);assert.match(calls[i]!.prompt,/前回のレビュー以後の変化だけ/);assert.doesNotMatch(calls[i]!.prompt,/## この仕事/);assert.match(calls[i]!.prompt,/\{"verdict"/);assert.ok(calls[i]!.prompt.length<calls[0]!.prompt.length,`resumed prompt ${calls[i]!.prompt.length} >= full ${calls[0]!.prompt.length}`);}
     assert.equal(calls[4]!.session?.resumePrompt,undefined);assert.equal(calls[4]!.session?.sessionId!==`sid-4`,true);assert.equal(f.ledger.claudeSession('repo-1','review')?.uses,1);
     const second=join(f.dir,'wt-second');git(f.repo,'worktree','add','-q','-b','herdr/t-second',second);f.ledger.db.prepare('UPDATE tasks SET workdir=? WHERE id=?').run(second,'repo-1');
     writeFileSync(join(second,'handoff/t-report.md'),'report current');f.ledger.setStatus('repo-1','レビュー中','cwd changed');advance(f.ledger,'repo-1',d,200);
