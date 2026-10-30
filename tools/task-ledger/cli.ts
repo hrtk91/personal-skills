@@ -274,7 +274,7 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
             const batch=rows.slice(offset,offset+20);
             const prompt=`次のレビュー差し戻しを、許可語の中から各1〜3個に分類し、JSON配列だけ返してください。形式: [{"task_id":"...","at":"...","kinds":["..."]}]\n許可語: ${REVIEW_KINDS.join('、')}\n入力: ${JSON.stringify(batch)}`;
             let output:string;
-            try { output=execFileSync(process.env.TASK_CLAUDE_BIN??'claude',['-p','--model',process.env.TASK_METRICS_MODEL??'haiku'],{input:prompt,encoding:'utf8',maxBuffer:1024*1024,timeout:timeoutMs}); }
+            try { output=execFileSync(process.env.TASK_CLAUDE_BIN??'claude',['-p','--model',process.env.TASK_METRICS_MODEL??'haiku','--settings','{"disableAllHooks":true}','--strict-mcp-config','--tools',''],{input:prompt,encoding:'utf8',maxBuffer:1024*1024,timeout:timeoutMs}); }
             catch(error) { if((error as NodeJS.ErrnoException).code==='ETIMEDOUT'||(error as {killed?:boolean}).killed){skipped+=batch.length;continue;} throw error; }
             const start=output.indexOf('['),end=output.lastIndexOf(']');
             const raw=JSON.parse(start>=0&&end>=start?output.slice(start,end+1):output) as {task_id:string;at:string;kinds:unknown}[];
