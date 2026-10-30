@@ -137,16 +137,19 @@ export function advance(ledger: Ledger, id: string, deps: AdvanceDeps, pid = pro
       const verdict = parseVerdict(answer);
       if (!verdict) return stop('レビューの答えから決まった形の JSON を読めなかった');
       said.push(`${id}: レビュー ${verdict.verdict}`);
+      const blocking = verdict.findings?.filter((finding) => finding.harm === '大' || (finding.harm === '中' && finding.likelihood === 'いつも')) ?? [];
+      const remaining = verdict.findings?.filter((finding) => !blocking.includes(finding)) ?? [];
       if (verdict.findings !== undefined) {
-        const blocking = verdict.findings.filter((finding) => finding.harm === '大' || (finding.harm === '中' && finding.likelihood === 'いつも'));
-        const remaining = verdict.findings.filter((finding) => !blocking.includes(finding));
+        ledger.setStatus(id, 'レビュー中', `レビュー指摘: ${JSON.stringify({ stopped: verdict.verdict === '判断' ? [] : blocking.map((finding) => finding.text), remaining: remaining.map((finding) => finding.text), findings: verdict.findings.map((finding) => finding.text) })}`);
+      }
+      if (verdict.verdict === '判断') { stop(`レビュー: ${verdict.reasons.join(' / ')}`); ledger.setEventKind(task.id, ledger.events(task.id).at(-1)!.at, normalizeReviewKinds(verdict.kinds).join(',')); return said; }
+      if (verdict.findings !== undefined) {
         if (blocking.length) {
           const reason = `レビューで直すことになった。止めた指摘数: ${blocking.length} ${blocking.map((finding) => finding.text).join(' ')}`;
           sendBack(ledger, task, deps, reason, blocking.map((finding) => `- ${finding.text}`).join('\n'), said, stop);
           ledger.setEventKind(task.id, ledger.events(task.id).at(-1)!.at, normalizeReviewKinds(verdict.kinds).join(','));
           return said;
         }
-        if (verdict.verdict === '判断') { stop(`レビュー: ${verdict.reasons.join(' / ')}`); ledger.setEventKind(task.id, ledger.events(task.id).at(-1)!.at, normalizeReviewKinds(verdict.kinds).join(',')); return said; }
         const left = remaining.length ? `残りにした指摘: ${JSON.stringify(remaining.map((finding) => finding.text))}` : '';
         ledger.setStatus(id, '取り込み中', [`レビュー: ${verdict.reasons.join(' / ') || '通す'}`, left].filter(Boolean).join(' '));
       } else {
@@ -339,11 +342,19 @@ git worktree remove --force "$T" >/dev/null 2>&1; rm -rf "$T"; exit $rc`, repo, 
     said.push(`${task.id}: 本番に出した`);
   }
   const cleaned = timed(ledger, task, '片付け', () => deps.sh(`bash ${quote(HERDR_RUN)} --cleanup ${quote(runName(task))}`, repo, 120_000), exitCode);
-  const remaining = task.note?.match(/残りにした指摘: (\[[^\n]*\])/);
-  const reviewNote = remaining ? `残りにした指摘: ${remaining[1]}` : '';
+  const remainingFindings = collectRemainingFindings(ledger.events(task.id));
+  const reviewNote = remainingFindings.length ? `残りにした指摘: ${JSON.stringify(remainingFindings)}` : '';
   ledger.setStatus(task.id, '済', [cleaned.code === 0 ? '取り込んだ' : `取り込んだが片付けに失敗: ${tail(cleaned.output, 3)}`, reviewNote].filter(Boolean).join('。'), { commit });
   ledger.releaseRunner(task.id);
   said.push(`${task.id}: 済（${commit.slice(0, 7)}）`);
+}
+
+export function collectRemainingFindings(events: Array<{ note: string | null }>): string[] {
+  return [...new Set(events.flatMap((event) => {
+    const match = event.note?.match(/レビュー指摘: (\{[^\n]*\})/);
+    if (!match) return [];
+    try { const parsed = JSON.parse(match[1]!) as { remaining?: unknown[] }; return Array.isArray(parsed.remaining) ? parsed.remaining.filter((text): text is string => typeof text === 'string') : []; } catch { return []; }
+  }))];
 }
 
 // The repository moved on while the worker was busy, and the two collide. Take the repository's commits into the

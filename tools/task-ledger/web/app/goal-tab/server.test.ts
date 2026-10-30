@@ -56,6 +56,22 @@ test('loader emits decisions, ready queue, goal stages and recent rows; actions 
  } finally {l.close();rmSync(dir,{recursive:true,force:true});delete process.env.CLAUDE_PROJECTS_DIR;delete process.env.CLAUDE_USAGE_DIR;}
 });
 
+test('goal loader passes weekly stopped and remaining finding totals to the dashboard',()=>{
+ const dir=setupClaudeUsageEnv('goal-tab-findings-');const l=new Ledger(join(dir,'db.sqlite'));
+ try {
+  const repo='/tmp/finding-metrics';
+  const task=l.add({repo,title:'Reviewed task',why:'test',brief:'brief'});
+  l.setStatus(task.id,'走行中','start');
+  l.setStatus(task.id,'レビュー中','レビュー指摘: {"stopped":["blocked"],"remaining":["leftover"]}');
+  l.setStatus(task.id,'走行中','差し戻し: review. 止めた指摘数: 1 blocked');
+  l.setStatus(task.id,'取り込み中','レビュー済み');
+  l.setStatus(task.id,'済','取り込んだ。残りにした指摘: ["leftover"]');
+  const data=loadGoalData(l,repo,new Date(Date.now()+1000));
+  const week=data.metrics.weeks.find(w=>w.repo===repo)!;
+  assert.equal(week.stoppedFindings,1);assert.equal(week.remainingFindings,1);
+ } finally {l.close();rmSync(dir,{recursive:true,force:true});delete process.env.CLAUDE_PROJECTS_DIR;delete process.env.CLAUDE_USAGE_DIR;}
+});
+
 test('usage scan errors are reported and returned instead of remaining pending',async()=>{
  const dir=setupClaudeUsageEnv('goal-tab-error-');const l=new Ledger(join(dir,'db.sqlite'));resetClaudeUsageForTest();
  try {

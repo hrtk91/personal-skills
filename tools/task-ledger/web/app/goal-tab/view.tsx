@@ -494,6 +494,8 @@ function Retro({ metrics }: { metrics?: GoalTabData["metrics"] }) {
   if (!weeks.length) return null;
   const done = weeks.reduce((n, w) => n + w.completed, 0);
   const first = weeks.reduce((n, w) => n + w.firstPass, 0);
+  const stoppedFindings = weeks.reduce((n, w) => n + w.stoppedFindings, 0);
+  const remainingFindings = weeks.reduce((n, w) => n + w.remainingFindings, 0);
   const failures = sum(weeks.map((w) => w.failures)).filter(([kind]) => kind !== "作業役への差し戻し" && kind !== "その他");
   const others = sum(weeks.map((w) => w.failures)).filter(([kind]) => kind === "作業役への差し戻し" || kind === "その他").reduce((n, [, v]) => n + v, 0);
   const review = sum(weeks.map((w) => w.reviewKinds));
@@ -525,6 +527,8 @@ function Retro({ metrics }: { metrics?: GoalTabData["metrics"] }) {
         <dl className={styles.retroFacts}>
           <div><dt>判断待ちで止まっていた時間</dt><dd>{span(latest.medianDecisionMs)}<span className={styles.s}>今週の真ん中の値。私かあなたの返事待ち</span></dd></div>
           <div><dt>始めてから済むまで</dt><dd>{span(latest.medianRunningToDoneMs)}<span className={styles.s}>今週の真ん中の値</span></dd></div>
+          <div><dt>止めた指摘</dt><dd>{stoppedFindings}</dd></div>
+          <div><dt>残りにした指摘</dt><dd>{remainingFindings}</dd></div>
           {titles.length ? <div><dt>何度も落ちた仕事</dt><dd>{titles.map(([title, n]) => <span key={title} className={styles.retroTitle}>{title}<span className={styles.s}>{n} 回</span></span>)}</dd></div> : null}
         </dl>
       </div>
