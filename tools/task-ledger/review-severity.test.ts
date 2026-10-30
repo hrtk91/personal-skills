@@ -53,17 +53,18 @@ test('remaining findings survive into task show and weekly finding metrics',()=>
  const f=fixture();try{writeFileSync(join(f.workdir,'handoff/t-report.md'),'終わりの条件: 満たした\n');const calls:string[]=[];advance(f.ledger,'repo-1',deps(JSON.stringify({verdict:'直す',reasons:['review'],fixes:[],findings:[finding('one leftover','ときどき','小',false),finding('another leftover','まれ','中',false)]}),calls),1);const output:string[]=[];main(['show','repo-1'],x=>output.push(x));assert.match(output.join('\n'),/残りにした指摘: \["one leftover","another leftover"\]/);const result=metrics(f.ledger,{weeks:4,now:Date.now()+1000});const week=result.weeks.find(w=>w.repo===f.repo)!;assert.equal(week.remainingFindings,2);assert.equal(week.stoppedFindings,0);}finally{f.cleanup();}
 });
 
-test('findings from a returned review and a catch-up re-review survive in task show and completion metrics',()=>{
+test('catch-up after a passed review skips re-review and preserves prior remaining findings',()=>{
  const f=fixture();try{
   const task=f.ledger.get('repo-1')!;
   f.ledger.setStatus(task.id,'レビュー中','レビュー指摘: {"stopped":["blocked one"],"remaining":["first leftover"],"findings":["blocked one","first leftover"]}');
   f.ledger.setStatus(task.id,'走行中','差し戻し: fix blocked one. 止めた指摘数: 1 blocked one');
-  f.ledger.setStatus(task.id,'確かめ中','本体が先に進んだため catchUp で確かめ直す');
-  f.ledger.setStatus(task.id,'レビュー中','レビュー指摘: {"stopped":[],"remaining":["first leftover","second leftover"],"findings":["first leftover","second leftover"]}');
-  const remaining=collectRemainingFindings(f.ledger.events(task.id));assert.deepEqual(remaining,['first leftover','second leftover']);
+  f.ledger.setStatus(task.id,'取り込み中','レビュー通過: 確認済み');
+  f.ledger.setStatus(task.id,'確かめ中','本体が先に進んでいたので、作業役のコピーに取り込んだ。確かめ直す');
+  f.ledger.setStatus(task.id,'取り込み中','本体取り込み後の確かめが通った。レビュー通過済みのため再レビューしない。');
+  const remaining=collectRemainingFindings(f.ledger.events(task.id));assert.deepEqual(remaining,['first leftover']);
   f.ledger.setStatus(task.id,'済',`取り込んだ。残りにした指摘: ${JSON.stringify(remaining)}`);
-  const output:string[]=[];main(['show',task.id],x=>output.push(x));assert.match(output.join('\\n'),/blocked one/);assert.match(output.join('\\n'),/first leftover/);assert.match(output.join('\\n'),/second leftover/);
-  const week=metrics(f.ledger,{weeks:4,now:Date.now()+1000}).weeks.find(w=>w.repo===f.repo)!;assert.equal(week.stoppedFindings,1);assert.equal(week.remainingFindings,2);
+  const output:string[]=[];main(['show',task.id],x=>output.push(x));assert.match(output.join('\\n'),/blocked one/);assert.match(output.join('\\n'),/first leftover/);assert.doesNotMatch(output.join('\\n'),/second leftover/);
+  const week=metrics(f.ledger,{weeks:4,now:Date.now()+1000}).weeks.find(w=>w.repo===f.repo)!;assert.equal(week.stoppedFindings,1);assert.equal(week.remainingFindings,1);
  }finally{f.cleanup();}
 });
 

@@ -664,12 +664,37 @@ test('review confirmation uses only the original major finding list and does not
     let n=0;const calls:{prompt:string;session?:{sessionId?:string;resumePrompt?:string}}[]=[];const d=deps('');
     d.review=(prompt,_cwd,_dirs,session)=>{calls.push({prompt,session});n++;return {answer:n===1?'{"verdict":"通す","reasons":[],"fixes":[],"findings":[{"text":"fix","likelihood":"いつも","harm":"大","blocking":true}]}':'{"items":[{"text":"fix","status":"直った"}]}',attributes:{'review.session_id':`s${n}`}};};
     advance(f.ledger,'repo-1',d,410);assert.equal(f.ledger.get('repo-1')!.status,'走行中');
+    writeFileSync(join(f.workdir,'math.js'),'export const sub = (a, b) => a - b; // 修正内容だけ\n');git(f.workdir,'add','math.js');git(f.workdir,'commit','-qm','fix review finding');
     f.ledger.setStatus('repo-1','確かめ中','worker returned');f.ledger.releaseRunner('repo-1');
     advance(f.ledger,'repo-1',d,411);
     assert.equal(calls.length,2);assert.match(calls[1]!.prompt,/初回の大指摘一覧:[\s\S]*fix/);
+    assert.match(calls[1]!.prompt,/直しの差分 .*review-confirmation-delta/);
+    assert.doesNotMatch(calls[1]!.prompt,/diff-2\.log/);
+    const deltaPath=calls[1]!.prompt.match(/直しの差分 ([^ ]+) のみ/)![1]!;assert.match(readFileSync(deltaPath,'utf8'),/修正内容だけ/);assert.doesNotMatch(readFileSync(deltaPath,'utf8'),/mul\.js/);
     assert.doesNotMatch(calls[1]!.prompt,/外の変更|前回のレビュー以後/);
     assert.equal(f.ledger.get('repo-1')!.status,'済');
+    const confirmationSpan=f.ledger.spans('repo-1').filter(span=>span.name==='レビュー')[1]!;
+    assert.equal(confirmationSpan.ok,true);assert.equal(confirmationSpan.attributes['review.verdict'],'確認:直った');assert.equal(confirmationSpan.attributes['review.unresolved'],'[]');
   }finally{f.done();}
+});
+
+test('catch-up conflicts after a passing review do not trigger another review, including after confirmation',()=>{
+  for(const major of [false,true]){
+    const f=fixture();try{
+      writeFileSync(join(f.workdir,'math.js'),'export const sub = (a, b) => a - b; // worker version\n');git(f.workdir,'add','math.js');git(f.workdir,'commit','-qm','worker conflict');
+      writeFileSync(join(f.repo,'math.js'),'export const sub = (a, b) => a - b; // repository version\n');git(f.repo,'add','math.js');git(f.repo,'commit','-qm','repository conflict');
+      writeFileSync(join(f.workdir,'handoff/t-report.md'),'終わりの条件: 満たした\n');const calls:string[]=[];let n=0;const d=deps('',calls);
+      d.review=(prompt)=>{calls.push(`review:${prompt}`);n++;return n===1&&major
+        ?'{"verdict":"通す","reasons":[],"fixes":[],"findings":[{"text":"major","likelihood":"いつも","harm":"大","blocking":true}]}'
+        :major&&n===2?'{"items":[{"text":"major","status":"直った"}]}':'{"verdict":"通す","reasons":[],"fixes":[]}';};
+      advance(f.ledger,'repo-1',d,500);
+      if(major){assert.equal(f.ledger.get('repo-1')!.status,'走行中');f.ledger.setStatus('repo-1','確かめ中','worker fixed');f.ledger.releaseRunner('repo-1');advance(f.ledger,'repo-1',d,501);}
+      assert.equal(f.ledger.get('repo-1')!.status,'走行中');assert.match(f.ledger.get('repo-1')!.note!,/差し戻し:.*衝突/);
+      writeFileSync(join(f.workdir,'math.js'),'export const sub = (a, b) => a - b; // conflict resolved\n');git(f.workdir,'add','math.js');git(f.workdir,'commit','-qm','resolve catch-up conflict');
+      f.ledger.setStatus('repo-1','確かめ中','worker resolved');f.ledger.releaseRunner('repo-1');advance(f.ledger,'repo-1',d,502);
+      assert.equal(f.ledger.get('repo-1')!.status,'済');assert.equal(n,major?2:1);
+    }finally{f.done();}
+  }
 });
 
 test('failed resume retries once with a fresh session and the full review prompt',()=>{

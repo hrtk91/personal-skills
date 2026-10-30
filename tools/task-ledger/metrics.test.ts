@@ -11,6 +11,7 @@ test('classifies recorded event wording and measures first pass despite ordinary
  const cases:[string,string|null,string,string][]=[
   ['差し戻し: 確かめのコマンド `npm test` が落ちた。','確かめ中','走行中','作業役の検査が落ちた'],
   ['レビューで直すことになった。直す。','レビュー中','走行中','レビューの差し戻し'],
+  ['差し戻し: レビュー確認: 初回の大指摘を直して確認する。止めた指摘数: 1','レビュー中','走行中','レビューの差し戻し'],
   ['本体との衝突の印を解消してください。','取り込み中','判断待ち','本体との食い違い'],
   ['作業役の報告が、終わりの条件を満たしていないと書いている','レビュー中','走行中','作業役の自己申告（未完了）'],
   ['作業役を回す台本が失敗した','走行中','判断待ち','台本・環境の失敗'],
@@ -30,7 +31,7 @@ test('classifies recorded event wording and measures first pass despite ordinary
 test('review send-back stores reviewer kinds in the resulting event', async () => {
  const dir=mkdtempSync(join('/tmp','task-metrics-review-'));const repo=join(dir,'repo');const l=new Ledger(join(dir,'db.sqlite'));const task=l.add({repo,title:'reviewed',why:'reason',brief:'handoff/x.md'});l.setStatus(task.id,'走行中','start',{attempts:1});l.setStatus(task.id,'レビュー中','checked');l.setRunner(task.id,{workdir:dir});
  const deps:AdvanceDeps={sh:()=>({code:0,output:'HEAD'}),review:()=>'{"verdict":"通す","reasons":[],"fixes":[],"kinds":["実装の誤り"],"findings":[{"text":"修正","likelihood":"いつも","harm":"大","blocking":true}]}',resend:()=>44,pause:()=>{}};
- try{advance(l,task.id,deps);assert.equal(l.events(task.id).at(-1)?.kind,'実装の誤り');}finally{l.close();rmSync(dir,{recursive:true,force:true});}
+ try{advance(l,task.id,deps);assert.equal(l.events(task.id).at(-1)?.kind,'実装の誤り');const result=metrics(l,{repo,weeks:4,now:Date.now()+1000});assert.equal(result.weeks[0]?.failures['レビューの差し戻し'],1);assert.equal(result.weeks[0]?.reviewKinds['実装の誤り'],1);}finally{l.close();rmSync(dir,{recursive:true,force:true});}
 });
 
 test('a review decision send-back also stores reviewer kinds in the resulting event', () => {

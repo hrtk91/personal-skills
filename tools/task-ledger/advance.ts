@@ -100,6 +100,11 @@ export function advance(ledger: Ledger, id: string, deps: AdvanceDeps, pid = pro
           return said;
         }
       }
+      if (reviewPassedBeforeCatchUp(ledger.events(id))) {
+        ledger.setStatus(id, '取り込み中', `本体取り込み後の確かめが通った。レビュー通過済みのため再レビューしない。出力: ${path}`);
+        said.push(`${id}: 取り込み後の確かめが通ったためレビューを飛ばす`);
+        continue;
+      }
     } else if (task.status === 'レビュー中') {
       const workdir = task.workdir!;
       const base = deps.sh(`git merge-base HEAD ${quote(gitHead(task.repo, deps))}`, workdir, 60_000).output.trim();
@@ -108,11 +113,15 @@ export function advance(ledger: Ledger, id: string, deps: AdvanceDeps, pid = pro
       const harnessFiles = task.brief ? [task.brief, ...['-report.md', '-design.md', '-review.md'].map((suffix) => task.brief!.replace(/\.md$/, suffix))] : [];
       const outsideFiles = outsideTaskFiles(changedPaths, [...task.files, ...harnessFiles]);
       const checkPath = logPath(id).replace(/\.log$/, `-check-${task.attempts}.log`);
-      const pendingConfirmation = pendingReviewConfirmation(ledger.events(id));
-      const fullPrompt = pendingConfirmation
-        ? `確認レビューです。全体の再レビューや新しい指摘は禁止です。以下の初回の害「大」の指摘だけを対象に、現在の差分 ${diffPath} を確認してください。各指摘について「直った」または「直っていない」だけ答えてください。新しい指摘は受け付けません。\n初回の大指摘一覧:\n${pendingConfirmation.map((text, index) => `${index + 1}. ${text}`).join('\n')}\n\nJSONのみ: {"items":[{"text":"初回指摘の文面","status":"直った|直っていない"}]}`
-        : reviewPrompt(task, diffPath, checkPath, outsideFiles);
+      const taskEvents = ledger.events(id);
+      const pendingConfirmation = pendingReviewConfirmation(taskEvents);
       const previous = ledger.claudeSession(id, 'review');
+      const confirmationDiffPath = pendingConfirmation && previous?.head
+        ? writeLog(id, `review-confirmation-delta-${task.attempts}`, deps.sh(`git diff ${quote(previous.head)} HEAD`, workdir, 60_000).output)
+        : diffPath;
+      const fullPrompt = pendingConfirmation
+        ? `確認レビューです。全体の再レビューや新しい指摘は禁止です。以下の初回の害「大」の指摘だけを対象に、直しの差分 ${confirmationDiffPath} のみを確認してください。各指摘について「直った」または「直っていない」だけ答えてください。新しい指摘は受け付けません。\n初回の大指摘一覧:\n${pendingConfirmation.map((text, index) => `${index + 1}. ${text}`).join('\n')}\n\nJSONのみ: {"items":[{"text":"初回指摘の文面","status":"直った|直っていない"}]}`
+        : reviewPrompt(task, diffPath, checkPath, outsideFiles);
       const currentHead = gitHead(workdir, deps);
       const canResume = !pendingConfirmation && previous && previous.cwd === workdir && previous.uses < 4;
       let sessionId = canResume ? previous.session_id : randomUUID();
@@ -134,8 +143,14 @@ export function advance(ledger: Ledger, id: string, deps: AdvanceDeps, pid = pro
         if (typeof sid === 'string' && sid) ledger.saveClaudeSession(id, 'review', sid, workdir, currentHead, uses);
         return result;
       }, (got) => {
-        const found = parseVerdict(typeof got === 'string' ? got : got.answer);
-        return { ok: found !== null, attributes: { ...(typeof got === 'string' ? {} : got.attributes), ...(outsideFiles.length ? { 'diff.outside_files': JSON.stringify(outsideFiles) } : {}), 'review.verdict': found?.verdict ?? '読めない' } };
+        const answerText = typeof got === 'string' ? got : got.answer;
+        const attributes = typeof got === 'string' ? {} : got.attributes;
+        if (pendingConfirmation) {
+          const confirmation = parseReviewConfirmation(answerText, pendingConfirmation);
+          return { ok: confirmation !== null && confirmation.unresolved.length === 0, attributes: { ...attributes, 'review.verdict': confirmation ? (confirmation.unresolved.length ? '確認:直っていない' : '確認:直った') : '読めない', ...(confirmation ? { 'review.confirmed': JSON.stringify(pendingConfirmation), 'review.unresolved': JSON.stringify(confirmation.unresolved), 'review.new_findings': JSON.stringify(confirmation.newFindings) } : {}) } };
+        }
+        const found = parseVerdict(answerText);
+        return { ok: found !== null, attributes: { ...attributes, ...(outsideFiles.length ? { 'diff.outside_files': JSON.stringify(outsideFiles) } : {}), 'review.verdict': found?.verdict ?? '読めない' } };
       });
       const answer = typeof reply === 'string' ? reply : reply.answer;
       const reviewSession = typeof reply === 'string' ? undefined : reply.attributes?.['review.session_id'];
@@ -146,7 +161,7 @@ export function advance(ledger: Ledger, id: string, deps: AdvanceDeps, pid = pro
         if (!confirmation) return stop('レビュー確認の答えから指摘ごとの「直った／直っていない」を読めなかった');
         ledger.setStatus(id, 'レビュー中', `レビュー指摘: ${JSON.stringify({ stopped: confirmation.unresolved, remaining: confirmation.newFindings, findings: [...pendingConfirmation, ...confirmation.newFindings] })}`);
         if (confirmation.unresolved.length) return stop(`レビュー確認で直っていない指摘: ${confirmation.unresolved.join(' / ')}`);
-        ledger.setStatus(id, '取り込み中', `レビュー確認: 初回の大指摘はすべて直った。${confirmation.newFindings.length ? `残りにした指摘: ${JSON.stringify(confirmation.newFindings)}` : ''}`);
+        ledger.setStatus(id, '取り込み中', `レビュー通過: 確認済み。初回の大指摘はすべて直った。${confirmation.newFindings.length ? `残りにした指摘: ${JSON.stringify(confirmation.newFindings)}` : ''}`);
         continue;
       }
       const verdict = parseVerdict(answer);
@@ -160,18 +175,20 @@ export function advance(ledger: Ledger, id: string, deps: AdvanceDeps, pid = pro
       if (verdict.verdict === '判断') { stop(`レビュー: ${verdict.reasons.join(' / ')}`); ledger.setEventKind(task.id, ledger.events(task.id).at(-1)!.at, normalizeReviewKinds(verdict.kinds).join(',')); return said; }
       if (verdict.findings !== undefined) {
         if (blocking.length) {
+          // Keep the exact first-review HEAD even when a test/injected reviewer has no resumable session metadata.
+          ledger.saveClaudeSession(id, 'review', sessionId, workdir, currentHead, Math.max(4, uses));
           const reason = `レビュー確認: 初回の大指摘を直して確認する。止めた指摘数: ${blocking.length} ${blocking.map((finding) => finding.text).join(' ')}`;
           sendBack(ledger, task, deps, reason, blocking.map((finding) => `- ${finding.text}`).join('\n'), said, stop);
           ledger.setEventKind(task.id, ledger.events(task.id).at(-1)!.at, normalizeReviewKinds(verdict.kinds).join(','));
           return said;
         }
         const left = remaining.length ? `残りにした指摘: ${JSON.stringify(remaining.map((finding) => finding.text))}` : '';
-        ledger.setStatus(id, '取り込み中', [`レビュー: ${verdict.reasons.join(' / ') || '通す'}`, left].filter(Boolean).join(' '));
+        ledger.setStatus(id, '取り込み中', [`レビュー通過: ${verdict.reasons.join(' / ') || '通す'}`, left].filter(Boolean).join(' '));
       } else {
         if (verdict.verdict === '判断') { stop(`レビュー: ${verdict.reasons.join(' / ')}`); ledger.setEventKind(task.id, ledger.events(task.id).at(-1)!.at, normalizeReviewKinds(verdict.kinds).join(',')); return said; }
         const legacyRemaining = verdict.verdict === '直す' ? [...verdict.reasons, ...verdict.fixes] : [];
         if (legacyRemaining.length) ledger.setStatus(id, 'レビュー中', `レビュー指摘: ${JSON.stringify({ stopped: [], remaining: legacyRemaining, findings: legacyRemaining })}`);
-        ledger.setStatus(id, '取り込み中', [`レビュー: ${verdict.reasons.join(' / ') || '通す'}`, legacyRemaining.length ? `残りにした指摘: ${JSON.stringify(legacyRemaining)}` : ''].filter(Boolean).join(' '));
+        ledger.setStatus(id, '取り込み中', [`レビュー通過: ${verdict.reasons.join(' / ') || '通す'}`, legacyRemaining.length ? `残りにした指摘: ${JSON.stringify(legacyRemaining)}` : ''].filter(Boolean).join(' '));
       }
     } else if (task.status === '取り込み中') {
       const lock = join(dirname(defaultPath()), 'merge-locks', task.repo.replaceAll('/', '_'));
@@ -366,6 +383,7 @@ function pendingReviewConfirmation(events: Array<{ note: string | null }>): stri
   const marker = [...events].reverse().find((event) => event.note?.startsWith('差し戻し: レビュー確認:'));
   if (!marker) return null;
   const markerIndex = events.indexOf(marker);
+  if (events.some((event, index) => index > markerIndex && event.note?.startsWith('レビュー通過: 確認済み'))) return null;
   for (let index = markerIndex - 1; index >= 0; index--) {
     const match = events[index]?.note?.match(/レビュー指摘: (\{[^\n]*\})/);
     if (!match) continue;
@@ -375,6 +393,16 @@ function pendingReviewConfirmation(events: Array<{ note: string | null }>): stri
     } catch { return null; }
   }
   return null;
+}
+
+function reviewPassedBeforeCatchUp(events: Array<{ note: string | null }>): boolean {
+  let passed = -1;
+  let caughtUp = -1;
+  events.forEach((event, index) => {
+    if (event.note?.startsWith('レビュー通過:')) passed = index;
+    if (event.note?.includes('本体が先に進んでいたので') || (event.note?.startsWith('差し戻し:') && event.note.includes('本体が先に進み'))) caughtUp = index;
+  });
+  return passed >= 0 && caughtUp > passed;
 }
 
 function parseReviewConfirmation(answer: string, expected: string[]): { unresolved: string[]; newFindings: string[] } | null {
