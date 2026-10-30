@@ -76,9 +76,8 @@ function validateBrief(markdown: string): void {
   if (missing.length) throw new Error(`依頼文に必須の見出しがありません: ${missing.map((heading) => `## ${heading}`).join('、')}`);
   const endHeading = markdown.match(/^##\s+終わりの条件\s*\r?\n/m);
   const section = endHeading ? markdown.slice(endHeading.index! + endHeading[0].length).split(/^##\s+/m)[0]! : '';
-  const firstLine = section.split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? '';
-  if (!/^終わりの条件: 満たした$|^終わりの条件: 満たしていない(?:（環境）)? — .+$/.test(firstLine)) {
-    throw new Error('依頼文の「## 終わりの条件」の最初の行は「終わりの条件: 満たした」または「終わりの条件: 満たしていない — …」の形式にしてください');
+  if (!section.includes('終わりの条件: 満たした')) {
+    throw new Error('依頼文の「## 終わりの条件」節内に、報告の1行目を「終わりの条件: 満たした」「終わりの条件: 満たしていない — …」「終わりの条件: 満たしていない（環境） — …」のいずれかで書くよう指定してください');
   }
 }
 
