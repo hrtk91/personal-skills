@@ -67,6 +67,9 @@ function capacity(points: LimitRow[], rows: UsageRow[], key: 'five_hour'|'seven_
   return { intervals: intervals.length, perPercent: totalPct?totalTokens/totalPct:null, capacity100: totalPct?totalTokens/totalPct*100:null, medianPerPercent:quantile(per,.5), rangePerPercent:{low:quantile(per,.25),high:quantile(per,.75)}, weightedWithModelPrices:totalPct?totalTokens/totalPct:null, weightedWithoutModelPrices:totalPct?totalUnpriced/totalPct:null, capacity100WithModelPrices:totalPct?totalTokens/totalPct*100:null, capacity100WithoutModelPrices:totalPct?totalUnpriced/totalPct*100:null, coefficients };
 }
 export function getClaudeUsage(days=7, now=Date.now()) {
+  if (process.env.NODE_TEST_CONTEXT && (!process.env.CLAUDE_PROJECTS_DIR || !process.env.CLAUDE_USAGE_DIR)) {
+    throw new Error('claudeUsage tests must set CLAUDE_PROJECTS_DIR and CLAUDE_USAGE_DIR to temporary directories');
+  }
   const transcriptDir=process.env.CLAUDE_PROJECTS_DIR??join(homedir(),'.claude/projects'), usageDir=process.env.CLAUDE_USAGE_DIR??join(homedir(),'.local/share/claude-usage'), cachePath=join(usageDir,'transcript-usage.json');
   let cache:Cache={files:{}}; try { cache=JSON.parse(readFileSync(cachePath,'utf8')); if(!cache.files) cache={files:{}}; } catch {}
   const root=transcriptDir, fileList:string[]=[];

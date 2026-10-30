@@ -7,8 +7,16 @@ import { join } from 'node:path';
 import { Ledger } from '../../../ledger.ts';
 import { loadGoalData,submitIntent } from './server.ts';
 
+function setupClaudeUsageEnv(prefix:string) {
+ const dir=mkdtempSync(join(tmpdir(),prefix));
+ process.env.CLAUDE_PROJECTS_DIR=join(dir,'claude-projects');
+ process.env.CLAUDE_USAGE_DIR=join(dir,'claude-usage');
+ mkdirSync(process.env.CLAUDE_PROJECTS_DIR,{recursive:true});
+ return dir;
+}
+
 test('loader emits decisions, ready queue, goal stages and recent rows; actions mutate a temporary ledger',async()=>{
- const dir=mkdtempSync(join(tmpdir(),'goal-tab-'));process.env.CLAUDE_PROJECTS_DIR=join(dir,'claude-projects');process.env.CLAUDE_USAGE_DIR=join(dir,'claude-usage');const l=new Ledger(join(dir,'db.sqlite'));mkdirSync(process.env.CLAUDE_PROJECTS_DIR,{recursive:true});
+ const dir=setupClaudeUsageEnv('goal-tab-');const l=new Ledger(join(dir,'db.sqlite'));
  try {
   const repo='/tmp/example-project';const goal=l.addGoal({repo,title:'Ship it',stages:['Build','Ship']});
   const issue=l.addIssue({repo,title:'Build thing',goal_id:goal.id,stage:'Build',by:'Claude'});
@@ -32,7 +40,7 @@ test('loader emits decisions, ready queue, goal stages and recent rows; actions 
 });
 
 test('queue includes blocked waiting tasks with reasons after ready tasks',()=>{
- const dir=mkdtempSync(join(tmpdir(),'goal-tab-blocked-'));process.env.CLAUDE_PROJECTS_DIR=join(dir,'claude-projects');process.env.CLAUDE_USAGE_DIR=join(dir,'claude-usage');mkdirSync(process.env.CLAUDE_PROJECTS_DIR,{recursive:true});const l=new Ledger(join(dir,'db.sqlite'));
+ const dir=setupClaudeUsageEnv('goal-tab-blocked-');const l=new Ledger(join(dir,'db.sqlite'));
  try {
   const repo='/tmp/blocked-project';
   const active=l.add({repo,title:'Active overlap blocker',why:'test',brief:'brief',files:['shared.ts']});l.setStatus(active.id,'走行中');

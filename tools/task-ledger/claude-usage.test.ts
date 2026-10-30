@@ -10,6 +10,23 @@ const assistant=(at:string,usage:any={},model='claude-opus-4',extra:any={})=>JSO
 function setup(){const dir=mkdtempSync(join(tmpdir(),'claude-usage-'));const proj=join(dir,'projects','example');mkdirSync(proj,{recursive:true});const usage=join(dir,'usage');mkdirSync(usage);process.env.CLAUDE_PROJECTS_DIR=join(dir,'projects');process.env.CLAUDE_USAGE_DIR=usage;return{dir,proj,usage};}
 const user=(content:string)=>JSON.stringify({type:'user',message:{content}});
 
+test('test execution refuses default Claude paths when either isolation variable is missing',()=>{
+ assert.ok(process.env.NODE_TEST_CONTEXT, 'this guard test must run under node:test');
+ const projects=process.env.CLAUDE_PROJECTS_DIR, usage=process.env.CLAUDE_USAGE_DIR;
+ try {
+  process.env.CLAUDE_PROJECTS_DIR=projects??join(tmpdir(),'guard-projects');
+  process.env.CLAUDE_USAGE_DIR=usage??join(tmpdir(),'guard-usage');
+  delete process.env.CLAUDE_PROJECTS_DIR;
+  assert.throws(()=>getClaudeUsage(),/must set CLAUDE_PROJECTS_DIR and CLAUDE_USAGE_DIR/);
+  process.env.CLAUDE_PROJECTS_DIR=projects??join(tmpdir(),'guard-projects');
+  delete process.env.CLAUDE_USAGE_DIR;
+  assert.throws(()=>getClaudeUsage(),/must set CLAUDE_PROJECTS_DIR and CLAUDE_USAGE_DIR/);
+ } finally {
+  if(projects===undefined) delete process.env.CLAUDE_PROJECTS_DIR; else process.env.CLAUDE_PROJECTS_DIR=projects;
+  if(usage===undefined) delete process.env.CLAUDE_USAGE_DIR; else process.env.CLAUDE_USAGE_DIR=usage;
+ }
+});
+
 test('incremental transcripts classify callers/reasons, calculate token weights, skip corrupt lines and read appends',()=>{
  const env=setup(),file=join(env.proj,'session.jsonl');const at=new Date().toISOString();
  try{
