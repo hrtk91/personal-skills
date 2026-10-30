@@ -46,14 +46,16 @@ export function defaultPath(): string {
   return process.env.TASK_LEDGER_DB ?? join(homedir(), '.local/share/task-ledger/ledger.sqlite');
 }
 
-function spawnDecisionRefresh(id: string): void {
+function spawnDecisionRefresh(id: string, ledgerPath: string): void {
   const command = process.env.TASK_BIN || join(import.meta.dirname, 'bin/task');
   const reportFailure = (error: unknown) => {
     const reason = error instanceof Error ? error.message : String(error);
     process.stderr.write(`task decision refresh 起動失敗: ${reason.replace(/[\r\n]+/g, ' ')}\n`);
   };
   try {
-    const child = spawn(command, ['decision', 'refresh', id], { detached: true, stdio: 'ignore' });
+    const child = spawn(command, ['decision', 'refresh', id], {
+      detached: true, stdio: 'ignore', env: { ...process.env, TASK_LEDGER_DB: ledgerPath },
+    });
     child.on('error', reportFailure);
     child.unref();
   } catch (error) { reportFailure(error); /* Status changes are already committed. */ }
@@ -61,9 +63,11 @@ function spawnDecisionRefresh(id: string): void {
 
 export class Ledger {
   readonly db: DatabaseSync;
+  readonly path: string;
   private readonly now: () => Date;
 
   constructor(path = defaultPath(), now: () => Date = () => new Date()) {
+    this.path = path;
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
     this.db = new DatabaseSync(path);
     this.now = now;
@@ -205,7 +209,7 @@ export class Ledger {
       if (status === '判断待ち' && task.status !== '判断待ち') decisionIds.unshift(id);
       this.db.exec('COMMIT');
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
-    for (const decisionId of decisionIds) spawnDecisionRefresh(decisionId);
+    if (this.path !== ':memory:') for (const decisionId of decisionIds) spawnDecisionRefresh(decisionId, this.path);
     return this.get(id)!;
   }
 

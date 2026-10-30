@@ -53,6 +53,34 @@ test('TASK_BIN is used from a relocated ledger bundle, and a missing command rep
  } finally {ledger.close();if(oldBin===undefined)delete process.env.TASK_BIN;else process.env.TASK_BIN=oldBin;rmSync(dir,{recursive:true,force:true});}
 });
 
+test('refresh child receives the open temporary ledger path when TASK_BIN is unset',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'decision-ledger-env-')),db=join(dir,'ledger.sqlite'),oldBin=process.env.TASK_BIN,oldDb=process.env.TASK_LEDGER_DB,oldClaude=process.env.TASK_CLAUDE_BIN;
+ const received=join(dir,'received-ledger');const claude=join(dir,'claude');writeFileSync(claude,`#!/bin/sh\nprintf '%s' "$TASK_LEDGER_DB" > '${received}'\ncat '${join(dir,'response')}'\n`);chmodSync(claude,0o755);writeFileSync(join(dir,'response'),good);
+ const ledger=new Ledger(db);
+ try {
+  delete process.env.TASK_BIN;process.env.TASK_LEDGER_DB=join(dir,'wrong-parent-default.sqlite');process.env.TASK_CLAUDE_BIN=claude;
+  const task=ledger.add({repo:dir,title:'isolated ledger',why:'verify child ledger propagation',brief:'brief.md'});
+  ledger.setStatus(task.id,'判断待ち','blocked');
+  let card=null;
+  for(let i=0;i<250&&!card;i++){await delay(20);card=ledger.decisionCard(task.id,ledger.events(task.id).at(-1)!.at);}
+  assert.ok(card,'actual task CLI child should refresh the card');
+  assert.equal(process.env.TASK_LEDGER_DB,join(dir,'wrong-parent-default.sqlite'));
+  assert.equal(ledger.path,db);
+  assert.equal(readFileSync(received,'utf8'),db);
+  assert.equal(ledger.decisionCard(task.id,ledger.events(task.id).at(-1)!.at)?.json.situation,'目的と停止状況。');
+ } finally {ledger.close();if(oldBin===undefined)delete process.env.TASK_BIN;else process.env.TASK_BIN=oldBin;if(oldDb===undefined)delete process.env.TASK_LEDGER_DB;else process.env.TASK_LEDGER_DB=oldDb;if(oldClaude===undefined)delete process.env.TASK_CLAUDE_BIN;else process.env.TASK_CLAUDE_BIN=oldClaude;rmSync(dir,{recursive:true,force:true});}
+});
+
+test('an in-memory ledger never starts a decision refresh child',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'decision-memory-')),oldBin=process.env.TASK_BIN,oldDb=process.env.TASK_LEDGER_DB;
+ const called=join(dir,'called'),fake=join(dir,'fake-task');writeFileSync(fake,`#!/bin/sh\nprintf called > '${called}'\n`);chmodSync(fake,0o755);
+ const ledger=new Ledger(':memory:');
+ try {
+  process.env.TASK_BIN=fake;process.env.TASK_LEDGER_DB=join(dir,'safe.sqlite');const task=ledger.add({repo:dir,title:'memory',why:'no child for memory',brief:'brief'});
+  ledger.setStatus(task.id,'判断待ち','blocked');await delay(100);assert.equal(existsSync(called),false);assert.equal(ledger.get(task.id)?.status,'判断待ち');
+ } finally {ledger.close();if(oldBin===undefined)delete process.env.TASK_BIN;else process.env.TASK_BIN=oldBin;if(oldDb===undefined)delete process.env.TASK_LEDGER_DB;else process.env.TASK_LEDGER_DB=oldDb;rmSync(dir,{recursive:true,force:true});}
+});
+
 test('decision card validates and retries invalid JSON exactly once; refresh creates card',()=>{
  const dir=mkdtempSync(join(tmpdir(),'decision-card-')),oldBin=process.env.TASK_CLAUDE_BIN,oldModel=process.env.TASK_DECISION_MODEL;
  const counter=join(dir,'count'),bin=join(dir,'claude');
