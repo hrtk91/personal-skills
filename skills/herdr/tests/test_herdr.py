@@ -186,6 +186,7 @@ class HerdrContractTest(unittest.TestCase):
         for path, source in {
             self.bin / "herdr": FAKE_HERDR,
             self.bin / "sleep": "#!/bin/sh\nexit 0\n",
+            self.bin / "systemctl": "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$FAKE_SYSTEMCTL_CALLS\"\n[ \"${FAKE_SYSTEMCTL_FAIL:-0}\" = 0 ]\n",
             self.bin / "git": "#!/usr/bin/env python3\nimport os,sys,subprocess\nfrom pathlib import Path\n"
                 "if os.environ.get('FAKE_COMMIT_FAIL') == '1' and 'commit' in sys.argv and os.environ['FAKE_W'] in sys.argv:\n    sys.exit(1)\n"
                 f"result = subprocess.run([{GIT!r}] + sys.argv[1:])\n"
@@ -225,11 +226,11 @@ class HerdrContractTest(unittest.TestCase):
                 "COMMIT_DIRTY", "COMMIT_NAME", "COMMIT_EMAIL", "DIRTY_COMMIT_NAME", "DIRTY_COMMIT_EMAIL", "AGENT", "IMPL_AGENT", "REV_AGENT", "SEND_BACK_BRIEF_REFRESHED",
                 # The parent Herdr session may carry a live TASK_ID / DB path. These offline contract tests
                 # must never mutate a caller's task ledger while exercising the fake harness.
-                "TASK_ID", "TASK_ISSUE_ID", "TASK_LEDGER_DB",
+                "TASK_ID", "TASK_ISSUE_ID", "TASK_LEDGER_DB", "TASK_KICK", "TASK_RUN_AFTER",
             }:
                 self.env.pop(key)
         self.env.update({"PATH": str(self.bin) + os.pathsep + self.env["PATH"], "HERDR_WORKSPACE_ID": "test-workspace",
-            "CODEX_HOME": str(self.home), "FAKE_STATE": str(self.state_path), "FAKE_NAME": self.name,
+            "CODEX_HOME": str(self.home), "FAKE_STATE": str(self.state_path), "FAKE_SYSTEMCTL_CALLS": str(self.root / "systemctl-calls.txt"), "FAKE_NAME": self.name,
             "FAKE_WORK": str(self.work), "FAKE_W": str(self.w), "FAKE_CLAUDE_ARGS": str(self.claude_args), "FAKE_CLAUDE_CALLS": str(self.root / "claude-calls.jsonl"), "FAKE_CLAUDE_CHILD_PID": str(self.root / "claude-child.pid"), "FAKE_PANE_OUTPUT": str(self.root / "pane-output.txt"), "PI_CHANNEL_EXT": str(self.channel_ext),
             "CHANNEL_BIN": str(self.channel_bin), "AGENT_CHANNEL": str(self.channel_log),
             # Offline contract runs must not inherit an active ledger task context.
@@ -590,7 +591,7 @@ class HerdrContractTest(unittest.TestCase):
 
     def test_ledger_task_skips_peer_review_commits_and_waits_for_checks(self):
         task_id = self.ledger_task()
-        result = self.run_script(TASK_ID=task_id, TASK_LEDGER_DB=str(self.root / "ledger.sqlite"), TASK_RUN_AFTER="0")
+        result = self.run_script(TASK_ID=task_id, TASK_LEDGER_DB=str(self.root / "ledger.sqlite"))
         self.assertEqual(result.returncode, 0, (self.work / "herdr-contract.log").read_text())
         self.assertEqual(self.marker(), "implemented")
         self.assertEqual(len(self.starts()), 1)
@@ -600,6 +601,20 @@ class HerdrContractTest(unittest.TestCase):
         self.assertEqual(task["agent"], "impl-contract")
         self.assertEqual(task["commit"], self.git("rev-parse", "HEAD", cwd=self.w).strip())
         self.assertNotEqual(task["commit"], self.initial_head)
+        self.assertEqual((self.root / "systemctl-calls.txt").read_text().splitlines(),
+            ["--user start --no-block task-ledger.service"])
+
+    def test_ledger_kick_failure_does_not_change_script_exit_status(self):
+        task_id = self.ledger_task()
+        result = self.run_script(TASK_ID=task_id, TASK_LEDGER_DB=str(self.root / "ledger.sqlite"), FAKE_SYSTEMCTL_FAIL="1")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((self.root / "systemctl-calls.txt").read_text().splitlines(),
+            ["--user start --no-block task-ledger.service"])
+        self.assertIn("task-ledger.service の起動に失敗した", (self.work / "herdr-contract.log").read_text())
+
+    def test_no_task_or_disabled_kick_does_not_call_systemctl(self):
+        self.assert_success(self.run_script(TASK_KICK="0"))
+        self.assertFalse((self.root / "systemctl-calls.txt").exists())
 
     def test_issue_task_generates_brief_in_worker_copy_without_repo_brief(self):
         created = self.ledger("issue", "add", "--repo", str(self.repo), "--title", "Issue仕事", "--なぜ", "理由", "--今の状態", "確認済みの現状", "--関係する所", "baseline.txt")
