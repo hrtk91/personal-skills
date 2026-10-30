@@ -106,6 +106,20 @@ test('decision cards not immediately caused by review do not fork',()=>{
  finally{ledger.close();if(oldBin===undefined)delete process.env.TASK_CLAUDE_BIN;else process.env.TASK_CLAUDE_BIN=oldBin;rmSync(dir,{recursive:true,force:true});}
 });
 
+test('a non-review decision card ignores a stale review cwd and still uses a new conversation',()=>{
+ const dir=mkdtempSync(join(tmpdir(),'decision-stale-cwd-')),missing=join(dir,'removed-copy'),oldBin=process.env.TASK_CLAUDE_BIN,capture=join(dir,'capture'),bin=join(dir,'claude');
+ writeFileSync(bin,`#!/bin/sh\nprintf '%s' "$PWD" > '${capture}.cwd'\nprintf '%s' "$*" > '${capture}.args'\ncat >/dev/null\nprintf '%s' '${good.replaceAll("'", "'\\''")}'\n`);chmodSync(bin,0o755);const ledger=new Ledger(join(dir,'db.sqlite'));
+ try {process.env.TASK_CLAUDE_BIN=bin;const task=ledger.add({repo:dir,title:'stale cwd',why:'why',brief:'brief.md'});ledger.saveClaudeSession(task.id,'review','old-review',missing,'head');ledger.setStatus(task.id,'判断待ち','not from review');const event=ledger.events(task.id).at(-1)!;assert.ok(createDecisionCard(ledger,ledger.get(task.id)!,event.at,'blocked'));assert.equal(readFileSync(capture+'.cwd','utf8'),process.cwd());assert.doesNotMatch(readFileSync(capture+'.args','utf8'),/--resume|--fork-session/);}
+ finally{ledger.close();if(oldBin===undefined)delete process.env.TASK_CLAUDE_BIN;else process.env.TASK_CLAUDE_BIN=oldBin;rmSync(dir,{recursive:true,force:true});}
+});
+
+test('a failed fork retries as a fresh conversation without the stale cwd',()=>{
+ const dir=mkdtempSync(join(tmpdir(),'decision-fork-fallback-')),missing=join(dir,'removed-copy'),oldBin=process.env.TASK_CLAUDE_BIN,capture=join(dir,'capture'),count=join(dir,'count'),bin=join(dir,'claude');
+ writeFileSync(bin,`#!/bin/sh\nn=0; [ -f '${count}' ] && n=$(cat '${count}'); n=$((n+1)); echo $n > '${count}'\nprintf '%s\\n' "$*" >> '${capture}.args'\nprintf '%s\\n' "$PWD" >> '${capture}.cwd'\ncat > '${capture}.input'\nif [ "$n" -eq 1 ]; then exit 1; fi\nprintf '%s' '${good.replaceAll("'", "'\\''")}'\n`);chmodSync(bin,0o755);const ledger=new Ledger(join(dir,'db.sqlite'));
+ try {process.env.TASK_CLAUDE_BIN=bin;const task=ledger.add({repo:dir,title:'fork fallback',why:'why',brief:'brief.md'});ledger.setRunner(task.id,{workdir:dir});ledger.saveClaudeSession(task.id,'review','review-session',dir,'head');ledger.setStatus(task.id,'レビュー中','reviewing');ledger.setStatus(task.id,'判断待ち','review held');const event=ledger.events(task.id).at(-1)!;assert.ok(createDecisionCard(ledger,ledger.get(task.id)!,event.at,'review held'));assert.equal(readFileSync(count,'utf8').trim(),'2');const args=readFileSync(capture+'.args','utf8').trim().split('\n');assert.match(args[0]!,/--resume review-session --fork-session/);assert.doesNotMatch(args[1]!,/--resume|--fork-session/);assert.equal(readFileSync(capture+'.cwd','utf8').trim().split('\n')[1],process.cwd());}
+ finally{ledger.close();if(oldBin===undefined)delete process.env.TASK_CLAUDE_BIN;else process.env.TASK_CLAUDE_BIN=oldBin;rmSync(dir,{recursive:true,force:true});}
+});
+
 test('decision card validates and retries invalid JSON exactly once; refresh creates card',()=>{
  const dir=mkdtempSync(join(tmpdir(),'decision-card-')),oldBin=process.env.TASK_CLAUDE_BIN,oldModel=process.env.TASK_DECISION_MODEL;
  const counter=join(dir,'count'),bin=join(dir,'claude');
