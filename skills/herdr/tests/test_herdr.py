@@ -399,12 +399,21 @@ class HerdrContractTest(unittest.TestCase):
     def test_link_dirs_are_symlinks_and_replace_preexisting_directories(self):
         (self.repo / "node_modules").mkdir()
         (self.repo / "node_modules" / "dependency.txt").write_text("external dependency\n")
+        # A trailing slash in .gitignore matches directories only. The link must still
+        # stay out of both the worker commit and the generated patch.
+        (self.repo / ".gitignore").write_text("node_modules/\n")
+        self.git("add", ".gitignore")
+        self.git("-c", "user.name=Fixture", "-c", "user.email=fixture@noreply.invalid", "commit", "-q", "-m", "ignore node_modules")
         self.config.update({"LINK_DIRS": "node_modules", "EXTRA_DIRS": "node_modules"})
         result = self.run_script(FAKE_PREEXISTING_LINK_DIR="node_modules")
         self.assert_success(result)
         self.assertTrue((self.w / "node_modules").is_symlink())
         self.assertEqual(os.readlink(self.w / "node_modules"), str(self.repo / "node_modules"))
         self.assertTrue((self.w / "node_modules/dependency.txt").is_file())
+        committed_paths = self.git("show", "--format=", "--name-only", "HEAD", cwd=self.w).splitlines()
+        patch = (self.work / "patch-contract.diff").read_text()
+        self.assertFalse(any("node_modules" in path for path in committed_paths), committed_paths)
+        self.assertNotIn("node_modules", patch)
         log = (self.work / "herdr-contract.log").read_text()
         self.assertIn("LINK_DIRS を優先", log)
 

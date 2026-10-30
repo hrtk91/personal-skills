@@ -284,6 +284,7 @@ make_patch() {
   local -a excludes
   read -r -a excludes <<< "$PATCH_EXCLUDE"
   for f in ${EXTRA:-}; do excludes+=(":(exclude,literal)$f"); done
+  for d in $LINK_DIRS; do excludes+=(":(exclude,literal)$d"); done
   # 除外はパッチだけでなく、台本のコミットにも適用する
   # 作業役が git rm --cached で記録から外したファイルは、reset で記録に戻るので、足し直した後にもう一度外す
   # （10/29、前の回のコミットに入ったリンクを作業役が外しても、ここで戻されて差し戻しが続いた）
