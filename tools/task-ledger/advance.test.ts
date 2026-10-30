@@ -566,6 +566,18 @@ test('failed resume retries once with a fresh session and the full review prompt
   }finally{f.done();}
 });
 
+test('a valid resumed verdict that quotes 終了コード 1 is kept without a full re-review',()=>{
+  const f=fixture();try{writeFileSync(join(f.workdir,'handoff/t-report.md'),'report');mkdirSync(join(f.dir,'logs'),{recursive:true});writeFileSync(join(f.dir,'logs/repo-1-check-1.log'),'checks passed');let count=0;const d=deps('');d.review=(_prompt,_cwd,_dirs,session)=>{count++;assert.ok(session?.resumePrompt);return{answer:'{"verdict":"判断","reasons":["確かめが終了コード 1 で落ちたが原因は環境"],"fixes":[]}',attributes:{'review.session_id':'kept'}};};
+    f.ledger.saveClaudeSession('repo-1','review','saved',f.workdir,'HEAD');f.ledger.setStatus('repo-1','レビュー中','retry');advance(f.ledger,'repo-1',d,300);assert.equal(count,1);assert.equal(f.ledger.claudeSession('repo-1','review')?.session_id,'kept');
+  }finally{f.done();}
+});
+
+test('a resumed review that really exited non-zero (review() mark) is redone in full',()=>{
+  const f=fixture();try{writeFileSync(join(f.workdir,'handoff/t-report.md'),'report');mkdirSync(join(f.dir,'logs'),{recursive:true});writeFileSync(join(f.dir,'logs/repo-1-check-1.log'),'checks passed');let count=0;const d=deps('');d.review=(_prompt,_cwd,_dirs,session)=>{count++;if(count===1)return{answer:'{"verdict":"通す","reasons":[],"fixes":[]}\n（レビュー役が終了コード 1 で終わった）boom',attributes:{}};assert.equal(session?.resumePrompt,undefined);return{answer:'{"verdict":"判断","reasons":["hold"],"fixes":[]}',attributes:{'review.session_id':'fresh'}};};
+    f.ledger.saveClaudeSession('repo-1','review','saved',f.workdir,'HEAD');f.ledger.setStatus('repo-1','レビュー中','retry');advance(f.ledger,'repo-1',d,300);assert.equal(count,2);
+  }finally{f.done();}
+});
+
 test('real review uses explicit session-id for a new call and resume with a short delta prompt', () => {
   const dir=mkdtempSync(join(tmpdir(),'review-session-cli-')),oldBin=process.env.TASK_CLAUDE_BIN,bin=join(dir,'claude'),argsFile=join(dir,'args'),inputFile=join(dir,'input');
   writeFileSync(bin,`#!/bin/sh\nprintf '%s\\n' "$*" > '${argsFile}'\ncat > '${inputFile}'\nprintf '%s' '{"result":"{\\"verdict\\":\\"通す\\",\\"reasons\\":[],\\"fixes\\":[]}","session_id":"fake-session"}'\n`);chmodSync(bin,0o755);

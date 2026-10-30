@@ -104,7 +104,7 @@ export function advance(ledger: Ledger, id: string, deps: AdvanceDeps, pid = pro
       const reply = timed(ledger, task, 'レビュー', () => {
         let result = deps.review(canResume ? resumePrompt : fullPrompt, workdir, [dirname(diffPath)], canResume ? { sessionId, resumePrompt } : { sessionId });
         let answer = typeof result === 'string' ? result : result.answer;
-        if (canResume && (!parseVerdict(answer) || /終了コード [^0]/.test(answer))) {
+        if (canResume && (!parseVerdict(answer) || reviewerExitedBadly(answer))) {
           sessionId = randomUUID(); uses = 1;
           result = deps.review(fullPrompt, workdir, [dirname(diffPath)], { sessionId });
         }
@@ -453,6 +453,9 @@ ${tail(read(checkPath), 60)}
 \`\`\`
 `;
 }
+
+// Only the mark review() itself appends counts: a verdict that quotes 「終了コード 1」 in its reasons is still valid.
+export function reviewerExitedBadly(answer: string): boolean { return /\n（レビュー役が終了コード (?!0 )\S+ で終わった）/.test(answer); }
 
 export const realAdvanceDeps: AdvanceDeps = {
   sh(command, cwd, timeoutMs) {

@@ -29,7 +29,7 @@ export function createDecisionCard(ledger:Ledger,task:Task,enteredAt:string,note
   const events=ledger.events(task.id),last=events.at(-1),prior=events.at(-2);
   const session=ledger.claudeSession(task.id,'review');
   const fromReview=last?.to_status==='判断待ち'&&last.from_status==='レビュー中'&&prior?.to_status==='レビュー中'&&!!session&&session.cwd===(task.workdir??task.repo);
-  const cardOnly=`レビューの文脈から判断カードだけを作ってください。状況: ${note}\nJSON の形式は次のとおり。余計な文章を付けないこと: {"situation":"...","options":[{"label":"...","detail":"...","recommended":true,"to":"待ち|取り込み中|保留|やめ","answer":"..."},{"label":"...","detail":"...","recommended":false,"to":"待ち|取り込み中|保留|やめ","answer":"..."}]}`;
+  const cardOnly=`${prompt}\n\nこの会話で見た仕事の判断カードを、上の決まりで作ってください。依頼文と報告はこの会話にすでにあるので、ここには書きません。\n\n## 仕事の題\n${task.title}\n\n## 困りごと（why）\n${task.why}\n\n## 止まった理由\n${note}\n\nJSON の形式は次のとおり。余計な文章を付けないこと: {"situation":"...","options":[{"label":"...","detail":"...","recommended":true,"to":"待ち|取り込み中|保留|やめ","answer":"..."},{"label":"...","detail":"...","recommended":false,"to":"待ち|取り込み中|保留|やめ","answer":"..."}]}`;
   for(let attempt=0;attempt<2;attempt++){
    const remaining=deadline-Date.now();if(remaining<=0)break;
    const fork=fromReview&&attempt===0;
