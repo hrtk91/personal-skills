@@ -227,7 +227,9 @@ class HerdrContractTest(unittest.TestCase):
         self.env.update({"PATH": str(self.bin) + os.pathsep + self.env["PATH"], "HERDR_WORKSPACE_ID": "test-workspace",
             "CODEX_HOME": str(self.home), "FAKE_STATE": str(self.state_path), "FAKE_NAME": self.name,
             "FAKE_WORK": str(self.work), "FAKE_W": str(self.w), "FAKE_CLAUDE_ARGS": str(self.claude_args), "FAKE_CLAUDE_CHILD_PID": str(self.root / "claude-child.pid"), "FAKE_PANE_OUTPUT": str(self.root / "pane-output.txt"), "PI_CHANNEL_EXT": str(self.channel_ext),
-            "CHANNEL_BIN": str(self.channel_bin), "AGENT_CHANNEL": str(self.channel_log)})
+            "CHANNEL_BIN": str(self.channel_bin), "AGENT_CHANNEL": str(self.channel_log),
+            # Offline contract runs must not inherit an active ledger task context.
+            "TASK_ID": "", "TASK_ISSUE_ID": "", "TASK_LEDGER_DB": ""})
 
     @property
     def w(self):
