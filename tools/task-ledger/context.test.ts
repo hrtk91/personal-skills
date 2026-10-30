@@ -41,6 +41,19 @@ test('task context includes worker settings and, when linked, Goal, Issue, docs,
   ledger.close();
 });
 
+test('the latest send-back context includes the reason and only the first 80 detail lines', () => {
+  const ledger = new Ledger(':memory:');
+  const task = ledger.add({ repo: '/r/app', title: 'sendback', why: 'why', brief: 'brief' });
+  const detail = Array.from({ length: 90 }, (_, index) => `detail-${index + 1}`).join('\n');
+  ledger.setStatus(task.id, '走行中', `差し戻し: reason\n${detail}`);
+  const context = taskContext(ledger, ledger.get(task.id)!);
+  assert.match(context, /## 今回の差し戻し[\s\S]*- reason/);
+  assert.match(context, /detail-1/);
+  assert.match(context, /detail-80/);
+  assert.doesNotMatch(context, /detail-81/);
+  ledger.close();
+});
+
 test('answer survives runOnce overwriting note and is hidden after the worker finishes', () => {
   const ledger = new Ledger(':memory:');
   const repo = '/r/app';

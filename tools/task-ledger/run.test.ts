@@ -38,6 +38,19 @@ test('task worker/model/effort become the corresponding herdr environment settin
       assert.deepEqual([env.IMPL_AGENT, env[modelKey], env[effortKey]], [...expected]);
     }
     assert.equal(workerEnv({}).IMPL_AGENT, 'pi');
+    // A parent that is itself running an Issue task must not hand its Issue to an unrelated task.
+    const before = { id: process.env.TASK_ID, issue: process.env.TASK_ISSUE_ID };
+    process.env.TASK_ID = 'parent-task';
+    process.env.TASK_ISSUE_ID = 'parent-issue';
+    try {
+      const plain = workerEnv({ TASK_ID: 'plain-task' });
+      assert.equal(plain.TASK_ID, 'plain-task');
+      assert.equal(plain.TASK_ISSUE_ID, undefined);
+      assert.equal(workerEnv({ TASK_ID: 'issue-task', TASK_ISSUE_ID: 'own-issue' }).TASK_ISSUE_ID, 'own-issue');
+    } finally {
+      if (before.id === undefined) delete process.env.TASK_ID; else process.env.TASK_ID = before.id;
+      if (before.issue === undefined) delete process.env.TASK_ISSUE_ID; else process.env.TASK_ISSUE_ID = before.issue;
+    }
     const ledger = new Ledger(':memory:');
     ledger.add({ repo: '/r', title: 'Claude CLI task', why: 'w', brief: 'handoff/claude.md', worker: 'claude', model: 'haiku' });
     let started: NodeJS.ProcessEnv | undefined;
@@ -128,12 +141,13 @@ test('only a previously attempted task with an existing copy gets RESUME=newtab'
 test('a run started from inside a resent worker does not inherit its run-only settings', () => {
   const saved = { ...process.env };
   try {
-    Object.assign(process.env, { RESUME: 'newtab', SKIP_IMPL: '1', HERDR_RUN_SELF: '/x', TASK_ID: 'old-1', PI_MODEL: 'custom' });
+    Object.assign(process.env, { RESUME: 'newtab', SKIP_IMPL: '1', HERDR_RUN_SELF: '/x', TASK_ID: 'old-1', TASK_CHECK: 'npm test', PI_MODEL: 'custom' });
     const env = workerEnv({ TASK_ID: 'new-2', REPO: '/r' });
     assert.equal(env.RESUME, undefined);
     assert.equal(env.SKIP_IMPL, undefined);
     assert.equal(env.HERDR_RUN_SELF, undefined);
     assert.equal(env.TASK_ID, 'new-2');
+    assert.equal(env.TASK_CHECK, undefined);
     assert.equal(env.PI_MODEL, 'custom');
     assert.equal(env.HERDR_ENV, '1');
     assert.equal(workerEnv({ RESUME: 'newtab' }).RESUME, 'newtab');

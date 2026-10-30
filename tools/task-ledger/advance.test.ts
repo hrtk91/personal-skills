@@ -7,6 +7,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Ledger } from './ledger.ts';
 import { advance, herdrTabSweepCandidates, outsideTaskFiles, parseVerdict, realAdvanceDeps, sweepHerdrTabs, type AdvanceDeps } from './advance.ts';
+import { buildTrace, renderTrace } from './trace.ts';
+import { taskContext } from './context.ts';
+import { main } from './cli.ts';
 
 function git(cwd: string, ...args: string[]): string {
   return execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@x', ...args], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -57,11 +60,38 @@ test('a report that says conditions are unmet returns to the worker without star
     assert.equal(task.runner, 777);
     assert.ok(calls.includes('resend'));
     assert.ok(!calls.some((call) => call.startsWith('review:')));
-    assert.match(readFileSync(join(f.workdir, 'handoff/t.md'), 'utf8'), /作業役の報告が、終わりの条件を満たしていないと書いている/);
-    assert.match(readFileSync(join(f.workdir, 'handoff/t.md'), 'utf8'), /偽物の claude を起動する；検査を通す/);
+    assert.equal(readFileSync(join(f.workdir, 'handoff/t.md'), 'utf8'), '# 掛け算を足す\n');
+    assert.match(taskContext(f.ledger, task), /## 今回の差し戻し[\s\S]*偽物の claude を起動する/);
     assert.ok(f.ledger.spans('repo-1').some((span) => span.name === '報告を見る' && span.attributes['report.status'] === '未完了'));
     assert.match(said.join('\n'), /差し戻した/);
   } finally { f.done(); }
+});
+
+test('sendBack preserves ordinary and Issue briefs byte-for-byte and exposes the latest reason and detail in context', () => {
+  for (const issueTask of [false, true]) {
+    const f = fixture({ check: 'echo detail-line; exit 1' });
+    try {
+      const brief = join(f.workdir, 'handoff/t.md');
+      if (issueTask) {
+        const issue = f.ledger.addIssue({ repo: f.repo, title: 'Issue', body: 'issue body', by: 'Claude' });
+        const task = f.ledger.get('repo-1')!;
+        f.ledger.db.prepare('UPDATE tasks SET issue_id=?, brief=? WHERE id=?').run(issue.id, `handoff/${issue.id}.md`, task.id);
+        const issueBrief = join(f.workdir, `handoff/${issue.id}.md`);
+        writeFileSync(issueBrief, '# Canonical issue brief\\n');
+        const before = readFileSync(issueBrief);
+        advance(f.ledger, task.id, deps(''), 1);
+        assert.deepEqual(readFileSync(issueBrief), before);
+        const context = taskContext(f.ledger, f.ledger.get(task.id)!);
+        assert.match(context, /## 今回の差し戻し[\s\S]*確かめのコマンド[\s\S]*detail-line/);
+      } else {
+        const before = readFileSync(brief);
+        advance(f.ledger, 'repo-1', deps(''), 1);
+        assert.deepEqual(readFileSync(brief), before);
+        const context = taskContext(f.ledger, f.ledger.get('repo-1')!);
+        assert.match(context, /## 今回の差し戻し[\s\S]*確かめのコマンド[\s\S]*detail-line/);
+      }
+    } finally { f.done(); }
+  }
 });
 
 test('a report that cannot decide why conditions are unmet waits for a decision, without review or resend', () => {
@@ -181,7 +211,8 @@ test('when the repository changed the same lines meanwhile, the worker gets the 
     assert.ok(calls.includes('resend'));
     assert.equal(git(f.repo, 'rev-parse', 'HEAD').trim(), before);
     assert.match(readFileSync(join(f.workdir, 'math.js'), 'utf8'), /<<<<<<<[\s\S]*作業役[\s\S]*本体/);
-    assert.match(readFileSync(join(f.workdir, 'handoff/t.md'), 'utf8'), /衝突の印[\s\S]*math\.js/);
+    assert.equal(readFileSync(join(f.workdir, 'handoff/t.md'), 'utf8'), '# 掛け算を足す\n');
+    assert.match(taskContext(f.ledger, task), /## 今回の差し戻し[\s\S]*衝突の印[\s\S]*math\.js/);
   } finally { f.done(); }
 });
 
@@ -196,6 +227,44 @@ test('a check that fails once and passes when run again moves on, keeping the fi
   } finally { f.done(); rmSync(marks, { recursive: true, force: true }); }
 });
 
+test('a missing command is an environment failure: no retry, no attempt consumed, and task trace records it', () => {
+  const f = fixture({ check: 'definitely-not-a-real-check-command' });
+  try {
+    const calls: string[] = [];
+    const said = advance(f.ledger, 'repo-1', deps('', calls), 1);
+    const task = f.ledger.get('repo-1')!;
+    assert.equal(task.status, '判断待ち');
+    assert.equal(task.attempts, 1);
+    assert.match(task.note!, /環境の失敗/);
+    assert.equal(calls.filter((call) => call === 'definitely-not-a-real-check-command').length, 1);
+    assert.ok(!calls.includes('resend'));
+    const span = f.ledger.spans('repo-1').find((item) => item.name === '確かめ')!;
+    assert.equal(span.ok, false);
+    assert.equal(span.attributes['step.exit_code'], 127);
+    assert.equal(span.attributes['failure.kind'], 'environment');
+    const rendered = renderTrace(buildTrace(f.ledger, task)).join('\\n');
+    assert.match(rendered, /判断待ち/);
+    assert.match(rendered, /確かめ.*failure.kind=environment/);
+    assert.match(said.join('\\n'), /環境の失敗/);
+  } finally { f.done(); }
+});
+
+test('a missing script with exit 127 is a worker failure, not an environment failure', () => {
+  const f = fixture({ check: 'bash tools/not-yet.sh' });
+  try {
+    const calls: string[] = [];
+    advance(f.ledger, 'repo-1', deps('', calls), 1);
+    const task = f.ledger.get('repo-1')!;
+    assert.equal(task.status, '走行中');
+    assert.equal(task.attempts, 2);
+    assert.ok(calls.includes('resend'));
+    assert.doesNotMatch(task.note ?? '', /環境の失敗/);
+    const span = f.ledger.spans('repo-1').find((item) => item.name === '確かめ')!;
+    assert.equal(span.attributes['step.exit_code'], 127);
+    assert.equal(span.attributes['failure.kind'], undefined);
+  } finally { f.done(); }
+});
+
 test('a failing check goes back to the worker with the output written into its brief', () => {
   const f = fixture({ check: 'echo 掛け算が無い; exit 1' });
   try {
@@ -207,9 +276,51 @@ test('a failing check goes back to the worker with the output written into its b
     assert.equal(task.runner, 777);
     assert.ok(calls.includes('resend'));
     assert.ok(!calls.some((call) => call.startsWith('review:')));
-    const brief = readFileSync(join(f.workdir, 'handoff/t.md'), 'utf8');
-    assert.match(brief, /## 差し戻し（1 回目のあと/);
-    assert.match(brief, /掛け算が無い/);
+    assert.equal(readFileSync(join(f.workdir, 'handoff/t.md'), 'utf8'), '# 掛け算を足す\n');
+    assert.match(taskContext(f.ledger, task), /## 今回の差し戻し[\s\S]*掛け算が無い/);
+  } finally { f.done(); }
+});
+
+test('a send-back keeps the task list note on one line and Issue recent reasons exclude detail logs', () => {
+  const f = fixture({ check: 'cat output.txt; exit 1' });
+  try {
+    writeFileSync(join(f.workdir, 'output.txt'), 'detail-output\\n');
+    const issue = f.ledger.addIssue({ repo: f.repo, title: 'Issue task', body: 'issue body', by: 'Claude' });
+    f.ledger.db.prepare('UPDATE tasks SET issue_id=? WHERE id=?').run(issue.id, 'repo-1');
+    advance(f.ledger, 'repo-1', deps(''), 1);
+    const task = f.ledger.get('repo-1')!;
+    assert.equal(task.note?.split('\n').length, 1);
+    assert.match(task.note!, /^差し戻し: .*（詳しく: .*sendback/);
+    assert.doesNotMatch(task.note!, /detail-output/);
+    const context = taskContext(f.ledger, task);
+    const recent = context.split('## 直近 7 日の差し戻し理由')[1] ?? '';
+    assert.doesNotMatch(recent, /detail-output/);
+    const dbPath = join(f.dir, 'cli.sqlite');
+    const cliLedger = new Ledger(dbPath);
+    const cliTask = cliLedger.add({ repo: f.repo, title: 'single-line', why: 'why', brief: 'handoff/t.md' });
+    cliLedger.setStatus(cliTask.id, '走行中', task.note);
+    const previousDb = process.env.TASK_LEDGER_DB;
+    process.env.TASK_LEDGER_DB = dbPath;
+    try {
+      const lines: string[] = [];
+      main(['list', '--all'], (line) => lines.push(line));
+      assert.equal(lines.length, 1);
+      assert.equal(lines[0]!.split('\n').length, 1);
+      assert.match(lines[0]!, /詳しく: .*sendback/);
+    } finally {
+      if (previousDb === undefined) delete process.env.TASK_LEDGER_DB; else process.env.TASK_LEDGER_DB = previousDb;
+      cliLedger.close();
+    }
+  } finally { f.done(); }
+});
+
+test('a send-back context is hidden once the worker has finished', () => {
+  const f = fixture({ check: 'echo details; exit 1' });
+  try {
+    advance(f.ledger, 'repo-1', deps(''), 1);
+    const task = f.ledger.get('repo-1')!;
+    f.ledger.setStatus(task.id, '確かめ中', '作業役が終わった');
+    assert.doesNotMatch(taskContext(f.ledger, f.ledger.get(task.id)!), /## 今回の差し戻し/);
   } finally { f.done(); }
 });
 
@@ -225,8 +336,9 @@ test('an Issue-originated send-back is saved on the Issue and included in the ne
     advance(f.ledger, 'repo-1', deps(''), 1);
     const saved = f.ledger.getIssue(issue.id)!;
     assert.equal(saved.history.length, 1);
-    assert.match(saved.history[0]!, /差し戻し（1 回目のあと/);
-    assert.match(readFileSync(join(f.workdir, brief), 'utf8'), /## 差し戻し（1 回目のあと/);
+    assert.match(saved.history[0]!, /確かめのコマンド/);
+    assert.equal(readFileSync(join(f.workdir, brief), 'utf8'), '# Issue task\n');
+    assert.match(taskContext(f.ledger, f.ledger.get('repo-1')!), /## 今回の差し戻し[\s\S]*retry/);
   } finally { f.done(); }
 });
 

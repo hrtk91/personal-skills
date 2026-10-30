@@ -41,7 +41,7 @@ const USAGE = `使い方:
 ハーネスの中で使うもの:
   task started <id> --agent <名> --runner <PID> [--workdir <パス>]   台本が動き始めた（herdr-run.sh が呼ぶ）
   task advance <id>                                     確かめ → レビュー → 取り込み（task run が裏で起こす）
-  task ended <id> implemented|stopped|blocked|failed [--commit <sha>] [--log <パス>]`;
+  task ended <id> implemented|stopped|blocked|failed|environment-failed [--commit <sha>] [--log <パス>]`;
 
 // What herdr-run.sh's end marker means for the ledger.
 const ENDED: Record<string, { status: Status; note: string }> = {
@@ -49,6 +49,7 @@ const ENDED: Record<string, { status: Status; note: string }> = {
   stopped: { status: '判断待ち', note: '作業役が設計の下見で STOP と書いた' },
   blocked: { status: '判断待ち', note: '作業役が確認の画面で止まった' },
   failed: { status: '判断待ち', note: '作業役を回す台本が失敗した' },
+  'environment-failed': { status: '判断待ち', note: '環境の失敗: 起動前の部品確認で必要なコマンドが無かった' },
 };
 
 function repoRoot(path: string): string {
@@ -103,7 +104,7 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
     repo: { type: 'string' }, all: { type: 'boolean' }, status: { type: 'string' }, to: { type: 'string' },
     agent: { type: 'string' }, runner: { type: 'string' }, commit: { type: 'string' }, log: { type: 'string' }, workdir: { type: 'string' },
     since: { type: 'string' }, json: { type: 'boolean' }, 'dry-run': { type: 'boolean' }, out: { type: 'string' }, issue: { type: 'string' }, body: { type: 'string' }, by: { type: 'string' }, from: { type: 'string' }, goal: { type: 'string' }, stage: { type: 'string' }, stages: { type: 'string' }, loose: { type: 'boolean' }, open: { type: 'boolean' }, docKind: { type: 'string' }, path: { type: 'string' },
-    'なぜ': { type: 'string' }, '今の状態': { type: 'string' }, '関係する所': { type: 'string' }, 'やること': { type: 'string' }, 'やってよいこと': { type: 'string' }, 'やらないこと': { type: 'string' }, '終わりの条件': { type: 'string' }, '確かめのコマンド': { type: 'string' }, '触るファイル': { type: 'string' }, '種類': { type: 'string' }, '本番に出すか': { type: 'string' },
+    'なぜ': { type: 'string' }, '今の状態': { type: 'string' }, '関係する所': { type: 'string' }, 'やること': { type: 'string' }, 'やってよいこと': { type: 'string' }, 'やらないこと': { type: 'string' }, '終わりの条件': { type: 'string' }, '確かめのコマンド': { type: 'string' }, '触るファイル': { type: 'string' }, '種類': { type: 'string' }, '本番に出すか': { type: 'string' }, 'task-specific': { type: 'boolean' },
   } });
   const ledger = new Ledger();
   try {
@@ -204,7 +205,7 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
       }
       case 'decision': {const [sub,id]=positionals;if(sub!=='refresh'||positionals.length>2)throw new Error('task decision refresh [<id>]');const count=refreshDecisionCards(ledger,id);out(`${count} 件の判断カードを作り直した`);return 0;}
       case 'priority': {const [id,d]=positionals;if(!id||!['first','up','down'].includes(d??''))throw new Error('task priority <task id> first|up|down');ledger.setPriority(id,d as 'first'|'up'|'down');out(line(ledger.get(id)!));return 0;}
-      case 'context': {const task=ledger.get(positionals[0]??'');if(!task)throw new Error(`台帳にありません: ${positionals[0]??''}`);const text=taskContext(ledger,task);if(text)out(text.trimEnd());return 0;}
+      case 'context': {const task=ledger.get(positionals[0]??'');if(!task)throw new Error(`台帳にありません: ${positionals[0]??''}`);const text=taskContext(ledger,task,new Date(),{issueBody:false,taskSpecificOnly:values['task-specific']});if(text)out(text.trimEnd());return 0;}
       case 'show': {
         const task = ledger.get(positionals[0] ?? '');
         if (!task) throw new Error(`台帳にありません: ${positionals[0] ?? ''}`);

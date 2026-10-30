@@ -2,11 +2,10 @@
 // One `task advance <id>` process carries one task as far as it can and leaves it at 済, 判断待ち, or back
 // with the worker (走行中) carrying the reason. Design: handoff/task-ledger-design.md (流れ 3〜5)
 import { spawn, spawnSync } from 'node:child_process';
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmdirSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmdirSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defaultPath, type Ledger, type SpanAttributes, type Status, type Task } from './ledger.ts';
-import { assembleIssueBrief } from './issue-brief.ts';
 import { HERDR_RUN, logPath, runName, workerEnv } from './run.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -63,6 +62,7 @@ export function advance(ledger: Ledger, id: string, deps: AdvanceDeps, pid = pro
       if (!task.workdir || !existsSync(task.workdir)) return stop(`作業用のコピーが見つからない（${task.workdir ?? '記録なし'}）`);
       const check = checkTwice(ledger, task, said, () => deps.sh(task.check ?? 'true', task.workdir!, CHECK_TIMEOUT), `check-${task.attempts}`, '確かめ');
       const path = writeLog(id, `check-${task.attempts}`, check.output);
+      if (check.code === 127 && /command not found/i.test(check.output)) return stop(`環境の失敗: 確かめのコマンド \`${task.check}\` に必要なコマンドが無い（終了コード 127）。作業役へ差し戻さず、環境を直してから判断する。`);
       if (check.code !== 0) { sendBack(ledger, task, deps, `確かめのコマンド \`${task.check}\` が落ちた（終了コード ${check.code}）。`, tail(check.output), said, stop); return said; }
       ledger.setStatus(id, 'レビュー中', `確かめが通った。出力: ${path}`);
       said.push(`${id}: 確かめが通った`);
@@ -315,9 +315,9 @@ function catchUp(ledger: Ledger, task: Task, deps: AdvanceDeps, head: string, sa
 // A check that fails runs once more before anything is decided: on a busy PC an e2e that the task never touched can
 // time out (10/28: three different specs did, one per run). The first output is kept and the event names it.
 function checkTwice(ledger: Ledger, task: Task, said: string[], command: () => Shell, label: string, name: string): Shell {
-  const run = (count: number) => timed(ledger, task, name, command, (result) => ({ ok: result.code === 0, attributes: { 'step.exit_code': result.code, 'step.run': count } }));
+  const run = (count: number) => timed(ledger, task, name, command, (result) => ({ ok: result.code === 0, attributes: { 'step.exit_code': result.code, 'step.run': count, ...(result.code === 127 && /command not found/i.test(result.output) ? { 'failure.kind': 'environment' } : {}) } }));
   const first = run(1);
-  if (first.code === 0) return first;
+  if (first.code === 0 || (first.code === 127 && /command not found/i.test(first.output))) return first;
   const firstLog = writeLog(task.id, `${label}-first-fail`, first.output);
   const second = run(2);
   if (second.code === 0) said.push(`${task.id}: 確かめは 1 回目に落ち、流し直して通った（1 回目: ${firstLog}）`);
@@ -354,17 +354,13 @@ function writeLog(id: string, name: string, text: string): string {
   return path;
 }
 
-/** Gives the work back to the worker with the reason written into its brief, or stops after too many tries. */
+/** Gives the work back to the worker without changing the brief; the reason and details are recorded for the worker. */
 function sendBack(ledger: Ledger, task: Task, deps: AdvanceDeps, reason: string, detail: string, said: string[], stop: (note: string) => string[]): void {
   if (task.attempts >= MAX_ATTEMPTS) { stop(`${MAX_ATTEMPTS} 回やって通らなかった。最後: ${reason}`); return; }
-  const brief = join(task.workdir!, task.brief!);
-  const correction = `## 差し戻し（${task.attempts} 回目のあと。ハーネスより）\n${reason}\n\n${detail ? `\`\`\`\n${detail}\n\`\`\`\n\n` : ''}上を直し、報告を書き直してください。直したあとも依頼の終わりの条件を全部満たすこと。`;
-  if (task.issue_id && task.brief === `handoff/${task.issue_id}.md`) {
-    ledger.addIssueHistory(task.issue_id, correction);
-    const issue = ledger.getIssue(task.issue_id)!;
-    writeFileSync(brief, assembleIssueBrief(ledger, issue, task));
-  } else appendFileSync(brief, `\n\n${correction}\n`);
-  ledger.setStatus(task.id, '走行中', `差し戻し: ${reason}`, { attempts: task.attempts + 1 });
+  if (task.issue_id && task.brief === `handoff/${task.issue_id}.md`) ledger.addIssueHistory(task.issue_id, reason);
+  const detailPath = detail ? writeLog(task.id, `sendback-${task.attempts}`, detail) : null;
+  const note = `差し戻し: ${reason}${detailPath ? `（詳しく: ${detailPath}）` : ''}`;
+  ledger.setStatus(task.id, '走行中', note, { attempts: task.attempts + 1 });
   ledger.releaseRunner(task.id);
   try {
     ledger.setRunner(task.id, { runner: deps.resend(task, runName(task)) });
