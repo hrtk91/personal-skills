@@ -37,7 +37,7 @@ test('consult action accepts the configured relay Origin and rejects another Ori
   await new Promise<void>((resolve, reject) => portServer.close((error) => error ? reject(error) : resolve()));
   const child = spawn(process.execPath, [join(web, 'node_modules/@react-router/serve/bin.cjs'), serverBundle], {
     cwd: web,
-    env: { ...process.env, HOST: '127.0.0.1', PORT: String(port), TASK_LEDGER_DB: db, TASK_DASHBOARD_REPOS_DIR: root },
+    env: { ...process.env, HOST: '127.0.0.1', PORT: String(port), TASK_LEDGER_DB: db, TASK_DASHBOARD_REPOS_DIR: root, CLAUDE_PROJECTS_DIR: join(root, 'claude-projects'), CLAUDE_USAGE_DIR: join(root, 'claude-usage') },
     stdio: ['ignore', 'ignore', 'pipe'],
   });
   const closed = new Promise<void>((resolve) => child.once('close', () => resolve()));
