@@ -612,8 +612,14 @@ class HerdrContractTest(unittest.TestCase):
             ["--user start --no-block task-ledger.service"])
         self.assertIn("task-ledger.service の起動に失敗した", (self.work / "herdr-contract.log").read_text())
 
-    def test_no_task_or_disabled_kick_does_not_call_systemctl(self):
-        self.assert_success(self.run_script(TASK_KICK="0"))
+    def test_disabled_kick_with_ledger_task_does_not_call_systemctl(self):
+        task_id = self.ledger_task()
+        result = self.run_script(TASK_ID=task_id, TASK_LEDGER_DB=str(self.root / "ledger.sqlite"), TASK_KICK="0")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr + (self.work / "herdr-contract.log").read_text())
+        self.assertFalse((self.root / "systemctl-calls.txt").exists())
+
+    def test_no_task_without_kick_does_not_call_systemctl(self):
+        self.assert_success(self.run_script())
         self.assertFalse((self.root / "systemctl-calls.txt").exists())
 
     def test_issue_task_generates_brief_in_worker_copy_without_repo_brief(self):
