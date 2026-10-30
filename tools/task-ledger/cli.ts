@@ -17,7 +17,7 @@ import { getClaudeUsage, renderClaudeUsage } from './claude-usage.ts';
 
 const USAGE = `使い方:
   task add --title <題> --why <ユーザーの言葉と日付> [--brief <依頼文のパス>] [--check <確かめのコマンド>] [--worker pi|codex|claude] [--model <モデル>] [--effort <強さ>]
-           [--after <id,...>] [--files <パス,...>] [--kind 処理|見た目|調べ] [--deploy] [--repo <パス>]
+           [--after <id,...>] [--files <パス,...>] [--files-broad] [--kind 処理|見た目|調べ] [--deploy] [--repo <パス>]
   task watch --repo <パス> [--name <宛先>] [--off] | task watchers
   task push-audit [--since <時刻>] [--repo <パス>]
   task brief <id> <依頼文のパス> [--check <コマンド>]   依頼文を付ける（依頼文待ち → 待ち）
@@ -68,6 +68,31 @@ function briefPath(repo: string, path: string): string {
   return path;
 }
 
+const REQUIRED_BRIEF_HEADINGS = ['困りごと', 'やること', 'やってよいこと', 'やらないこと', '終わりの条件'] as const;
+
+function validateBrief(markdown: string): void {
+  const headings = new Set([...markdown.matchAll(/^##\s+(.+?)\s*$/gm)].map((match) => match[1]!.trim()));
+  const missing = REQUIRED_BRIEF_HEADINGS.filter((heading) => !headings.has(heading));
+  if (missing.length) throw new Error(`依頼文に必須の見出しがありません: ${missing.map((heading) => `## ${heading}`).join('、')}`);
+  const endHeading = markdown.match(/^##\s+終わりの条件\s*\r?\n/m);
+  const section = endHeading ? markdown.slice(endHeading.index! + endHeading[0].length).split(/^##\s+/m)[0]! : '';
+  const firstLine = section.split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? '';
+  if (!/^終わりの条件: 満たした$|^終わりの条件: 満たしていない(?:（環境）)? — .+$/.test(firstLine)) {
+    throw new Error('依頼文の「## 終わりの条件」の最初の行は「終わりの条件: 満たした」または「終わりの条件: 満たしていない — …」の形式にしてください');
+  }
+}
+
+function validateIssueFiles(root: string, files: string[] | undefined, broad: boolean, emptyWasExplicit: boolean): void {
+  if (broad || files === undefined) return;
+  if (files.length === 0 && emptyWasExplicit) throw new Error('「触るファイル」が空です。ファイルか、もっと下のフォルダで書く（例 `src/timeline.ts`、`web/app/features/mobile`）');
+  const broadDirs = files.filter((path) => {
+    if (path === 'handoff' || path.includes('/') || isAbsolute(path)) return false;
+    const full = resolve(root, path);
+    try { return statSync(full).isDirectory(); } catch { return false; }
+  });
+  if (broadDirs.length) throw new Error(`「触るファイル」はファイルか、もっと下のフォルダで書く（例 src/timeline.ts、web/app/features/mobile）: ${broadDirs.join('、')}`);
+}
+
 const KNOWN_COMMANDS = new Set(['cd', 'npm', 'node', 'python3', 'bash', 'npx']);
 
 function shellCommandLooksRunnable(check: string): boolean {
@@ -104,7 +129,7 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
   const [command, ...rest] = argv;
   const { values, positionals } = parseArgs({ args: rest, allowPositionals: true, options: {
     title: { type: 'string' }, why: { type: 'string' }, brief: { type: 'string' }, check: { type: 'string' },
-    after: { type: 'string' }, files: { type: 'string' }, kind: { type: 'string' }, deploy: { type: 'boolean' },
+    after: { type: 'string' }, files: { type: 'string' }, 'files-broad': { type: 'boolean' }, kind: { type: 'string' }, deploy: { type: 'boolean' },
     worker: { type: 'string' }, model: { type: 'string' }, effort: { type: 'string' },
     repo: { type: 'string' }, name: { type: 'string' }, off: { type: 'boolean' }, all: { type: 'boolean' }, status: { type: 'string' }, to: { type: 'string' },
     agent: { type: 'string' }, runner: { type: 'string' }, commit: { type: 'string' }, log: { type: 'string' }, workdir: { type: 'string' },
@@ -152,6 +177,7 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
         let title = values.title ?? '', why = values.why ?? '', brief = values.brief ? briefPath(root, values.brief) : null;
         let check = values.check, files = values.files?.split(/[，、,\n]/).map((s) => s.trim()).filter(Boolean), kind = values.kind as Kind | undefined, deploy = values.deploy;
         let generatedIssueBrief = false;
+        if (brief) validateBrief(readFileSync(isAbsolute(brief) ? brief : join(root, brief), 'utf8'));
         if (issue) {
           const missing = (['今の状態','関係する所'] as const).filter((field) => !meaningful(issue.fields[field], field));
           if (missing.length) throw new Error(`Issue の文脈が不足: ${missing.join('、')}`);
@@ -181,10 +207,12 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
           kind ??= issue.fields['種類'] && KINDS.includes(issue.fields['種類'] as Kind) ? issue.fields['種類'] as Kind : undefined;
           deploy ??= /^(?:はい|する|true|yes)$/i.test(issue.fields['本番に出すか'] ?? '');
           if (generatedIssueBrief && !existsSync(join(root, brief))) {
+            const generated = assembleIssueBrief(ledger, issue);
             mkdirSync(dirname(join(root, brief)), { recursive: true });
-            writeFileSync(join(root, brief), assembleIssueBrief(ledger, issue));
+            writeFileSync(join(root, brief), generated);
           }
         }
+        validateIssueFiles(root, files, values['files-broad'] === true, values.files !== undefined);
         const task = ledger.add({
           repo: root, title, why,
           brief, check,
@@ -199,7 +227,9 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
         const [id, path] = positionals;
         const task = ledger.get(id ?? '');
         if (!task || !path) throw new Error('task brief <id> <依頼文のパス>');
-        out(line(ledger.setBrief(task.id, briefPath(task.repo, path), values.check)));
+        const checkedPath = briefPath(task.repo, path);
+        validateBrief(readFileSync(isAbsolute(checkedPath) ? checkedPath : join(task.repo, checkedPath), 'utf8'));
+        out(line(ledger.setBrief(task.id, checkedPath, values.check)));
         return 0;
       }
       case 'list': {

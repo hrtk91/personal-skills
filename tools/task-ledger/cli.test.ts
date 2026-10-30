@@ -188,7 +188,7 @@ test('task add / brief / ready / answer / export through the command', async () 
   const dir = mkdtempSync(join(tmpdir(), 'task-ledger-'));
   process.env.TASK_LEDGER_DB = join(dir, 'ledger.sqlite');
   const { main } = await import('./cli.ts');
-  const repo = join(dir, 'repo'); mkdirSync(join(repo, 'handoff'), { recursive: true }); writeFileSync(join(repo, 'handoff/a.md'), 'brief');
+  const repo = join(dir, 'repo'); mkdirSync(join(repo, 'handoff'), { recursive: true }); writeFileSync(join(repo, 'handoff/a.md'), '## 困りごと\n問題\n\n## やること\n実施\n\n## やってよいこと\nこの写し\n\n## やらないこと\nなし\n\n## 終わりの条件\n終わりの条件: 満たした\n');
   const run = (...args: string[]) => { const lines: string[] = []; const code = main(args, (t) => lines.push(t)); return { code, text: lines.join('\n') }; };
   try {
     assert.match(run('add', '--repo', repo, '--title', 'A を直す', '--why', '「直して」10/27').text, /repo-1\t依頼文待ち\tA を直す/);
@@ -202,4 +202,26 @@ test('task add / brief / ready / answer / export through the command', async () 
     assert.match(run('list', '--all').text, /やめ/);
     assert.match(run('export', '--repo', repo).text, /^# ROADMAP/);
   } finally { rmSync(dir, { recursive: true, force: true }); delete process.env.TASK_LEDGER_DB; }
+});
+
+test('task add and task brief enforce brief format; task add bounds top-level --files unless explicitly broad', async () => {
+  const dir=mkdtempSync(join(tmpdir(),'task-ledger-intake-check-'));process.env.TASK_LEDGER_DB=join(dir,'db.sqlite');const {main}=await import('./cli.ts');
+  const repo=join(dir,'repo');mkdirSync(join(repo,'src'),{recursive:true});mkdirSync(join(repo,'test'));mkdirSync(join(repo,'web','app','features','mobile'),{recursive:true});mkdirSync(join(repo,'handoff'));
+  const run=runner(main), valid='## 困りごと\n問題\n\n## やること\n実施\n\n## やってよいこと\nこの写し\n\n## やらないこと\n本体には書かない\n\n## 終わりの条件\n終わりの条件: 満たした\n';
+  const full=join(repo,'handoff','full.md'),missing=join(repo,'handoff','missing.md');writeFileSync(full,valid);writeFileSync(missing,'## 困りごと\n問題\n## やること\n実施\n## 終わりの条件\n終わりの条件: 満たした\n');
+  try {
+    const noHeadings=run('add','--repo',repo,'--title','Missing','--why','w','--brief','handoff/missing.md');
+    assert.equal(noHeadings.code,1);assert.match(noHeadings.err,/## やってよいこと/);assert.equal(run('list','--repo',repo).text,'');
+    const tooBroad=run('add','--repo',repo,'--title','Valid','--why','w','--brief','handoff/full.md','--files','src,test');
+    assert.equal(tooBroad.code,1);assert.match(tooBroad.err,/ファイルか、もっと下のフォルダ/);
+    const allowed=run('add','--repo',repo,'--title','Valid','--why','w','--brief','handoff/full.md','--files','src/timeline.ts,web/app/features/mobile,handoff');
+    assert.equal(allowed.code,0,allowed.err);
+    assert.deepEqual(JSON.parse(run('show','repo-1').text.split('\n}')[0]+'\n}').files,['src/timeline.ts','web/app/features/mobile','handoff']);
+    const broad=run('add','--repo',repo,'--title','Broad','--why','w','--brief','handoff/full.md','--files','src','--files-broad');assert.equal(broad.code,0,broad.err);
+    assert.equal(run('add','--repo',repo,'--title','Empty','--why','w','--brief','handoff/full.md','--files','').code,1);
+    assert.equal(run('add','--repo',repo,'--title','Brief later','--why','w').code,0);
+    assert.equal(run('brief','repo-3','handoff/missing.md').code,1);
+    const setBrief=run('brief','repo-3','handoff/full.md');assert.equal(setBrief.code,0,setBrief.err);
+    assert.match(setBrief.text,/待ち/);
+  } finally {rmSync(dir,{recursive:true,force:true});delete process.env.TASK_LEDGER_DB;}
 });
