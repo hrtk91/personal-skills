@@ -100,6 +100,11 @@ export function advance(ledger: Ledger, id: string, deps: AdvanceDeps, pid = pro
           return said;
         }
       }
+      if (reviewPassedBeforeCatchUp(ledger.events(id))) {
+        ledger.setStatus(id, '取り込み中', `本体取り込み後の確かめが通った。レビュー通過済みのため再レビューしない。出力: ${path}`);
+        said.push(`${id}: 取り込み後の確かめが通ったためレビューを飛ばす`);
+        continue;
+      }
     } else if (task.status === 'レビュー中') {
       const workdir = task.workdir!;
       const base = deps.sh(`git merge-base HEAD ${quote(gitHead(task.repo, deps))}`, workdir, 60_000).output.trim();
@@ -108,10 +113,17 @@ export function advance(ledger: Ledger, id: string, deps: AdvanceDeps, pid = pro
       const harnessFiles = task.brief ? [task.brief, ...['-report.md', '-design.md', '-review.md'].map((suffix) => task.brief!.replace(/\.md$/, suffix))] : [];
       const outsideFiles = outsideTaskFiles(changedPaths, [...task.files, ...harnessFiles]);
       const checkPath = logPath(id).replace(/\.log$/, `-check-${task.attempts}.log`);
-      const fullPrompt = reviewPrompt(task, diffPath, checkPath, outsideFiles);
+      const taskEvents = ledger.events(id);
+      const pendingConfirmation = pendingReviewConfirmation(taskEvents);
       const previous = ledger.claudeSession(id, 'review');
+      const confirmationDiffPath = pendingConfirmation && previous?.head
+        ? writeLog(id, `review-confirmation-delta-${task.attempts}`, deps.sh(`git diff ${quote(previous.head)} HEAD`, workdir, 60_000).output)
+        : diffPath;
+      const fullPrompt = pendingConfirmation
+        ? `確認レビューです。全体の再レビューや新しい指摘は禁止です。以下の初回の害「大」の指摘だけを対象に、直しの差分 ${confirmationDiffPath} のみを確認してください。各指摘について「直った」または「直っていない」だけ答えてください。新しい指摘は受け付けません。\n初回の大指摘一覧:\n${pendingConfirmation.map((text, index) => `${index + 1}. ${text}`).join('\n')}\n\nJSONのみ: {"items":[{"text":"初回指摘の文面","status":"直った|直っていない"}]}`
+        : reviewPrompt(task, diffPath, checkPath, outsideFiles);
       const currentHead = gitHead(workdir, deps);
-      const canResume = previous && previous.cwd === workdir && previous.uses < 4;
+      const canResume = !pendingConfirmation && previous && previous.cwd === workdir && previous.uses < 4;
       let sessionId = canResume ? previous.session_id : randomUUID();
       let uses = canResume ? previous.uses + 1 : 1;
       const deltaPath = canResume && previous.head ? writeLog(id, `review-delta-${task.attempts}`, deps.sh(`git diff ${quote(previous.head)} HEAD`, workdir, 60_000).output) : diffPath;
@@ -131,17 +143,31 @@ export function advance(ledger: Ledger, id: string, deps: AdvanceDeps, pid = pro
         if (typeof sid === 'string' && sid) ledger.saveClaudeSession(id, 'review', sid, workdir, currentHead, uses);
         return result;
       }, (got) => {
-        const found = parseVerdict(typeof got === 'string' ? got : got.answer);
-        return { ok: found !== null, attributes: { ...(typeof got === 'string' ? {} : got.attributes), ...(outsideFiles.length ? { 'diff.outside_files': JSON.stringify(outsideFiles) } : {}), 'review.verdict': found?.verdict ?? '読めない' } };
+        const answerText = typeof got === 'string' ? got : got.answer;
+        const attributes = typeof got === 'string' ? {} : got.attributes;
+        if (pendingConfirmation) {
+          const confirmation = parseReviewConfirmation(answerText, pendingConfirmation);
+          return { ok: confirmation !== null && confirmation.unresolved.length === 0, attributes: { ...attributes, 'review.verdict': confirmation ? (confirmation.unresolved.length ? '確認:直っていない' : '確認:直った') : '読めない', ...(confirmation ? { 'review.confirmed': JSON.stringify(pendingConfirmation), 'review.unresolved': JSON.stringify(confirmation.unresolved), 'review.new_findings': JSON.stringify(confirmation.newFindings) } : {}) } };
+        }
+        const found = parseVerdict(answerText);
+        return { ok: found !== null, attributes: { ...attributes, ...(outsideFiles.length ? { 'diff.outside_files': JSON.stringify(outsideFiles) } : {}), 'review.verdict': found?.verdict ?? '読めない' } };
       });
       const answer = typeof reply === 'string' ? reply : reply.answer;
       const reviewSession = typeof reply === 'string' ? undefined : reply.attributes?.['review.session_id'];
       if (typeof reviewSession === 'string') ledger.setSessionId(id, 'review', reviewSession);
       writeLog(id, `review-${task.attempts}`, answer);
+      if (pendingConfirmation) {
+        const confirmation = parseReviewConfirmation(answer, pendingConfirmation);
+        if (!confirmation) return stop('レビュー確認の答えから指摘ごとの「直った／直っていない」を読めなかった');
+        ledger.setStatus(id, 'レビュー中', `レビュー指摘: ${JSON.stringify({ stopped: confirmation.unresolved, remaining: confirmation.newFindings, findings: [...pendingConfirmation, ...confirmation.newFindings] })}`);
+        if (confirmation.unresolved.length) return stop(`レビュー確認で直っていない指摘: ${confirmation.unresolved.join(' / ')}`);
+        ledger.setStatus(id, '取り込み中', `レビュー通過: 確認済み。初回の大指摘はすべて直った。${confirmation.newFindings.length ? `残りにした指摘: ${JSON.stringify(confirmation.newFindings)}` : ''}`);
+        continue;
+      }
       const verdict = parseVerdict(answer);
       if (!verdict) return stop('レビューの答えから決まった形の JSON を読めなかった');
       said.push(`${id}: レビュー ${verdict.verdict}`);
-      const blocking = verdict.findings?.filter((finding) => finding.harm === '大' || (finding.harm === '中' && finding.likelihood === 'いつも')) ?? [];
+      const blocking = verdict.findings?.filter((finding) => finding.harm === '大') ?? [];
       const remaining = verdict.findings?.filter((finding) => !blocking.includes(finding)) ?? [];
       if (verdict.findings !== undefined) {
         ledger.setStatus(id, 'レビュー中', `レビュー指摘: ${JSON.stringify({ stopped: verdict.verdict === '判断' ? [] : blocking.map((finding) => finding.text), remaining: remaining.map((finding) => finding.text), findings: verdict.findings.map((finding) => finding.text) })}`);
@@ -149,20 +175,20 @@ export function advance(ledger: Ledger, id: string, deps: AdvanceDeps, pid = pro
       if (verdict.verdict === '判断') { stop(`レビュー: ${verdict.reasons.join(' / ')}`); ledger.setEventKind(task.id, ledger.events(task.id).at(-1)!.at, normalizeReviewKinds(verdict.kinds).join(',')); return said; }
       if (verdict.findings !== undefined) {
         if (blocking.length) {
-          const reason = `レビューで直すことになった。止めた指摘数: ${blocking.length} ${blocking.map((finding) => finding.text).join(' ')}`;
+          // Keep the exact first-review HEAD even when a test/injected reviewer has no resumable session metadata.
+          ledger.saveClaudeSession(id, 'review', sessionId, workdir, currentHead, Math.max(4, uses));
+          const reason = `レビュー確認: 初回の大指摘を直して確認する。止めた指摘数: ${blocking.length} ${blocking.map((finding) => finding.text).join(' ')}`;
           sendBack(ledger, task, deps, reason, blocking.map((finding) => `- ${finding.text}`).join('\n'), said, stop);
           ledger.setEventKind(task.id, ledger.events(task.id).at(-1)!.at, normalizeReviewKinds(verdict.kinds).join(','));
           return said;
         }
         const left = remaining.length ? `残りにした指摘: ${JSON.stringify(remaining.map((finding) => finding.text))}` : '';
-        ledger.setStatus(id, '取り込み中', [`レビュー: ${verdict.reasons.join(' / ') || '通す'}`, left].filter(Boolean).join(' '));
+        ledger.setStatus(id, '取り込み中', [`レビュー通過: ${verdict.reasons.join(' / ') || '通す'}`, left].filter(Boolean).join(' '));
       } else {
         if (verdict.verdict === '判断') { stop(`レビュー: ${verdict.reasons.join(' / ')}`); ledger.setEventKind(task.id, ledger.events(task.id).at(-1)!.at, normalizeReviewKinds(verdict.kinds).join(',')); return said; }
-        if (verdict.verdict === '直す') {
-          sendBack(ledger, task, deps, `レビューで直すことになった。${verdict.reasons.join(' ')}`, verdict.fixes.map((fix) => `- ${fix}`).join('\n'), said, stop); ledger.setEventKind(task.id, ledger.events(task.id).at(-1)!.at, normalizeReviewKinds(verdict.kinds).join(','));
-          return said;
-        }
-        ledger.setStatus(id, '取り込み中', `レビュー: ${verdict.reasons.join(' / ') || '通す'}`);
+        const legacyRemaining = verdict.verdict === '直す' ? [...verdict.reasons, ...verdict.fixes] : [];
+        if (legacyRemaining.length) ledger.setStatus(id, 'レビュー中', `レビュー指摘: ${JSON.stringify({ stopped: [], remaining: legacyRemaining, findings: legacyRemaining })}`);
+        ledger.setStatus(id, '取り込み中', [`レビュー通過: ${verdict.reasons.join(' / ') || '通す'}`, legacyRemaining.length ? `残りにした指摘: ${JSON.stringify(legacyRemaining)}` : ''].filter(Boolean).join(' '));
       }
     } else if (task.status === '取り込み中') {
       const lock = join(dirname(defaultPath()), 'merge-locks', task.repo.replaceAll('/', '_'));
@@ -351,6 +377,55 @@ git worktree remove --force "$T" >/dev/null 2>&1; rm -rf "$T"; exit $rc`, repo, 
   ledger.setStatus(task.id, '済', [cleaned.code === 0 ? '取り込んだ' : `取り込んだが片付けに失敗: ${tail(cleaned.output, 3)}`, task.deploy ? '本番に出した' : '', reviewNote].filter(Boolean).join('。'), { commit });
   ledger.releaseRunner(task.id);
   said.push(`${task.id}: 済（${commit.slice(0, 7)}）`);
+}
+
+function pendingReviewConfirmation(events: Array<{ note: string | null }>): string[] | null {
+  const marker = [...events].reverse().find((event) => event.note?.startsWith('差し戻し: レビュー確認:'));
+  if (!marker) return null;
+  const markerIndex = events.indexOf(marker);
+  if (events.some((event, index) => index > markerIndex && event.note?.startsWith('レビュー通過: 確認済み'))) return null;
+  for (let index = markerIndex - 1; index >= 0; index--) {
+    const match = events[index]?.note?.match(/レビュー指摘: (\{[^\n]*\})/);
+    if (!match) continue;
+    try {
+      const value = JSON.parse(match[1]!) as { stopped?: unknown };
+      return Array.isArray(value.stopped) ? value.stopped.filter((item): item is string => typeof item === 'string') : null;
+    } catch { return null; }
+  }
+  return null;
+}
+
+function reviewPassedBeforeCatchUp(events: Array<{ note: string | null }>): boolean {
+  let passed = -1;
+  let caughtUp = -1;
+  events.forEach((event, index) => {
+    if (event.note?.startsWith('レビュー通過:')) passed = index;
+    if (event.note?.includes('本体が先に進んでいたので') || (event.note?.startsWith('差し戻し:') && event.note.includes('本体が先に進み'))) caughtUp = index;
+  });
+  return passed >= 0 && caughtUp > passed;
+}
+
+function parseReviewConfirmation(answer: string, expected: string[]): { unresolved: string[]; newFindings: string[] } | null {
+  const starts = [...answer.matchAll(/\{/g)].map((match) => match.index!).reverse();
+  for (const start of starts) {
+    for (let end = answer.lastIndexOf('}'); end > start; end = answer.lastIndexOf('}', end - 1)) {
+      try {
+        const value = JSON.parse(answer.slice(start, end + 1)) as { items?: unknown; newFindings?: unknown };
+        if (!Array.isArray(value.items) || (value.newFindings !== undefined && !Array.isArray(value.newFindings))) continue;
+        const statuses = new Map<string, string>();
+        let valid = true;
+        for (const raw of value.items) {
+          if (!raw || typeof raw !== 'object') { valid = false; break; }
+          const item = raw as { text?: unknown; status?: unknown };
+          if (typeof item.text !== 'string' || !expected.includes(item.text) || !['直った', '直っていない'].includes(String(item.status))) { valid = false; break; }
+          statuses.set(item.text, String(item.status));
+        }
+        if (!valid || expected.some((text) => !statuses.has(text))) continue;
+        return { unresolved: expected.filter((text) => statuses.get(text) === '直っていない'), newFindings: (value.newFindings ?? []).filter((item): item is string => typeof item === 'string') };
+      } catch { /* try the next JSON boundary */ }
+    }
+  }
+  return null;
 }
 
 export function collectRemainingFindings(events: Array<{ note: string | null }>): string[] {

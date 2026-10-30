@@ -98,7 +98,7 @@ test('look-and-feel work is left for Claude, and the next task still starts', ()
   assert.equal(ledger.get('r-1')!.status, '待ち');
 });
 
-test('a run whose script vanished goes to 判断待ち, and so do the tasks after it', () => {
+test('a run whose script vanished goes to 判断待ち while tasks after it stay waiting', () => {
   const ledger = new Ledger(':memory:');
   ledger.add({ repo: '/r', title: 'A', why: 'w', brief: 'handoff/a.md' });
   ledger.add({ repo: '/r', title: 'B', why: 'w', brief: 'handoff/b.md', after: ['r-1'] });
@@ -107,7 +107,8 @@ test('a run whose script vanished goes to 判断待ち, and so do the tasks afte
   runOnce(ledger, deps);
   assert.equal(ledger.get('r-1')!.status, '判断待ち');
   assert.match(ledger.get('r-1')!.note!, /PID 4242/);
-  assert.equal(ledger.get('r-2')!.status, '判断待ち');
+  assert.equal(ledger.get('r-2')!.status, '待ち');
+  assert.equal(ledger.get('r-2')!.note, null);
   assert.deepEqual(started, []);
 });
 

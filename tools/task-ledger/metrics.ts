@@ -6,7 +6,7 @@ export type MetricsResult = { weeks: Array<{ week: string; repo: string; complet
 type Row = { task_id:string; repo:string; title:string; at:string; from_status:string|null; to_status:string; note:string|null; kind:string|null; created_at:string };
 export function classify(event: Pick<Row,'note'|'from_status'|'to_status'>): string {
  const note=event.note??'';
- if(event.from_status==='レビュー中'&&event.to_status==='判断待ち'||note.includes('レビューで直すことになった')||note.includes('差し戻し: レビュー:')) return 'レビューの差し戻し';
+ if(event.from_status==='レビュー中'&&event.to_status==='判断待ち'||note.includes('レビューで直すことになった')||note.includes('差し戻し: レビュー:')||note.includes('差し戻し: レビュー確認:')) return 'レビューの差し戻し';
  if(note.includes('差し戻し: 確かめのコマンド')) return '作業役の検査が落ちた';
  if(note.includes('終わりの条件を満たしていない')) return '作業役の自己申告（未完了）';
  if(note.includes('作業役を回す台本が失敗した')) return '台本・環境の失敗';
