@@ -323,7 +323,7 @@ function merge(ledger: Ledger, task: Task, deps: AdvanceDeps, said: string[], st
     // output to production straight from its folder (random-image did; 10/28). The copy borrows the folders
     // .herdr.env lists in EXTRA_DIRS (node_modules and the like) by link.
     const check = checkTwice(ledger, task, said, () => deps.sh(`T=$(mktemp -d) && rmdir "$T" && git worktree add -q --detach "$T" HEAD || exit 97
-for d in $(. ./.herdr.env >/dev/null 2>&1; echo "\${EXTRA_DIRS:-}"); do [ -e "$d" ] && [ ! -e "$T/$d" ] && mkdir -p "$T/$(dirname "$d")" && ln -s "$PWD/$d" "$T/$d"; done
+for d in $(. ./.herdr.env >/dev/null 2>&1; echo "\${EXTRA_DIRS:-} \${LINK_DIRS:-}"); do [ -e "$d" ] && [ ! -e "$T/$d" ] && mkdir -p "$T/$(dirname "$d")" && ln -sT "$PWD/$d" "$T/$d"; done
 (cd "$T" && ${task.check}); rc=$?
 git worktree remove --force "$T" >/dev/null 2>&1; rm -rf "$T"; exit $rc`, repo, CHECK_TIMEOUT), 'merged-check', '取り込み後の確かめ');
     if (check.code !== 0) {
