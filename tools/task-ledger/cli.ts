@@ -265,15 +265,22 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
         const [sub] = positionals;
         if (sub === 'backfill-review-kinds') {
           const rows = ledger.db.prepare("SELECT e.task_id,e.at,e.note FROM events e WHERE ((e.to_status='走行中' AND e.note LIKE '差し戻し: レビュー%') OR (e.from_status='レビュー中' AND e.to_status='判断待ち' AND e.note LIKE 'レビュー:%')) AND (e.kind IS NULL OR e.kind='') ORDER BY e.at").all() as {task_id:string;at:string;note:string}[];
-          const batch=rows.slice(0,20);
-          if(values['dry-run']) { out(JSON.stringify({pending:rows.length,selected:batch.length,events:batch.map(({task_id,at,note})=>({task_id,at,note}))})); return 0; }
-          if(!batch.length){out('分類待ちのレビュー差し戻しはありません');return 0;}
-          const prompt=`次のレビュー差し戻しを、許可語の中から各1〜3個に分類し、JSON配列だけ返してください。形式: [{"task_id":"...","at":"...","kinds":["..."]}]\n許可語: ${REVIEW_KINDS.join('、')}\n入力: ${JSON.stringify(batch)}`;
-          const output=execFileSync(process.env.TASK_CLAUDE_BIN??'claude',['-p','--model',process.env.TASK_METRICS_MODEL??'haiku'],{input:prompt,encoding:'utf8',maxBuffer:1024*1024});
-          const raw=JSON.parse(output.slice(output.indexOf('['),output.lastIndexOf(']')+1)) as {task_id:string;at:string;kinds:unknown}[];
-          let saved=0;
-          for(const result of raw){const target=batch.find(x=>x.task_id===result.task_id&&x.at===result.at);if(!target)continue;const kind=normalizeReviewKinds(result.kinds).join(',');ledger.db.prepare('UPDATE events SET kind=? WHERE task_id=? AND at=? AND (kind IS NULL OR kind=\'\')').run(kind,target.task_id,target.at);saved++;}
-          out(`${saved} 件に分類を保存しました（対象 ${batch.length} 件、残り ${Math.max(0,rows.length-saved)} 件）`);return 0;
+          if(values['dry-run']) { const batch=rows.slice(0,20); out(JSON.stringify({pending:rows.length,selected:batch.length,events:batch.map(({task_id,at,note})=>({task_id,at,note}))})); return 0; }
+          if(!rows.length){out('分類待ちのレビュー差し戻しはありません');return 0;}
+          const timeoutMs=Number(process.env.TASK_METRICS_TIMEOUT_MS??120000);
+          if(!Number.isInteger(timeoutMs)||timeoutMs<1)throw new Error('TASK_METRICS_TIMEOUT_MS は正の整数で指定してください');
+          let saved=0,skipped=0;
+          for(let offset=0;offset<rows.length;offset+=20){
+            const batch=rows.slice(offset,offset+20);
+            const prompt=`次のレビュー差し戻しを、許可語の中から各1〜3個に分類し、JSON配列だけ返してください。形式: [{"task_id":"...","at":"...","kinds":["..."]}]\n許可語: ${REVIEW_KINDS.join('、')}\n入力: ${JSON.stringify(batch)}`;
+            let output:string;
+            try { output=execFileSync(process.env.TASK_CLAUDE_BIN??'claude',['-p','--model',process.env.TASK_METRICS_MODEL??'haiku'],{input:prompt,encoding:'utf8',maxBuffer:1024*1024,timeout:timeoutMs}); }
+            catch(error) { if((error as NodeJS.ErrnoException).code==='ETIMEDOUT'||(error as {killed?:boolean}).killed){skipped+=batch.length;continue;} throw error; }
+            const start=output.indexOf('['),end=output.lastIndexOf(']');
+            const raw=JSON.parse(start>=0&&end>=start?output.slice(start,end+1):output) as {task_id:string;at:string;kinds:unknown}[];
+            for(const result of raw){const target=batch.find(x=>x.task_id===result.task_id&&x.at===result.at);if(!target)continue;const kind=normalizeReviewKinds(result.kinds).join(',');const changed=ledger.db.prepare('UPDATE events SET kind=? WHERE task_id=? AND at=? AND (kind IS NULL OR kind=\'\')').run(kind,target.task_id,target.at);saved+=Number(changed.changes);}
+          }
+          out(`${saved} 件に分類を保存しました（対象 ${rows.length} 件、時間切れで飛ばした ${skipped} 件、残り ${Math.max(0,rows.length-saved-skipped)} 件）`);return 0;
         }
         if(sub) throw new Error('task metrics [--repo <path>] [--weeks N] [--json] | task metrics backfill-review-kinds [--dry-run]');
         const weeks=values.weeks===undefined?4:Number(values.weeks);if(!Number.isInteger(weeks)||weeks<1||weeks>104)throw new Error('--weeks は1〜104の整数');
