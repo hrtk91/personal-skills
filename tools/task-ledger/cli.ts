@@ -12,6 +12,7 @@ import { realDeps, runOnce, type RunDeps } from './run.ts';
 import { taskContext } from './context.ts';
 import { advance, realAdvanceDeps, sweepHerdrTabs, type AdvanceDeps } from './advance.ts';
 import { refreshDecisionCards } from './decision/index.ts';
+import { metrics, normalizeReviewKinds, REVIEW_KINDS } from './metrics.ts';
 
 const USAGE = `使い方:
   task add --title <題> --why <ユーザーの言葉と日付> [--brief <依頼文のパス>] [--check <確かめのコマンド>] [--worker pi|codex|claude] [--model <モデル>] [--effort <強さ>]
@@ -103,7 +104,7 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
     worker: { type: 'string' }, model: { type: 'string' }, effort: { type: 'string' },
     repo: { type: 'string' }, all: { type: 'boolean' }, status: { type: 'string' }, to: { type: 'string' },
     agent: { type: 'string' }, runner: { type: 'string' }, commit: { type: 'string' }, log: { type: 'string' }, workdir: { type: 'string' },
-    since: { type: 'string' }, json: { type: 'boolean' }, 'dry-run': { type: 'boolean' }, out: { type: 'string' }, issue: { type: 'string' }, body: { type: 'string' }, by: { type: 'string' }, from: { type: 'string' }, goal: { type: 'string' }, stage: { type: 'string' }, stages: { type: 'string' }, loose: { type: 'boolean' }, open: { type: 'boolean' }, docKind: { type: 'string' }, path: { type: 'string' },
+    since: { type: 'string' }, json: { type: 'boolean' }, 'dry-run': { type: 'boolean' }, weeks: { type: 'string' }, out: { type: 'string' }, issue: { type: 'string' }, body: { type: 'string' }, by: { type: 'string' }, from: { type: 'string' }, goal: { type: 'string' }, stage: { type: 'string' }, stages: { type: 'string' }, loose: { type: 'boolean' }, open: { type: 'boolean' }, docKind: { type: 'string' }, path: { type: 'string' },
     'なぜ': { type: 'string' }, '今の状態': { type: 'string' }, '関係する所': { type: 'string' }, 'やること': { type: 'string' }, 'やってよいこと': { type: 'string' }, 'やらないこと': { type: 'string' }, '終わりの条件': { type: 'string' }, '確かめのコマンド': { type: 'string' }, '触るファイル': { type: 'string' }, '種類': { type: 'string' }, '本番に出すか': { type: 'string' }, 'task-specific': { type: 'boolean' },
   } });
   const ledger = new Ledger();
@@ -258,6 +259,26 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
         if (!task) throw new Error(`台帳にありません: ${positionals[0] ?? ''}`);
         out(`${'始まりから'.padStart(8)} ${'かかった'.padStart(8)}    ${task.id}`);
         for (const text of renderTrace(buildTrace(ledger, task))) out(text);
+        return 0;
+      }
+      case 'metrics': {
+        const [sub] = positionals;
+        if (sub === 'backfill-review-kinds') {
+          const rows = ledger.db.prepare("SELECT e.task_id,e.at,e.note FROM events e WHERE ((e.to_status='走行中' AND e.note LIKE '差し戻し: レビュー%') OR (e.from_status='レビュー中' AND e.to_status='判断待ち' AND e.note LIKE 'レビュー:%')) AND (e.kind IS NULL OR e.kind='') ORDER BY e.at").all() as {task_id:string;at:string;note:string}[];
+          const batch=rows.slice(0,20);
+          if(values['dry-run']) { out(JSON.stringify({pending:rows.length,selected:batch.length,events:batch.map(({task_id,at,note})=>({task_id,at,note}))})); return 0; }
+          if(!batch.length){out('分類待ちのレビュー差し戻しはありません');return 0;}
+          const prompt=`次のレビュー差し戻しを、許可語の中から各1〜3個に分類し、JSON配列だけ返してください。形式: [{"task_id":"...","at":"...","kinds":["..."]}]\n許可語: ${REVIEW_KINDS.join('、')}\n入力: ${JSON.stringify(batch)}`;
+          const output=execFileSync(process.env.TASK_CLAUDE_BIN??'claude',['-p','--model',process.env.TASK_METRICS_MODEL??'haiku'],{input:prompt,encoding:'utf8',maxBuffer:1024*1024});
+          const raw=JSON.parse(output.slice(output.indexOf('['),output.lastIndexOf(']')+1)) as {task_id:string;at:string;kinds:unknown}[];
+          let saved=0;
+          for(const result of raw){const target=batch.find(x=>x.task_id===result.task_id&&x.at===result.at);if(!target)continue;const kind=normalizeReviewKinds(result.kinds).join(',');ledger.db.prepare('UPDATE events SET kind=? WHERE task_id=? AND at=? AND (kind IS NULL OR kind=\'\')').run(kind,target.task_id,target.at);saved++;}
+          out(`${saved} 件に分類を保存しました（対象 ${batch.length} 件、残り ${Math.max(0,rows.length-saved)} 件）`);return 0;
+        }
+        if(sub) throw new Error('task metrics [--repo <path>] [--weeks N] [--json] | task metrics backfill-review-kinds [--dry-run]');
+        const weeks=values.weeks===undefined?4:Number(values.weeks);if(!Number.isInteger(weeks)||weeks<1||weeks>104)throw new Error('--weeks は1〜104の整数');
+        const result=metrics(ledger,{repo,weeks});
+        if(values.json) out(JSON.stringify(result)); else {out('週\tリポジトリ\t済\t1回で通った\t失敗の種類\tレビュー細目\t判断待ち中央値(ms)\t走行中→済中央値(ms)\t頻出題');for(const w of result.weeks)out(`${w.week}\t${w.repo}\t${w.completed}\t${w.firstPass}\t${JSON.stringify(w.failures)}\t${JSON.stringify(w.reviewKinds)}\t${w.medianDecisionMs??'—'}\t${w.medianRunningToDoneMs??'—'}\t${JSON.stringify(w.frequentTitles)}`);}
         return 0;
       }
       case 'report': case 'otel': {

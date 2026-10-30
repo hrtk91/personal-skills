@@ -6,6 +6,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, 
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defaultPath, type Ledger, type SpanAttributes, type Status, type Task } from './ledger.ts';
+import { normalizeReviewKinds } from './metrics.ts';
 import { HERDR_RUN, logPath, runName, workerEnv } from './run.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -16,7 +17,7 @@ const CHECK_TIMEOUT = Number(process.env.TASK_CHECK_TIMEOUT_MS ?? 45 * 60_000);
 const REVIEW_TIMEOUT = Number(process.env.TASK_REVIEW_TIMEOUT_MS ?? 30 * 60_000);
 const DEPLOY_TIMEOUT = Number(process.env.TASK_DEPLOY_TIMEOUT_MS ?? 60 * 60_000);
 
-export type Verdict = { verdict: '通す' | '直す' | '判断'; reasons: string[]; fixes: string[] };
+export type Verdict = { verdict: '通す' | '直す' | '判断'; reasons: string[]; fixes: string[]; kinds?: string[] };
 export type Shell = { code: number; output: string };
 export type AdvanceDeps = {
   sh: (command: string, cwd: string, timeoutMs: number) => Shell;
@@ -45,7 +46,7 @@ export function parseVerdict(answer: string): Verdict | null {
         const value = JSON.parse(answer.slice(start, stop + 1)) as Partial<Verdict>;
         if (value.verdict !== '通す' && value.verdict !== '直す' && value.verdict !== '判断') break;
         const list = (items: unknown) => (Array.isArray(items) ? items.map(String) : []);
-        return { verdict: value.verdict, reasons: list(value.reasons), fixes: list(value.fixes) };
+        return { verdict: value.verdict, reasons: list(value.reasons), fixes: list(value.fixes), ...(value.kinds === undefined ? {} : { kinds: normalizeReviewKinds(value.kinds) }) };
       } catch { /* try a shorter span */ }
     }
   }
@@ -99,9 +100,9 @@ export function advance(ledger: Ledger, id: string, deps: AdvanceDeps, pid = pro
       const verdict = parseVerdict(answer);
       if (!verdict) return stop('レビューの答えから決まった形の JSON を読めなかった');
       said.push(`${id}: レビュー ${verdict.verdict}`);
-      if (verdict.verdict === '判断') return stop(`レビュー: ${verdict.reasons.join(' / ')}`);
+      if (verdict.verdict === '判断') { stop(`レビュー: ${verdict.reasons.join(' / ')}`); ledger.setEventKind(task.id, ledger.events(task.id).at(-1)!.at, normalizeReviewKinds(verdict.kinds).join(',')); return said; }
       if (verdict.verdict === '直す') {
-        sendBack(ledger, task, deps, `レビューで直すことになった。${verdict.reasons.join(' ')}`, verdict.fixes.map((fix) => `- ${fix}`).join('\n'), said, stop);
+        sendBack(ledger, task, deps, `レビューで直すことになった。${verdict.reasons.join(' ')}`, verdict.fixes.map((fix) => `- ${fix}`).join('\n'), said, stop); ledger.setEventKind(task.id, ledger.events(task.id).at(-1)!.at, normalizeReviewKinds(verdict.kinds).join(','));
         return said;
       }
       ledger.setStatus(id, '取り込み中', `レビュー: ${verdict.reasons.join(' / ') || '通す'}`);

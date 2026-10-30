@@ -84,6 +84,7 @@ export interface GoalRow {
 }
 
 export interface GoalTabData {
+  metrics: import("../../../metrics.ts").MetricsResult;
   project: ProjectSummary;
   projects: ProjectSummary[];
   decisions: DecisionItem[];
