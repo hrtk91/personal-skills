@@ -120,7 +120,7 @@ export function advance(ledger: Ledger, id: string, deps: AdvanceDeps, pid = pro
         ? writeLog(id, `review-confirmation-delta-${task.attempts}`, deps.sh(`git diff ${quote(previous.head)} HEAD`, workdir, 60_000).output)
         : diffPath;
       const fullPrompt = pendingConfirmation
-        ? `確認レビューです。全体の再レビューや新しい指摘は禁止です。以下の初回の害「大」の指摘だけを対象に、直しの差分 ${confirmationDiffPath} のみを確認してください。各指摘について「直った」または「直っていない」だけ答えてください。新しい指摘は受け付けません。\n初回の大指摘一覧:\n${pendingConfirmation.map((text, index) => `${index + 1}. ${text}`).join('\n')}\n\nJSONのみ: {"items":[{"text":"初回指摘の文面","status":"直った|直っていない"}]}`
+        ? `確認レビューです。全体の再レビューは禁止です。以下の初回の害「大」の指摘だけを対象に、直しの差分 ${confirmationDiffPath} のみを確認してください。各番号を必ず fixed または unfixed のどちらか一方に含めてください。指摘の文面は書き直さず、番号で答えてください。新しい指摘は new に記録してください。\n初回の大指摘一覧:\n${pendingConfirmation.map((text, index) => `${index + 1}. ${text}`).join('\n')}\n\nJSONのみ: {"fixed":[1,3],"unfixed":[2],"new":["…"]}`
         : reviewPrompt(task, diffPath, checkPath, outsideFiles);
       const currentHead = gitHead(workdir, deps);
       const canResume = !pendingConfirmation && previous && previous.cwd === workdir && previous.uses < 4;
@@ -176,7 +176,7 @@ export function advance(ledger: Ledger, id: string, deps: AdvanceDeps, pid = pro
       if (verdict.findings !== undefined) {
         if (blocking.length) {
           // Keep the exact first-review HEAD even when a test/injected reviewer has no resumable session metadata.
-          ledger.saveClaudeSession(id, 'review', sessionId, workdir, currentHead, Math.max(4, uses));
+          ledger.saveClaudeSession(id, 'review', sessionId, workdir, currentHead, uses);
           const reason = `レビュー確認: 初回の大指摘を直して確認する。止めた指摘数: ${blocking.length} ${blocking.map((finding) => finding.text).join(' ')}`;
           sendBack(ledger, task, deps, reason, blocking.map((finding) => `- ${finding.text}`).join('\n'), said, stop);
           ledger.setEventKind(task.id, ledger.events(task.id).at(-1)!.at, normalizeReviewKinds(verdict.kinds).join(','));
@@ -410,18 +410,13 @@ function parseReviewConfirmation(answer: string, expected: string[]): { unresolv
   for (const start of starts) {
     for (let end = answer.lastIndexOf('}'); end > start; end = answer.lastIndexOf('}', end - 1)) {
       try {
-        const value = JSON.parse(answer.slice(start, end + 1)) as { items?: unknown; newFindings?: unknown };
-        if (!Array.isArray(value.items) || (value.newFindings !== undefined && !Array.isArray(value.newFindings))) continue;
-        const statuses = new Map<string, string>();
-        let valid = true;
-        for (const raw of value.items) {
-          if (!raw || typeof raw !== 'object') { valid = false; break; }
-          const item = raw as { text?: unknown; status?: unknown };
-          if (typeof item.text !== 'string' || !expected.includes(item.text) || !['直った', '直っていない'].includes(String(item.status))) { valid = false; break; }
-          statuses.set(item.text, String(item.status));
-        }
-        if (!valid || expected.some((text) => !statuses.has(text))) continue;
-        return { unresolved: expected.filter((text) => statuses.get(text) === '直っていない'), newFindings: (value.newFindings ?? []).filter((item): item is string => typeof item === 'string') };
+        const value = JSON.parse(answer.slice(start, end + 1)) as { fixed?: unknown; unfixed?: unknown; new?: unknown };
+        if (!Array.isArray(value.fixed) || !Array.isArray(value.unfixed) || (value.new !== undefined && !Array.isArray(value.new))) continue;
+        if ((value.new ?? []).some((item) => typeof item !== 'string')) continue;
+        const all = [...value.fixed, ...value.unfixed];
+        if (all.some((item) => !Number.isInteger(item) || (item as number) < 1 || (item as number) > expected.length)) continue;
+        if (new Set(all).size !== all.length || all.length !== expected.length) continue;
+        return { unresolved: value.unfixed.map((number) => expected[(number as number) - 1]!), newFindings: (value.new ?? []) as string[] };
       } catch { /* try the next JSON boundary */ }
     }
   }

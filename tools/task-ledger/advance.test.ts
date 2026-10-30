@@ -239,14 +239,16 @@ test('major findings are sent back once, then only the original findings are che
     const reviewAnswers = [
       JSON.stringify({ verdict: '通す', reasons: [], fixes: [], findings: [
         { text: '大指摘A', likelihood: 'いつも', harm: '大', blocking: true },
+        { text: '大指摘A2', likelihood: 'いつも', harm: '大', blocking: true },
         { text: '中指摘B', likelihood: 'いつも', harm: '中', blocking: false },
       ] }),
-      JSON.stringify({ items: [{ text: '大指摘A', status: '直った' }], newFindings: ['新しい指摘C'] }),
+      JSON.stringify({ fixed: [1, 2], unfixed: [], new: ['新しい指摘C'] }),
     ];
     const d = deps('', calls);
     d.review = (prompt) => { calls.push(`review:${prompt}`); return reviewAnswers.shift()!; };
     advance(f.ledger, 'repo-1', d, 1);
     assert.equal(f.ledger.get('repo-1')!.status, '走行中');
+    assert.equal(f.ledger.claudeSession('repo-1', 'review')?.uses, 1);
     assert.match(readFileSync(join(f.dir, 'logs/repo-1-sendback-1.log'), 'utf8'), /大指摘A/);
     assert.doesNotMatch(readFileSync(join(f.dir, 'logs/repo-1-sendback-1.log'), 'utf8'), /中指摘B/);
     f.ledger.setStatus('repo-1', '確かめ中', 'worker fixed');
@@ -254,9 +256,10 @@ test('major findings are sent back once, then only the original findings are che
     advance(f.ledger, 'repo-1', d, 1);
     const reviewCalls = calls.filter((call) => call.startsWith('review:'));
     assert.equal(reviewCalls.length, 2);
-    assert.match(reviewCalls[1]!, /大指摘A/);
+    assert.match(reviewCalls[1]!, /1\. 大指摘A/);
+    assert.match(reviewCalls[1]!, /2\. 大指摘A2/);
     assert.doesNotMatch(reviewCalls[1]!, /中指摘B/);
-    assert.match(reviewCalls[1]!, /新しい指摘は禁止/);
+    assert.match(reviewCalls[1]!, /"fixed":\[1,3\]/);
     assert.equal(f.ledger.get('repo-1')!.status, '済');
     assert.match(f.ledger.get('repo-1')!.note!, /新しい指摘C/);
     assert.equal(reviewAnswers.length, 0);
@@ -270,7 +273,7 @@ test('a second review with any unresolved original major finding waits and canno
     const calls: string[] = [];
     const answers = [
       JSON.stringify({ verdict: '通す', reasons: [], fixes: [], findings: [{ text: '重大X', likelihood: 'いつも', harm: '大', blocking: true }] }),
-      JSON.stringify({ items: [{ text: '重大X', status: '直っていない' }], newFindings: [] }),
+      JSON.stringify({ fixed: [], unfixed: [1], new: [] }),
     ];
     const d = deps('', calls);
     d.review = (prompt) => { calls.push(`review:${prompt}`); return answers.shift()!; };
@@ -283,6 +286,27 @@ test('a second review with any unresolved original major finding waits and canno
     assert.equal(calls.filter((call) => call.startsWith('review:')).length, 2);
     assert.equal(answers.length, 0);
   } finally { f.done(); }
+});
+
+test('a second review with a missing or unknown number is unreadable and waits', () => {
+  for (const response of ['{"fixed":[],"unfixed":[],"new":[]}', '{"fixed":[2],"unfixed":[],"new":[]}']) {
+    const f = fixture();
+    try {
+      writeFileSync(join(f.workdir, 'handoff/t-report.md'), '終わりの条件: 満たした\\n');
+      const answers = [
+        JSON.stringify({ verdict: '通す', reasons: [], fixes: [], findings: [{ text: '重大X', likelihood: 'いつも', harm: '大', blocking: true }] }),
+        response,
+      ];
+      const d = deps('');
+      d.review = () => answers.shift()!;
+      advance(f.ledger, 'repo-1', d, 1);
+      f.ledger.setStatus('repo-1', '確かめ中', 'worker returned');
+      f.ledger.releaseRunner('repo-1');
+      advance(f.ledger, 'repo-1', d, 1);
+      assert.equal(f.ledger.get('repo-1')!.status, '判断待ち');
+      assert.match(f.ledger.get('repo-1')!.note!, /読めなかった/);
+    } finally { f.done(); }
+  }
 });
 
 test('a report that says conditions are met proceeds to review', () => {
@@ -662,7 +686,7 @@ test('review confirmation uses only the original major finding list and does not
   const f=fixture();try{
     writeFileSync(join(f.workdir,'handoff/t-report.md'),'current report');mkdirSync(join(f.dir,'logs'),{recursive:true});
     let n=0;const calls:{prompt:string;session?:{sessionId?:string;resumePrompt?:string}}[]=[];const d=deps('');
-    d.review=(prompt,_cwd,_dirs,session)=>{calls.push({prompt,session});n++;return {answer:n===1?'{"verdict":"通す","reasons":[],"fixes":[],"findings":[{"text":"fix","likelihood":"いつも","harm":"大","blocking":true}]}':'{"items":[{"text":"fix","status":"直った"}]}',attributes:{'review.session_id':`s${n}`}};};
+    d.review=(prompt,_cwd,_dirs,session)=>{calls.push({prompt,session});n++;return {answer:n===1?'{"verdict":"通す","reasons":[],"fixes":[],"findings":[{"text":"fix","likelihood":"いつも","harm":"大","blocking":true}]}':'{"fixed":[1],"unfixed":[],"new":[]}',attributes:{'review.session_id':`s${n}`}};};
     advance(f.ledger,'repo-1',d,410);assert.equal(f.ledger.get('repo-1')!.status,'走行中');
     writeFileSync(join(f.workdir,'math.js'),'export const sub = (a, b) => a - b; // 修正内容だけ\n');git(f.workdir,'add','math.js');git(f.workdir,'commit','-qm','fix review finding');
     f.ledger.setStatus('repo-1','確かめ中','worker returned');f.ledger.releaseRunner('repo-1');
@@ -686,7 +710,7 @@ test('catch-up conflicts after a passing review do not trigger another review, i
       writeFileSync(join(f.workdir,'handoff/t-report.md'),'終わりの条件: 満たした\n');const calls:string[]=[];let n=0;const d=deps('',calls);
       d.review=(prompt)=>{calls.push(`review:${prompt}`);n++;return n===1&&major
         ?'{"verdict":"通す","reasons":[],"fixes":[],"findings":[{"text":"major","likelihood":"いつも","harm":"大","blocking":true}]}'
-        :major&&n===2?'{"items":[{"text":"major","status":"直った"}]}':'{"verdict":"通す","reasons":[],"fixes":[]}';};
+        :major&&n===2?'{"fixed":[1],"unfixed":[],"new":[]}':'{"verdict":"通す","reasons":[],"fixes":[]}';};
       advance(f.ledger,'repo-1',d,500);
       if(major){assert.equal(f.ledger.get('repo-1')!.status,'走行中');f.ledger.setStatus('repo-1','確かめ中','worker fixed');f.ledger.releaseRunner('repo-1');advance(f.ledger,'repo-1',d,501);}
       assert.equal(f.ledger.get('repo-1')!.status,'走行中');assert.match(f.ledger.get('repo-1')!.note!,/差し戻し:.*衝突/);
