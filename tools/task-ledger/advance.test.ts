@@ -348,7 +348,7 @@ test('a locale-specific missing-command diagnostic is detected without English w
   try {
     const d = deps('');
     const said = advance(f.ledger, 'repo-1', { ...d, sh: (command, cwd, timeout) => command === 'definitely-not-a-real-check-command'
-      ? { code: 127, output: 'bash: 行 1: definitely-not-a-real-check-command: コマンドがありません\\n' }
+      ? { code: 127, output: '診断メッセージの形式や言語に依存しない\\n' }
       : d.sh(command, cwd, timeout) }, 1);
     assert.equal(f.ledger.get('repo-1')!.status, '判断待ち');
     assert.equal(f.ledger.get('repo-1')!.attempts, 1);
