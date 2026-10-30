@@ -193,7 +193,7 @@ class HerdrContractTest(unittest.TestCase):
             path.write_text(source)
             path.chmod(0o755)
         claude = self.bin / "claude"
-        claude.write_text("#!/usr/bin/env python3\nimport json,os,sys,subprocess\nopen(os.environ['FAKE_CLAUDE_ARGS'],'w').write(json.dumps(sys.argv[1:]))\nprint(json.dumps({'type':'system','subtype':'init','session_id':'session-smoke'}), flush=True)\nif os.environ.get('FAKE_CLAUDE_RETRY_DENIAL') == '1':\n counter=os.environ['FAKE_CLAUDE_ARGS']+'.count'; n=int(open(counter).read()) if os.path.exists(counter) else 0; open(counter,'w').write(str(n+1))\n if n == 0: print(json.dumps({'type':'system','subtype':'permission_denied','message':'sandbox blocked write'}), flush=True)\nif os.environ.get('FAKE_CLAUDE_BODY_BUBBLEWRAP') == '1': print(json.dumps({'type':'assistant','message':{'content':[{'type':'text','text':'The word bubblewrap is just in this explanation.'}]}}), flush=True)\nif os.environ.get('FAKE_CLAUDE_TOOL_DENIAL') == '1': print(json.dumps({'type':'user','message':{'content':[{'type':'tool_result','is_error':True,'content':'bwrap: Operation not permitted'}]}}), flush=True)\nif os.environ.get('FAKE_CLAUDE_BASH_JA') == '1': print(json.dumps({'type':'user','message':{'content':[{'type':'tool_result','is_error':False,'content':'mkdir: 作成できません: 読み込み専用ファイルシステムです\\nmkdir_exit=1'}]}}), flush=True)\nprint(json.dumps({'type':'assistant','message':{'content':[{'type':'tool_use','name':'Write','input':{'file':'handoff/report'}}]}}), flush=True)\nprint(json.dumps({'type':'result','subtype':'success','stop_reason':'end_turn','result':'finished'}), flush=True)\nif os.environ.get('FAKE_CLAUDE_HOLD_CHILD') == '1':\n child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)'])\n open(os.environ['FAKE_CLAUDE_CHILD_PID'],'w').write(str(child.pid))\n if os.environ.get('FAKE_CLAUDE_HOLD_PARENT') == '1':\n  import time; time.sleep(60)\nname=os.environ['FAKE_NAME']; os.makedirs('handoff',exist_ok=True)\nif os.environ.get('FAKE_CLAUDE_RETRY_DENIAL') != '1' or n != 0: open('handoff/'+name+'-report.md','w').write('done\\n')\n" )
+        claude.write_text("#!/usr/bin/env python3\nimport json,os,sys,subprocess\nbody=sys.stdin.read()\nopen(os.environ['FAKE_CLAUDE_ARGS'],'w').write(json.dumps(sys.argv[1:]))\nwith open(os.environ['FAKE_CLAUDE_CALLS'],'a') as calls: calls.write(json.dumps({'args':sys.argv[1:],'input':body})+'\\n')\nif os.environ.get('FAKE_CLAUDE_RESUME_FAIL') == '1' and '--resume' in sys.argv: sys.exit(17)\nprint(json.dumps({'type':'system','subtype':'init','session_id':'session-smoke'}), flush=True)\nif os.environ.get('FAKE_CLAUDE_RETRY_DENIAL') == '1':\n counter=os.environ['FAKE_CLAUDE_ARGS']+'.count'; n=int(open(counter).read()) if os.path.exists(counter) else 0; open(counter,'w').write(str(n+1))\n if n == 0: print(json.dumps({'type':'system','subtype':'permission_denied','message':'sandbox blocked write'}), flush=True)\nif os.environ.get('FAKE_CLAUDE_BODY_BUBBLEWRAP') == '1': print(json.dumps({'type':'assistant','message':{'content':[{'type':'text','text':'The word bubblewrap is just in this explanation.'}]}}), flush=True)\nif os.environ.get('FAKE_CLAUDE_TOOL_DENIAL') == '1': print(json.dumps({'type':'user','message':{'content':[{'type':'tool_result','is_error':True,'content':'bwrap: Operation not permitted'}]}}), flush=True)\nif os.environ.get('FAKE_CLAUDE_BASH_JA') == '1': print(json.dumps({'type':'user','message':{'content':[{'type':'tool_result','is_error':False,'content':'mkdir: 作成できません: 読み込み専用ファイルシステムです\\nmkdir_exit=1'}]}}), flush=True)\nprint(json.dumps({'type':'assistant','message':{'content':[{'type':'tool_use','name':'Write','input':{'file':'handoff/report'}}]}}), flush=True)\nprint(json.dumps({'type':'result','subtype':'success','stop_reason':'end_turn','result':'finished'}), flush=True)\nif os.environ.get('FAKE_CLAUDE_HOLD_CHILD') == '1':\n child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)'])\n open(os.environ['FAKE_CLAUDE_CHILD_PID'],'w').write(str(child.pid))\n if os.environ.get('FAKE_CLAUDE_HOLD_PARENT') == '1':\n  import time; time.sleep(60)\nname=os.environ['FAKE_NAME']; os.makedirs('handoff',exist_ok=True)\nif os.environ.get('FAKE_CLAUDE_RETRY_DENIAL') != '1' or n != 0: open('handoff/'+name+'-report.md','w').write('done\\n')\n" )
         claude.chmod(0o755)
         self.claude_args = self.root / "claude-args.json"
         self.channel_bin = self.bin / "channel"
@@ -226,7 +226,7 @@ class HerdrContractTest(unittest.TestCase):
                 self.env.pop(key)
         self.env.update({"PATH": str(self.bin) + os.pathsep + self.env["PATH"], "HERDR_WORKSPACE_ID": "test-workspace",
             "CODEX_HOME": str(self.home), "FAKE_STATE": str(self.state_path), "FAKE_NAME": self.name,
-            "FAKE_WORK": str(self.work), "FAKE_W": str(self.w), "FAKE_CLAUDE_ARGS": str(self.claude_args), "FAKE_CLAUDE_CHILD_PID": str(self.root / "claude-child.pid"), "FAKE_PANE_OUTPUT": str(self.root / "pane-output.txt"), "PI_CHANNEL_EXT": str(self.channel_ext),
+            "FAKE_WORK": str(self.work), "FAKE_W": str(self.w), "FAKE_CLAUDE_ARGS": str(self.claude_args), "FAKE_CLAUDE_CALLS": str(self.root / "claude-calls.jsonl"), "FAKE_CLAUDE_CHILD_PID": str(self.root / "claude-child.pid"), "FAKE_PANE_OUTPUT": str(self.root / "pane-output.txt"), "PI_CHANNEL_EXT": str(self.channel_ext),
             "CHANNEL_BIN": str(self.channel_bin), "AGENT_CHANNEL": str(self.channel_log),
             # Offline contract runs must not inherit an active ledger task context.
             "TASK_ID": "", "TASK_ISSUE_ID": "", "TASK_LEDGER_DB": ""})
@@ -640,6 +640,34 @@ class HerdrContractTest(unittest.TestCase):
         self.assert_success(self.run_script(mode="slow-marker"))
         self.assertEqual(len(self.state()["prompts"]), 2)  # one per role, no resubmission
         self.assertEqual(len(self.starts()), 2)
+
+    def test_claude_sendback_resumes_with_delta_and_second_sendback_still_sends_only_delta(self):
+        self.assert_success(self.run_script(IMPL_AGENT="claude", REV_AGENT="codex"))
+        self.run_script(RESUME="newtab", SEND_BACK="1", IMPL_AGENT="claude", REV_AGENT="codex")
+        self.run_script(RESUME="newtab", SEND_BACK="1", IMPL_AGENT="claude", REV_AGENT="codex")
+        calls = [json.loads(line) for line in (self.root / "claude-calls.jsonl").read_text().splitlines()]
+        self.assertEqual(len(calls), 3)
+        self.assertNotIn("--resume", calls[0]["args"])
+        self.assertIn("--resume", calls[1]["args"])
+        self.assertIn("--resume", calls[2]["args"])
+        full_prompt = (self.work / "claude-contract.full.md").read_text()
+        self.assertIn("差分:", calls[1]["input"])
+        self.assertIn("差分:", calls[2]["input"])
+        self.assertLess(len(calls[1]["input"]), len(full_prompt))
+        self.assertLess(len(calls[2]["input"]), len(full_prompt))
+        self.assertNotIn("Dummy task", calls[1]["input"])
+        self.assertNotIn("Dummy task", calls[2]["input"])
+        self.assertTrue((self.work / "claude-contract.full.md").is_file())
+
+    def test_failed_worker_resume_retries_once_with_full_prompt_without_resume(self):
+        self.assert_success(self.run_script(IMPL_AGENT="claude", REV_AGENT="codex"))
+        self.run_script(RESUME="newtab", SEND_BACK="1", IMPL_AGENT="claude", REV_AGENT="codex", FAKE_CLAUDE_RESUME_FAIL="1")
+        calls = [json.loads(line) for line in (self.root / "claude-calls.jsonl").read_text().splitlines()]
+        self.assertEqual(len(calls), 3)  # initial, failed --resume, fresh full-prompt retry
+        self.assertIn("--resume", calls[1]["args"])
+        self.assertNotIn("--resume", calls[2]["args"])
+        self.assertEqual(calls[2]["input"], (self.work / "claude-contract.full.md").read_text())
+        self.assertNotIn("差し戻しの文と現在の依頼文の差分だけ", calls[2]["input"])
 
     def test_resume_keeps_existing_agent_and_tab(self):
         self.run_script(mode="blocked")

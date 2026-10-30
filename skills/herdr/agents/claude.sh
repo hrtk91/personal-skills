@@ -3,23 +3,25 @@
 claude_start() { :; } # Claude -p は専用 pane shell command から起こす。
 
 claude_send() { # <agent> <text> <報告印のパス> <pane>
-  local agent=$1 text=$2 mark=$3 short=${1#impl-} prompt="$WORK/claude-$name.md" raw="$WORK/claude-$name.jsonl" session="$WORK/claude-$name.session" state="$WORK/claude-$name.status" helper="$WORK/claude-$name-run.sh" cmd
+  local agent=$1 text=$2 mark=$3 short=${1#impl-} prompt="$WORK/claude-$name.md" full="$WORK/claude-$name.full.md" raw="$WORK/claude-$name.jsonl" session="$WORK/claude-$name.session" state="$WORK/claude-$name.status" helper="$WORK/claude-$name-run.sh" cmd
   if [[ "$agent" == impl-* ]]; then
     text="$text 報告の先頭近くに必ず機械可読な 1 行「終わりの条件: 満たした」または「終わりの条件: 満たしていない — <満たしていない条件を依頼文の書き方で、；で区切る>」を書く。決められない理由がある場合は「終わりの条件: 満たしていない — 決められない: <理由>」とする。終わりの条件の確かめは、使う人が実際に通る入口（依頼文に書かれたスクリプト・コマンド・起動の台本）で流し、そのコマンドと出力の要所を貼る。手で組んだ代わりの命令で流したもの、手で作った成果物は「代わりの道」と書き、満たしたとは書かない。"
   fi
-  if [ "${SEND_BACK:-}" = 1 ] && [ -f "$session" ] && [ -f "$prompt" ]; then
-    cp "$prompt" "$prompt.previous"
+  if [ "${SEND_BACK:-}" = 1 ] && [ -f "$session" ] && [ -f "$full" ]; then
+    printf '%s\n' "$text" > "$full.new"
     printf '差し戻しの文と現在の依頼文の差分だけを確認して作業を続けてください。\n\n差分:\n' > "$prompt"
-    diff -u "$prompt.previous" <(printf '%s\n' "$text") >> "$prompt" || true
+    diff -u "$full" "$full.new" >> "$prompt" || true
+    mv "$full.new" "$full"
   else
-    printf '%s\n' "$text" > "$prompt"
+    printf '%s\n' "$text" > "$full"
+    cp "$full" "$prompt"
   fi
   rm -f "$raw" "$state" "$W/$REPORT"
   [ "${SEND_BACK:-}" = 1 ] || rm -f "$session"
   cat > "$helper" <<'CLAUDE_HELPER'
 #!/bin/bash
 set -uo pipefail
-prompt=$1 raw=$2 session_file=$3 state=$4 report=$5 model=$6 effort=$7 log_file=$8 agent=$9 timeout=${10}
+prompt=$1 full=$2 raw=$3 session_file=$4 state=$5 report=$6 model=$7 effort=$8 log_file=$9 agent=${10} timeout=${11}
 started=$SECONDS; claude_pid=; interrupted=0; terminal_reason=none
 record() { printf '%s %s: 自分で終わった=%s 終了コード=%s かかった秒数=%s terminal_reason=%s\n' "$(date +%F' '%T)" "$agent" "$1" "$2" "$((SECONDS-started))" "$terminal_reason" >> "$log_file"; }
 on_int() { interrupted=1; [ -z "$claude_pid" ] || { kill -INT "$claude_pid" 2>/dev/null || true; command sleep 1; kill -KILL "$claude_pid" 2>/dev/null || true; }; }
@@ -53,6 +55,7 @@ for line in sys.stdin:
 '
 session=
 [ "${SEND_BACK:-}" = 1 ] && [ -f "$session_file" ] && session=$(cat "$session_file")
+resuming=0; [ -n "$session" ] && resuming=1
 : >> "$raw"
 for attempt in 1 2; do
   raw_start=$(wc -c < "$raw")
@@ -64,9 +67,12 @@ for attempt in 1 2; do
     permission_mode=acceptEdits
   fi
   args=(-p --model "$model" --effort "$effort" --permission-mode "$permission_mode" --output-format stream-json --verbose --settings "$settings" --strict-mcp-config)
-  [ -z "$session" ] || args+=(--resume "$session")
+  call_prompt=$prompt
+  attempt_resuming=$resuming
+  attempt_session=$session
+  if [ "$resuming" = 1 ]; then args+=(--resume "$session"); else call_prompt=$full; fi
   # File capture prevents stdout-inheriting descendants from blocking formatting; tail streams live.
-  claude "${args[@]}" < "$prompt" >> "$raw" 2>&1 & claude_pid=$!
+  claude "${args[@]}" < "$call_prompt" >> "$raw" 2>&1 & claude_pid=$!
   tail -n +1 -F --pid="$claude_pid" "$raw" 2>/dev/null | python3 -u -c "$CLAUDE_FORMAT" "$session_file" & follower=$!
   while kill -0 "$claude_pid" 2>/dev/null; do
     if [ "$((SECONDS-started))" -ge "$timeout" ]; then interrupted=1; kill -INT "$claude_pid" 2>/dev/null || true; command sleep 1; kill -KILL "$claude_pid" 2>/dev/null || true; break; fi
@@ -108,17 +114,24 @@ open(sys.argv[1]+'.reason','w').write(reason)
 print(sid)
 PY
 )
+  [ -n "$session" ] || session=$attempt_session
   terminal_reason=$(cat "$raw.reason" 2>/dev/null || echo none); printf '%s\n' "$session" > "$session_file"
   record "$ended" "$rc"
   if [ "$interrupted" = 0 ] && [ "$rc" = 0 ] && [ "$terminal_reason" = success ] && [ -f "$report" ]; then echo implemented > "$state"; exit 0; fi
   [ "$interrupted" = 0 ] && [ "$attempt" = 1 ] && [ -n "$session" ] || break
-  echo "report missing or nonzero exit; resuming session $session" >&2
+  if [ "$attempt_resuming" = 1 ]; then
+    echo "resume failed; retrying once with a new session and full prompt" >&2
+    session=; resuming=0
+  else
+    echo "report missing or nonzero exit; retrying session $session" >&2
+    resuming=1
+  fi
 done
 echo failed > "$state"; exit 1
 CLAUDE_HELPER
   chmod +x "$helper"
   local model=${CLAUDE_MODEL:-opus} effort=${CLAUDE_EFFORT:-high} timeout=${CLAUDE_TIMEOUT_SECONDS:-1800}
-  cmd=$(printf 'SEND_BACK=%q bash %q %q %q %q %q %q %q %q %q %q %q' "${SEND_BACK:-}" "$helper" "$prompt" "$raw" "$session" "$state" "$W/$REPORT" "$model" "$effort" "$L" "$agent" "$timeout")
+  cmd=$(printf 'SEND_BACK=%q bash %q %q %q %q %q %q %q %q %q %q %q %q' "${SEND_BACK:-}" "$helper" "$prompt" "$full" "$raw" "$session" "$state" "$W/$REPORT" "$model" "$effort" "$L" "$agent" "$timeout")
   herdr pane send-text "$4" "$cmd" >/dev/null || return 1
   herdr pane send-keys "$4" Enter >/dev/null || return 1
   local i ticks=$(( (timeout + 1) / 2 ))

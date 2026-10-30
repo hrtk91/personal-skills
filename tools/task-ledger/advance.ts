@@ -99,7 +99,8 @@ export function advance(ledger: Ledger, id: string, deps: AdvanceDeps, pid = pro
       const deltaPath = previous?.head ? writeLog(id, `review-delta-${task.attempts}`, deps.sh(`git diff ${quote(previous.head)} HEAD`, workdir, 60_000).output) : diffPath;
       const reportPathNow = task.brief ? join(workdir, task.brief.replace(/\.md$/, '-report.md')) : '';
       const reportNow = reportPathNow && existsSync(reportPathNow) ? readFileSync(reportPathNow, 'utf8') : '（報告なし）';
-      const resumePrompt = `前回のレビュー以後の変化だけを確認してください。\n差分: ${deltaPath}\n差し戻しの文: ${task.note ?? 'なし'}\n作業役の報告（現在版）:\n${reportNow}\n確かめのコマンド ${task.check ?? '（無い）'} の出力:\n${tail(existsSync(checkPath) ? readFileSync(checkPath, 'utf8') : '（確かめ出力なし）', 60)}\n\n${readFileSync(join(HERE, 'review-prompt.md'), 'utf8')}\n前回と同じ JSON 形式で判定してください.`;
+      const sendbackNote = [...ledger.events(id)].reverse().find((event) => event.note?.startsWith('差し戻し:'))?.note ?? 'なし';
+      const resumePrompt = `前回のレビュー以後の変化だけを確認してください。\n差分: ${deltaPath}\n差し戻しの文: ${sendbackNote}\n作業役の報告（現在版）:\n${reportNow}\n確かめのコマンド ${task.check ?? '（無い）'} の出力:\n${tail(existsSync(checkPath) ? readFileSync(checkPath, 'utf8') : '（確かめ出力なし）', 60)}\n対象外ファイルの変更: ${outsideFiles.length ? outsideFiles.join('、') : 'なし'}\n\n${readFileSync(join(HERE, 'review-prompt.md'), 'utf8')}\n前回と同じ JSON 形式で判定してください.`;
       const reply = timed(ledger, task, 'レビュー', () => {
         let result = deps.review(canResume ? resumePrompt : fullPrompt, workdir, [dirname(diffPath)], canResume ? { sessionId, resumePrompt } : { sessionId });
         let answer = typeof result === 'string' ? result : result.answer;

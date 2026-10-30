@@ -93,10 +93,10 @@ test('an in-memory ledger never starts a decision refresh child',async()=>{
 
 test('a card immediately following review resumes that session as a fork, with only a card prompt',()=>{
  const dir=mkdtempSync(join(tmpdir(),'decision-fork-')),oldBin=process.env.TASK_CLAUDE_BIN,db=join(dir,'db.sqlite'),capture=join(dir,'capture'),bin=join(dir,'claude');
- writeFileSync(bin,`#!/bin/sh\nprintf '%s\\n' "$*" > '${capture}.args'\ncat > '${capture}.input'\nprintf '%s' '${good.replaceAll("'", "'\\''")}'\n`);chmodSync(bin,0o755);
+ writeFileSync(bin,`#!/bin/sh\nprintf '%s\\n' "$*" > '${capture}.args'\nprintf '%s' "$PWD" > '${capture}.cwd'\ncat > '${capture}.input'\nprintf '%s' '${good.replaceAll("'", "'\\''")}'\n`);chmodSync(bin,0o755);
  const ledger=new Ledger(db);
  try {process.env.TASK_CLAUDE_BIN=bin;const task=ledger.add({repo:dir,title:'fork',why:'secret detailed why',brief:'brief.md'});ledger.setRunner(task.id,{workdir:dir});ledger.saveClaudeSession(task.id,'review','review-session',dir,'head');ledger.setStatus(task.id,'レビュー中','reviewing');ledger.setStatus(task.id,'判断待ち','review held');const event=ledger.events(task.id).at(-1)!;
-  assert.ok(createDecisionCard(ledger,ledger.get(task.id)!,event.at,'review held'));assert.match(readFileSync(capture+'.args','utf8'),/--resume review-session --fork-session/);assert.match(readFileSync(capture+'.args','utf8'),/--tools\s+--resume review-session --fork-session/);const input=readFileSync(capture+'.input','utf8');assert.match(input,/判断カードだけ/);assert.doesNotMatch(input,/secret detailed why/);
+  assert.ok(createDecisionCard(ledger,ledger.get(task.id)!,event.at,'review held'));assert.match(readFileSync(capture+'.args','utf8'),/--resume review-session --fork-session/);assert.match(readFileSync(capture+'.args','utf8'),/--tools\s+--resume review-session --fork-session/);const input=readFileSync(capture+'.input','utf8');assert.match(input,/判断カードだけ/);assert.doesNotMatch(input,/secret detailed why/);assert.equal(readFileSync(capture+'.cwd','utf8'),dir);
  } finally {ledger.close();if(oldBin===undefined)delete process.env.TASK_CLAUDE_BIN;else process.env.TASK_CLAUDE_BIN=oldBin;rmSync(dir,{recursive:true,force:true});}
 });
 

@@ -36,7 +36,7 @@ export function createDecisionCard(ledger:Ledger,task:Task,enteredAt:string,note
    const args=['-p','--model',model,'--settings','{"disableAllHooks":true}','--strict-mcp-config','--tools',''];
    if(fork)args.push('--resume',session!.session_id,'--fork-session');
    let result:string;
-   try { result=execFileSync(bin,args,{encoding:'utf8',timeout:remaining,input:fork?cardOnly:input,stdio:['pipe','pipe','pipe']}); }
+   try { result=execFileSync(bin,args,{cwd:session?.cwd,encoding:'utf8',timeout:remaining,input:fork?cardOnly:input,stdio:['pipe','pipe','pipe']}); }
    catch { if(fork)continue; throw new Error('decision claude failed'); }
    const parsed=parseDecision(result);if(parsed){saveDecisionCard(ledger,task.id,enteredAt,parsed,model);return parsed;}
   }

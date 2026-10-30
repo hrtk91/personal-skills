@@ -546,6 +546,20 @@ test('review sessions resume only through use four, then start over; cwd changes
   } finally { f.done(); }
 });
 
+test('review resume uses the latest sendback event, excludes success note, and includes outsideFiles through real status transitions',()=>{
+  const f=fixture();try{
+    writeFileSync(join(f.workdir,'handoff/t-report.md'),'current report');mkdirSync(join(f.dir,'logs'),{recursive:true});
+    let n=0;const calls:{prompt:string;session?:{sessionId?:string;resumePrompt?:string}}[]=[];const d=deps('');
+    d.review=(prompt,_cwd,_dirs,session)=>{calls.push({prompt,session});n++;return {answer:n===1?'{"verdict":"直す","reasons":["fix"],"fixes":["repair"]}':'{"verdict":"判断","reasons":["hold"],"fixes":[]}',attributes:{'review.session_id':`s${n}`}};};
+    advance(f.ledger,'repo-1',d,410);assert.equal(f.ledger.get('repo-1')!.status,'走行中');
+    f.ledger.setStatus('repo-1','確かめ中','worker returned');f.ledger.releaseRunner('repo-1');
+    advance(f.ledger,'repo-1',d,411);
+    assert.equal(calls.length,2);assert.match(calls[1]!.prompt,/差し戻しの文: 差し戻し: レビューで直すことになった/);
+    assert.doesNotMatch(calls[1]!.prompt,/確かめが通った/);assert.match(calls[1]!.prompt,/対象外ファイルの変更: mul.js/);
+    assert.match(calls[1]!.prompt,/前回のレビュー以後の変化だけ/);
+  }finally{f.done();}
+});
+
 test('failed resume retries once with a fresh session and the full review prompt',()=>{
   const f=fixture();try{writeFileSync(join(f.workdir,'handoff/t-report.md'),'report');mkdirSync(join(f.dir,'logs'),{recursive:true});writeFileSync(join(f.dir,'logs/repo-1-check-1.log'),'checks passed');let count=0;const d=deps('');d.review=(prompt,_cwd,_dirs,session)=>{count++;if(count===1)return{answer:'unparseable',attributes:{}};assert.equal(session?.resumePrompt,undefined);assert.notEqual(session?.sessionId,'saved');assert.match(prompt,/## 依頼文/);return{answer:'{"verdict":"判断","reasons":["hold"],"fixes":[]}',attributes:{'review.session_id':'fresh'}};};
     f.ledger.saveClaudeSession('repo-1','review','saved',f.workdir,'HEAD');f.ledger.setStatus('repo-1','レビュー中','retry');advance(f.ledger,'repo-1',d,300);assert.equal(count,2);assert.equal(f.ledger.claudeSession('repo-1','review')?.session_id,'fresh');
