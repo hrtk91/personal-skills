@@ -2,6 +2,7 @@
 // One `task advance <id>` process carries one task as far as it can and leaves it at 済, 判断待ち, or back
 // with the worker (走行中) carrying the reason. Design: handoff/task-ledger-design.md (流れ 3〜5)
 import { spawn, spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmdirSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,7 +23,7 @@ export type Shell = { code: number; output: string };
 export type AdvanceDeps = {
   sh: (command: string, cwd: string, timeoutMs: number) => Shell;
   /** Asks the reviewer and returns its whole answer, with what the call cost when that is known (for the trace). */
-  review: (prompt: string, cwd: string, readable: string[]) => string | { answer: string; attributes: SpanAttributes };
+  review: (prompt: string, cwd: string, readable: string[], session?: { sessionId?: string; resumePrompt?: string }) => string | { answer: string; attributes: SpanAttributes };
   /** Starts herdr-run.sh again on the task's existing worktree and returns its process id. */
   resend: (task: Task, name: string, briefRefreshed?: boolean) => number;
   /** Waits a little before looking again (merges in one repository go one at a time). */
@@ -89,7 +90,29 @@ export function advance(ledger: Ledger, id: string, deps: AdvanceDeps, pid = pro
       const harnessFiles = task.brief ? [task.brief, ...['-report.md', '-design.md', '-review.md'].map((suffix) => task.brief!.replace(/\.md$/, suffix))] : [];
       const outsideFiles = outsideTaskFiles(changedPaths, [...task.files, ...harnessFiles]);
       const checkPath = logPath(id).replace(/\.log$/, `-check-${task.attempts}.log`);
-      const reply = timed(ledger, task, 'レビュー', () => deps.review(reviewPrompt(task, diffPath, checkPath, outsideFiles), workdir, [dirname(diffPath)]), (got) => {
+      const fullPrompt = reviewPrompt(task, diffPath, checkPath, outsideFiles);
+      const previous = ledger.claudeSession(id, 'review');
+      const currentHead = gitHead(workdir, deps);
+      const canResume = previous && previous.cwd === workdir && previous.uses < 4;
+      let sessionId = canResume ? previous.session_id : randomUUID();
+      let uses = canResume ? previous.uses + 1 : 1;
+      const deltaPath = canResume && previous.head ? writeLog(id, `review-delta-${task.attempts}`, deps.sh(`git diff ${quote(previous.head)} HEAD`, workdir, 60_000).output) : diffPath;
+      const reportPathNow = task.brief ? join(workdir, task.brief.replace(/\.md$/, '-report.md')) : '';
+      const reportNow = reportPathNow && existsSync(reportPathNow) ? readFileSync(reportPathNow, 'utf8') : '（報告なし）';
+      const sendbackNote = [...ledger.events(id)].reverse().find((event) => event.note?.startsWith('差し戻し:'))?.note ?? 'なし';
+      const resumePrompt = `前回のレビュー以後の変化だけを確認してください。\n差分: ${deltaPath}\n差し戻しの文: ${sendbackNote}\n作業役の報告（現在版）:\n${reportNow}\n確かめのコマンド ${task.check ?? '（無い）'} の出力:\n${tail(existsSync(checkPath) ? readFileSync(checkPath, 'utf8') : '（確かめ出力なし）', 60)}\n対象外ファイルの変更: ${outsideFiles.length ? outsideFiles.join('、') : 'なし'}\n\n前回と同じ見方で判定し、最後に前回と同じ形の JSON を 1 つだけ出してください:\n${verdictShape()}`;
+      const reply = timed(ledger, task, 'レビュー', () => {
+        let result = deps.review(canResume ? resumePrompt : fullPrompt, workdir, [dirname(diffPath)], canResume ? { sessionId, resumePrompt } : { sessionId });
+        let answer = typeof result === 'string' ? result : result.answer;
+        if (canResume && (!parseVerdict(answer) || reviewerExitedBadly(answer))) {
+          sessionId = randomUUID(); uses = 1;
+          result = deps.review(fullPrompt, workdir, [dirname(diffPath)], { sessionId });
+        }
+        const got = typeof result === 'string' ? undefined : result;
+        const sid = got?.attributes?.['review.session_id'];
+        if (typeof sid === 'string' && sid) ledger.saveClaudeSession(id, 'review', sid, workdir, currentHead, uses);
+        return result;
+      }, (got) => {
         const found = parseVerdict(typeof got === 'string' ? got : got.answer);
         return { ok: found !== null, attributes: { ...(typeof got === 'string' ? {} : got.attributes), ...(outsideFiles.length ? { 'diff.outside_files': JSON.stringify(outsideFiles) } : {}), 'review.verdict': found?.verdict ?? '読めない' } };
       });
@@ -402,6 +425,11 @@ export function outsideTaskFiles(changedPaths: string[], files: string[]): strin
   }));
 }
 
+/** The verdict JSON line of review-prompt.md, so a resumed review is asked for the same shape without the whole prompt. */
+function verdictShape(): string {
+  return readFileSync(join(HERE, 'review-prompt.md'), 'utf8').split('\n').find((line) => line.startsWith('{"verdict"')) ?? '{"verdict":"通す|直す|判断","reasons":["…"],"fixes":["…"]}';
+}
+
 export function reviewPrompt(task: Task, diffPath: string, checkPath: string, outsideFiles: string[] = []): string {
   const read = (path: string) => (existsSync(path) ? readFileSync(path, 'utf8') : '（無い）');
   const report = task.brief!.replace(/\.md$/, '-report.md');
@@ -426,6 +454,9 @@ ${tail(read(checkPath), 60)}
 `;
 }
 
+// Only the mark review() itself appends counts: a verdict that quotes 「終了コード 1」 in its reasons is still valid.
+export function reviewerExitedBadly(answer: string): boolean { return /\n（レビュー役が終了コード (?!0 )\S+ で終わった）/.test(answer); }
+
 export const realAdvanceDeps: AdvanceDeps = {
   sh(command, cwd, timeoutMs) {
     // The worker's settings must not reach the checks: herdr's own tests fail when they find a supervisor already set (10/28).
@@ -434,13 +465,16 @@ export const realAdvanceDeps: AdvanceDeps = {
     const output = `${result.stdout ?? ''}${result.stderr ?? ''}${result.error ? `\n${result.error.message}` : ''}`;
     return { code: result.status ?? 124, output };
   },
-  review(prompt, cwd, readable) {
+  review(prompt, cwd, readable, session) {
     // Opus reads and judges only (10/27 「Opus」). It may read the work and the logs, never write.
     // Without the user's hooks and MCP servers: a Stop hook that waits for an hour kept `claude -p` from exiting (10/28).
-    const result = spawnSync('claude', ['-p', '--model', 'opus', '--output-format', 'json',
+    const bin = process.env.TASK_CLAUDE_BIN ?? 'claude';
+    const args = ['-p', '--model', 'opus', '--output-format', 'json',
       '--settings', JSON.stringify({ disableAllHooks: true }), '--strict-mcp-config',
       '--allowedTools', 'Read', 'Grep', 'Glob', 'Bash(git diff:*)', 'Bash(git log:*)', 'Bash(git show:*)', 'Bash(git status:*)',
-      '--disallowedTools', 'Edit', 'Write', 'NotebookEdit', ...readable.flatMap((dir) => ['--add-dir', dir])],
+      '--disallowedTools', 'Edit', 'Write', 'NotebookEdit', ...readable.flatMap((dir) => ['--add-dir', dir])];
+    if (session?.sessionId) args.push(session.resumePrompt ? '--resume' : '--session-id', session.sessionId);
+    const result = spawnSync(bin, args,
     { cwd, input: prompt, encoding: 'utf8', timeout: REVIEW_TIMEOUT, maxBuffer: 64 * 1024 * 1024 });
     const failed = result.status === 0 ? '' : `\n（レビュー役が終了コード ${result.status} で終わった）${result.stderr ?? ''}`;
     // The JSON result carries the answer and what the call cost; anything else is passed on as it came.
@@ -465,7 +499,7 @@ export const realAdvanceDeps: AdvanceDeps = {
         cwd: task.repo, detached: true, stdio: ['ignore', out, out],
         env: workerEnv({ REPO: task.repo, TASK_ID: task.id, RESUME: 'newtab',
           HERDR_WORKSPACE_ID: process.env.HERDR_WORKSPACE_ID ?? process.env.TASK_HERDR_WORKSPACE ?? '',
-          SEND_BACK_BRIEF_REFRESHED: briefRefreshed ? '1' : '' }),
+          SEND_BACK_BRIEF_REFRESHED: briefRefreshed ? '1' : '', SEND_BACK: '1' }),
       });
       if (!child.pid) throw new Error('herdr-run.sh を起動できなかった');
       child.unref();

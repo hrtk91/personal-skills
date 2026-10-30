@@ -91,6 +91,35 @@ test('an in-memory ledger never starts a decision refresh child',async()=>{
  } finally {ledger.close();if(oldBin===undefined)delete process.env.TASK_BIN;else process.env.TASK_BIN=oldBin;if(oldDb===undefined)delete process.env.TASK_LEDGER_DB;else process.env.TASK_LEDGER_DB=oldDb;rmSync(dir,{recursive:true,force:true});}
 });
 
+test('a card immediately following review resumes that session as a fork, with only a card prompt',()=>{
+ const dir=mkdtempSync(join(tmpdir(),'decision-fork-')),oldBin=process.env.TASK_CLAUDE_BIN,db=join(dir,'db.sqlite'),capture=join(dir,'capture'),bin=join(dir,'claude');
+ writeFileSync(bin,`#!/bin/sh\nprintf '%s\\n' "$*" > '${capture}.args'\nprintf '%s' "$PWD" > '${capture}.cwd'\ncat > '${capture}.input'\nprintf '%s' '${good.replaceAll("'", "'\\''")}'\n`);chmodSync(bin,0o755);
+ const ledger=new Ledger(db);
+ try {process.env.TASK_CLAUDE_BIN=bin;writeFileSync(join(dir,'brief.md'),'SECRET-BRIEF-BODY');const task=ledger.add({repo:dir,title:'fork title',why:'detailed why',brief:'brief.md'});ledger.setRunner(task.id,{workdir:dir});ledger.saveClaudeSession(task.id,'review','review-session',dir,'head');ledger.setStatus(task.id,'レビュー中','reviewing');ledger.setStatus(task.id,'判断待ち','review held');const event=ledger.events(task.id).at(-1)!;
+  assert.ok(createDecisionCard(ledger,ledger.get(task.id)!,event.at,'review held'));assert.match(readFileSync(capture+'.args','utf8'),/--resume review-session --fork-session/);assert.match(readFileSync(capture+'.args','utf8'),/--tools\s+--resume review-session --fork-session/);const input=readFileSync(capture+'.input','utf8');assert.match(input,/背景を知らない持ち主が 30 秒で決められる形/);assert.match(input,/書き方の決まり/);assert.match(input,/## 仕事の題\nfork title/);assert.match(input,/## 困りごと（why）\ndetailed why/);assert.match(input,/## 止まった理由\nreview held/);assert.doesNotMatch(input,/SECRET-BRIEF-BODY/);assert.doesNotMatch(input,/## 依頼文の先頭/);assert.equal(readFileSync(capture+'.cwd','utf8'),dir);
+ } finally {ledger.close();if(oldBin===undefined)delete process.env.TASK_CLAUDE_BIN;else process.env.TASK_CLAUDE_BIN=oldBin;rmSync(dir,{recursive:true,force:true});}
+});
+
+test('decision cards not immediately caused by review do not fork',()=>{
+ const dir=mkdtempSync(join(tmpdir(),'decision-no-fork-')),oldBin=process.env.TASK_CLAUDE_BIN,capture=join(dir,'args'),bin=join(dir,'claude');writeFileSync(bin,`#!/bin/sh\nprintf '%s' "$*" > '${capture}'\ncat >/dev/null\nprintf '%s' '${good.replaceAll("'", "'\\''")}'\n`);chmodSync(bin,0o755);const ledger=new Ledger(join(dir,'db.sqlite'));
+ try{process.env.TASK_CLAUDE_BIN=bin;const task=ledger.add({repo:dir,title:'fresh',why:'why',brief:'brief.md'});ledger.saveClaudeSession(task.id,'review','review-session',dir,null);ledger.setStatus(task.id,'判断待ち','not from review');createDecisionCard(ledger,ledger.get(task.id)!,ledger.events(task.id).at(-1)!.at,'blocked');assert.doesNotMatch(readFileSync(capture,'utf8'),/--fork-session|--resume/);}
+ finally{ledger.close();if(oldBin===undefined)delete process.env.TASK_CLAUDE_BIN;else process.env.TASK_CLAUDE_BIN=oldBin;rmSync(dir,{recursive:true,force:true});}
+});
+
+test('a non-review decision card ignores a stale review cwd and still uses a new conversation',()=>{
+ const dir=mkdtempSync(join(tmpdir(),'decision-stale-cwd-')),missing=join(dir,'removed-copy'),oldBin=process.env.TASK_CLAUDE_BIN,capture=join(dir,'capture'),bin=join(dir,'claude');
+ writeFileSync(bin,`#!/bin/sh\nprintf '%s' "$PWD" > '${capture}.cwd'\nprintf '%s' "$*" > '${capture}.args'\ncat >/dev/null\nprintf '%s' '${good.replaceAll("'", "'\\''")}'\n`);chmodSync(bin,0o755);const ledger=new Ledger(join(dir,'db.sqlite'));
+ try {process.env.TASK_CLAUDE_BIN=bin;const task=ledger.add({repo:dir,title:'stale cwd',why:'why',brief:'brief.md'});ledger.saveClaudeSession(task.id,'review','old-review',missing,'head');ledger.setStatus(task.id,'判断待ち','not from review');const event=ledger.events(task.id).at(-1)!;assert.ok(createDecisionCard(ledger,ledger.get(task.id)!,event.at,'blocked'));assert.equal(readFileSync(capture+'.cwd','utf8'),process.cwd());assert.doesNotMatch(readFileSync(capture+'.args','utf8'),/--resume|--fork-session/);}
+ finally{ledger.close();if(oldBin===undefined)delete process.env.TASK_CLAUDE_BIN;else process.env.TASK_CLAUDE_BIN=oldBin;rmSync(dir,{recursive:true,force:true});}
+});
+
+test('a failed fork retries as a fresh conversation without the stale cwd',()=>{
+ const dir=mkdtempSync(join(tmpdir(),'decision-fork-fallback-')),missing=join(dir,'removed-copy'),oldBin=process.env.TASK_CLAUDE_BIN,capture=join(dir,'capture'),count=join(dir,'count'),bin=join(dir,'claude');
+ writeFileSync(bin,`#!/bin/sh\nn=0; [ -f '${count}' ] && n=$(cat '${count}'); n=$((n+1)); echo $n > '${count}'\nprintf '%s\\n' "$*" >> '${capture}.args'\nprintf '%s\\n' "$PWD" >> '${capture}.cwd'\ncat > '${capture}.input'\nif [ "$n" -eq 1 ]; then exit 1; fi\nprintf '%s' '${good.replaceAll("'", "'\\''")}'\n`);chmodSync(bin,0o755);const ledger=new Ledger(join(dir,'db.sqlite'));
+ try {process.env.TASK_CLAUDE_BIN=bin;const task=ledger.add({repo:dir,title:'fork fallback',why:'why',brief:'brief.md'});ledger.setRunner(task.id,{workdir:dir});ledger.saveClaudeSession(task.id,'review','review-session',dir,'head');ledger.setStatus(task.id,'レビュー中','reviewing');ledger.setStatus(task.id,'判断待ち','review held');const event=ledger.events(task.id).at(-1)!;assert.ok(createDecisionCard(ledger,ledger.get(task.id)!,event.at,'review held'));assert.equal(readFileSync(count,'utf8').trim(),'2');const args=readFileSync(capture+'.args','utf8').trim().split('\n');assert.match(args[0]!,/--resume review-session --fork-session/);assert.doesNotMatch(args[1]!,/--resume|--fork-session/);assert.equal(readFileSync(capture+'.cwd','utf8').trim().split('\n')[1],process.cwd());}
+ finally{ledger.close();if(oldBin===undefined)delete process.env.TASK_CLAUDE_BIN;else process.env.TASK_CLAUDE_BIN=oldBin;rmSync(dir,{recursive:true,force:true});}
+});
+
 test('decision card validates and retries invalid JSON exactly once; refresh creates card',()=>{
  const dir=mkdtempSync(join(tmpdir(),'decision-card-')),oldBin=process.env.TASK_CLAUDE_BIN,oldModel=process.env.TASK_DECISION_MODEL;
  const counter=join(dir,'count'),bin=join(dir,'claude');

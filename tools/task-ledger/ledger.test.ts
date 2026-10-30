@@ -20,6 +20,17 @@ test('a task without a brief waits for one, and a brief makes it ready', () => {
   assert.deepEqual(ledger.events(task.id).map((e) => e.to_status), ['依頼文待ち', '待ち']);
 });
 
+test('an existing ledger gains the Claude session table without losing tasks', () => {
+  const dir=mkdtempSync(join(tmpdir(),'claude-session-migration-')),path=join(dir,'ledger.sqlite');
+  try {
+    const old=new Ledger(path);const task=old.add({...base,title:'keep me',brief:'brief.md'});old.db.exec('DROP TABLE claude_sessions');old.close();
+    const migrated=new Ledger(path);
+    assert.equal(migrated.get(task.id)?.title,'keep me');
+    assert.ok((migrated.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='claude_sessions'").get() as {name:string}|undefined)?.name);
+    migrated.close();
+  } finally {rmSync(dir,{recursive:true,force:true});}
+});
+
 test('worker, model and effort are nullable and worker is restricted', () => {
   const ledger = make();
   const legacy = ledger.add({ ...base, title: 'legacy' });

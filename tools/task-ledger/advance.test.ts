@@ -2,7 +2,7 @@ if (process.env.TASK_BIN === undefined) process.env.TASK_BIN = "/bin/true";
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, utimesSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Ledger } from './ledger.ts';
@@ -528,6 +528,62 @@ test('judgment and held tasks are never swept; missing cwd and six-hour orphan l
     assert.deepEqual(candidates.map((candidate) => candidate.tabId), ['orphan']);
     assert.match(candidates[0]!.reason, /作業用フォルダが無い/);
   } finally { ledger.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test('review sessions resume only through use four, then start over; cwd changes also start over', () => {
+  const f=fixture();
+  try {
+    writeFileSync(join(f.workdir,'handoff/t-report.md'),'report current');mkdirSync(join(f.dir,'logs'),{recursive:true});writeFileSync(join(f.dir,'logs/repo-1-check-1.log'),'checks passed');
+    const calls:{prompt:string;session?:{sessionId?:string;resumePrompt?:string}}[]=[];
+    const d=deps('');d.review=(prompt,_cwd,_dirs,session)=>{calls.push({prompt,session});return {answer:'{"verdict":"判断","reasons":["hold"],"fixes":[]}',attributes:{'review.session_id':`sid-${calls.length}`}};};
+    for(let i=0;i<5;i++){f.ledger.setStatus('repo-1','レビュー中',`差し戻し: reason-${i}`);advance(f.ledger,'repo-1',d,100+i);}
+    assert.equal(calls.length,5);assert.match(calls[0]!.prompt,/## 依頼文/);assert.equal(calls[0]!.session?.sessionId!==undefined,true);assert.equal(calls[0]!.session?.resumePrompt,undefined);
+    for(let i=1;i<4;i++){assert.equal(calls[i]!.session?.sessionId,`sid-${i}`);assert.ok(calls[i]!.session?.resumePrompt);assert.match(calls[i]!.prompt,/前回のレビュー以後の変化だけ/);assert.doesNotMatch(calls[i]!.prompt,/## この仕事/);assert.match(calls[i]!.prompt,/\{"verdict"/);assert.ok(calls[i]!.prompt.length<calls[0]!.prompt.length,`resumed prompt ${calls[i]!.prompt.length} >= full ${calls[0]!.prompt.length}`);}
+    assert.equal(calls[4]!.session?.resumePrompt,undefined);assert.equal(calls[4]!.session?.sessionId!==`sid-4`,true);assert.equal(f.ledger.claudeSession('repo-1','review')?.uses,1);
+    const second=join(f.dir,'wt-second');git(f.repo,'worktree','add','-q','-b','herdr/t-second',second);f.ledger.db.prepare('UPDATE tasks SET workdir=? WHERE id=?').run(second,'repo-1');
+    writeFileSync(join(second,'handoff/t-report.md'),'report current');f.ledger.setStatus('repo-1','レビュー中','cwd changed');advance(f.ledger,'repo-1',d,200);
+    assert.equal(calls[5]!.session?.resumePrompt,undefined);assert.equal(f.ledger.claudeSession('repo-1','review')?.cwd,second);
+  } finally { f.done(); }
+});
+
+test('review resume uses the latest sendback event, excludes success note, and includes outsideFiles through real status transitions',()=>{
+  const f=fixture();try{
+    writeFileSync(join(f.workdir,'handoff/t-report.md'),'current report');mkdirSync(join(f.dir,'logs'),{recursive:true});
+    let n=0;const calls:{prompt:string;session?:{sessionId?:string;resumePrompt?:string}}[]=[];const d=deps('');
+    d.review=(prompt,_cwd,_dirs,session)=>{calls.push({prompt,session});n++;return {answer:n===1?'{"verdict":"直す","reasons":["fix"],"fixes":["repair"]}':'{"verdict":"判断","reasons":["hold"],"fixes":[]}',attributes:{'review.session_id':`s${n}`}};};
+    advance(f.ledger,'repo-1',d,410);assert.equal(f.ledger.get('repo-1')!.status,'走行中');
+    f.ledger.setStatus('repo-1','確かめ中','worker returned');f.ledger.releaseRunner('repo-1');
+    advance(f.ledger,'repo-1',d,411);
+    assert.equal(calls.length,2);assert.match(calls[1]!.prompt,/差し戻しの文: 差し戻し: レビューで直すことになった/);
+    assert.doesNotMatch(calls[1]!.prompt,/確かめが通った/);assert.match(calls[1]!.prompt,/対象外ファイルの変更: mul.js/);
+    assert.match(calls[1]!.prompt,/前回のレビュー以後の変化だけ/);
+  }finally{f.done();}
+});
+
+test('failed resume retries once with a fresh session and the full review prompt',()=>{
+  const f=fixture();try{writeFileSync(join(f.workdir,'handoff/t-report.md'),'report');mkdirSync(join(f.dir,'logs'),{recursive:true});writeFileSync(join(f.dir,'logs/repo-1-check-1.log'),'checks passed');let count=0;const d=deps('');d.review=(prompt,_cwd,_dirs,session)=>{count++;if(count===1)return{answer:'unparseable',attributes:{}};assert.equal(session?.resumePrompt,undefined);assert.notEqual(session?.sessionId,'saved');assert.match(prompt,/## 依頼文/);return{answer:'{"verdict":"判断","reasons":["hold"],"fixes":[]}',attributes:{'review.session_id':'fresh'}};};
+    f.ledger.saveClaudeSession('repo-1','review','saved',f.workdir,'HEAD');f.ledger.setStatus('repo-1','レビュー中','retry');advance(f.ledger,'repo-1',d,300);assert.equal(count,2);assert.equal(f.ledger.claudeSession('repo-1','review')?.session_id,'fresh');
+  }finally{f.done();}
+});
+
+test('a valid resumed verdict that quotes 終了コード 1 is kept without a full re-review',()=>{
+  const f=fixture();try{writeFileSync(join(f.workdir,'handoff/t-report.md'),'report');mkdirSync(join(f.dir,'logs'),{recursive:true});writeFileSync(join(f.dir,'logs/repo-1-check-1.log'),'checks passed');let count=0;const d=deps('');d.review=(_prompt,_cwd,_dirs,session)=>{count++;assert.ok(session?.resumePrompt);return{answer:'{"verdict":"判断","reasons":["確かめが終了コード 1 で落ちたが原因は環境"],"fixes":[]}',attributes:{'review.session_id':'kept'}};};
+    f.ledger.saveClaudeSession('repo-1','review','saved',f.workdir,'HEAD');f.ledger.setStatus('repo-1','レビュー中','retry');advance(f.ledger,'repo-1',d,300);assert.equal(count,1);assert.equal(f.ledger.claudeSession('repo-1','review')?.session_id,'kept');
+  }finally{f.done();}
+});
+
+test('a resumed review that really exited non-zero (review() mark) is redone in full',()=>{
+  const f=fixture();try{writeFileSync(join(f.workdir,'handoff/t-report.md'),'report');mkdirSync(join(f.dir,'logs'),{recursive:true});writeFileSync(join(f.dir,'logs/repo-1-check-1.log'),'checks passed');let count=0;const d=deps('');d.review=(_prompt,_cwd,_dirs,session)=>{count++;if(count===1)return{answer:'{"verdict":"通す","reasons":[],"fixes":[]}\n（レビュー役が終了コード 1 で終わった）boom',attributes:{}};assert.equal(session?.resumePrompt,undefined);return{answer:'{"verdict":"判断","reasons":["hold"],"fixes":[]}',attributes:{'review.session_id':'fresh'}};};
+    f.ledger.saveClaudeSession('repo-1','review','saved',f.workdir,'HEAD');f.ledger.setStatus('repo-1','レビュー中','retry');advance(f.ledger,'repo-1',d,300);assert.equal(count,2);
+  }finally{f.done();}
+});
+
+test('real review uses explicit session-id for a new call and resume with a short delta prompt', () => {
+  const dir=mkdtempSync(join(tmpdir(),'review-session-cli-')),oldBin=process.env.TASK_CLAUDE_BIN,bin=join(dir,'claude'),argsFile=join(dir,'args'),inputFile=join(dir,'input');
+  writeFileSync(bin,`#!/bin/sh\nprintf '%s\\n' "$*" > '${argsFile}'\ncat > '${inputFile}'\nprintf '%s' '{"result":"{\\"verdict\\":\\"通す\\",\\"reasons\\":[],\\"fixes\\":[]}","session_id":"fake-session"}'\n`);chmodSync(bin,0o755);
+  try {process.env.TASK_CLAUDE_BIN=bin;const first=realAdvanceDeps.review('whole prompt','/tmp',[dir],{sessionId:'new-id'});assert.match(readFileSync(argsFile,'utf8'),/--session-id new-id/);assert.equal(typeof first,'object');
+    const second=realAdvanceDeps.review('only changed prompt','/tmp',[dir],{sessionId:'fake-session',resumePrompt:'only changed prompt'});assert.match(readFileSync(argsFile,'utf8'),/--resume fake-session/);assert.match(readFileSync(inputFile,'utf8'),/^only changed prompt$/);
+  } finally {if(oldBin===undefined)delete process.env.TASK_CLAUDE_BIN;else process.env.TASK_CLAUDE_BIN=oldBin;rmSync(dir,{recursive:true,force:true});}
 });
 
 test('the verdict is the last valid JSON object in the answer', () => {
