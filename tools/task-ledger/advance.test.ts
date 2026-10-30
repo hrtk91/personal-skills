@@ -319,7 +319,9 @@ test('a check that fails once and passes when run again moves on, keeping the fi
   } finally { f.done(); rmSync(marks, { recursive: true, force: true }); }
 });
 
-test('a missing command is an environment failure: no retry, no attempt consumed, and task trace records it', () => {
+test('a missing command is an environment failure under Japanese locale: no retry, no attempt consumed, and task trace records it', () => {
+  const previousLang = process.env.LANG;
+  process.env.LANG = 'ja_JP.UTF-8';
   const f = fixture({ check: 'definitely-not-a-real-check-command' });
   try {
     const calls: string[] = [];
@@ -338,7 +340,7 @@ test('a missing command is an environment failure: no retry, no attempt consumed
     assert.match(rendered, /判断待ち/);
     assert.match(rendered, /確かめ.*failure.kind=environment/);
     assert.match(said.join('\\n'), /環境の失敗/);
-  } finally { f.done(); }
+  } finally { f.done(); if (previousLang === undefined) delete process.env.LANG; else process.env.LANG = previousLang; }
 });
 
 test('a missing script with exit 127 is a worker failure, not an environment failure', () => {
