@@ -2,7 +2,7 @@
 // One `task advance <id>` process carries one task as far as it can and leaves it at 済, 判断待ち, or back
 // with the worker (走行中) carrying the reason. Design: handoff/task-ledger-design.md (流れ 3〜5)
 import { spawn, spawnSync } from 'node:child_process';
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmdirSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmdirSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defaultPath, type Ledger, type SpanAttributes, type Status, type Task } from './ledger.ts';
@@ -24,7 +24,7 @@ export type AdvanceDeps = {
   /** Asks the reviewer and returns its whole answer, with what the call cost when that is known (for the trace). */
   review: (prompt: string, cwd: string, readable: string[]) => string | { answer: string; attributes: SpanAttributes };
   /** Starts herdr-run.sh again on the task's existing worktree and returns its process id. */
-  resend: (task: Task, name: string) => number;
+  resend: (task: Task, name: string, briefRefreshed?: boolean) => number;
   /** Waits a little before looking again (merges in one repository go one at a time). */
   pause: () => void;
 };
@@ -355,20 +355,43 @@ function writeLog(id: string, name: string, text: string): string {
   return path;
 }
 
-/** Gives the work back to the worker without changing the brief; the reason and details are recorded for the worker. */
+/** Gives the work back to the worker; refreshes only a committed main-branch brief and records details for the worker. */
 function sendBack(ledger: Ledger, task: Task, deps: AdvanceDeps, reason: string, detail: string, said: string[], stop: (note: string) => string[]): void {
   if (task.attempts >= MAX_ATTEMPTS) { stop(`${MAX_ATTEMPTS} 回やって通らなかった。最後: ${reason}`); return; }
   if (task.issue_id && task.brief === `handoff/${task.issue_id}.md`) ledger.addIssueHistory(task.issue_id, reason);
+  const refreshed = refreshCommittedBrief(task);
+  if (refreshed) {
+    const message = `依頼文を本体の版で置き直した（本体 ${refreshed}）`;
+    mkdirSync(dirname(logPath(task.id)), { recursive: true });
+    appendFileSync(logPath(task.id), `${message}\n`);
+    said.push(`${task.id}: ${message}`);
+  }
   const detailPath = detail ? writeLog(task.id, `sendback-${task.attempts}`, detail) : null;
   const note = `差し戻し: ${reason}${detailPath ? `（詳しく: ${detailPath}）` : ''}`;
   ledger.setStatus(task.id, '走行中', note, { attempts: task.attempts + 1 });
   ledger.releaseRunner(task.id);
   try {
-    ledger.setRunner(task.id, { runner: deps.resend(task, runName(task)) });
+    ledger.setRunner(task.id, { runner: deps.resend(task, runName(task), refreshed !== null) });
     said.push(`${task.id}: 作業役に差し戻した`);
   } catch (error) {
     stop(`差し戻せなかった: ${error instanceof Error ? error.message : String(error)}`);
   }
+}
+
+/** Replaces the worktree brief with HEAD's committed version, failing closed for missing/unreadable briefs and Issues. */
+function refreshCommittedBrief(task: Task): string | null {
+  if (!task.workdir || !task.brief || (task.issue_id && task.brief === `handoff/${task.issue_id}.md`)) return null;
+  try {
+    const commit = spawnSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: task.repo, encoding: 'utf8' });
+    if (commit.status !== 0 || !commit.stdout.trim()) return null;
+    const content = spawnSync('git', ['show', `HEAD:${task.brief}`], { cwd: task.repo, encoding: 'buffer', maxBuffer: 10 * 1024 * 1024 });
+    if (content.status !== 0 || !content.stdout) return null;
+    const destination = join(task.workdir, task.brief);
+    if (existsSync(destination) && readFileSync(destination).equals(content.stdout)) return null;
+    mkdirSync(dirname(destination), { recursive: true });
+    writeFileSync(destination, content.stdout);
+    return commit.stdout.trim();
+  } catch { return null; }
 }
 
 export function outsideTaskFiles(changedPaths: string[], files: string[]): string[] {
@@ -435,13 +458,14 @@ export const realAdvanceDeps: AdvanceDeps = {
       return `${result.stdout ?? ''}${failed}`;
     }
   },
-  resend(task, name) {
+  resend(task, name, briefRefreshed = false) {
     const out = openSync(logPath(task.id), 'a');
     try {
       const child = spawn('bash', [HERDR_RUN, name], {
         cwd: task.repo, detached: true, stdio: ['ignore', out, out],
         env: workerEnv({ REPO: task.repo, TASK_ID: task.id, RESUME: 'newtab',
-          HERDR_WORKSPACE_ID: process.env.HERDR_WORKSPACE_ID ?? process.env.TASK_HERDR_WORKSPACE ?? '' }),
+          HERDR_WORKSPACE_ID: process.env.HERDR_WORKSPACE_ID ?? process.env.TASK_HERDR_WORKSPACE ?? '',
+          SEND_BACK_BRIEF_REFRESHED: briefRefreshed ? '1' : '' }),
       });
       if (!child.pid) throw new Error('herdr-run.sh を起動できなかった');
       child.unref();

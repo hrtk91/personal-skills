@@ -43,7 +43,7 @@ function deps(answer: string, calls: string[] = []): AdvanceDeps {
       return command.includes('--cleanup') ? { code: 0, output: '' } : realAdvanceDeps.sh(command, cwd, timeout);
     },
     review: (prompt) => { calls.push(`review:${prompt}`); return answer; },
-    resend: () => { calls.push('resend'); return 777; },
+    resend: (_task, _name, briefRefreshed) => { calls.push('resend'); calls.push(`resend:${briefRefreshed === true}`); return 777; },
     pause: () => {},
   };
 }
@@ -65,6 +65,68 @@ test('a report that says conditions are unmet returns to the worker without star
     assert.ok(f.ledger.spans('repo-1').some((span) => span.name === '報告を見る' && span.attributes['report.status'] === '未完了'));
     assert.match(said.join('\n'), /差し戻した/);
   } finally { f.done(); }
+});
+
+test('sendBack refreshes a stale ordinary brief from committed HEAD and flags the worker prompt', () => {
+  const f = fixture({ check: 'echo retry; exit 1' });
+  try {
+    const newer = '# Updated canonical brief\\n';
+    writeFileSync(join(f.repo, 'handoff/t.md'), newer);
+    git(f.repo, 'add', 'handoff/t.md'); git(f.repo, 'commit', '-qm', 'update canonical brief');
+    const calls: string[] = [];
+    const said = advance(f.ledger, 'repo-1', deps('', calls), 1);
+    assert.equal(readFileSync(join(f.workdir, 'handoff/t.md'), 'utf8'), newer);
+    assert.ok(calls.includes('resend:true'));
+    assert.match(said.join('\\n'), /依頼文を本体の版で置き直した（本体 [0-9a-f]+）/);
+    assert.match(readFileSync(join(f.dir, 'logs/repo-1.log'), 'utf8'), /依頼文を本体の版で置き直した（本体 [0-9a-f]+）/);
+    assert.match(f.ledger.get('repo-1')!.note!, /^差し戻し:/);
+  } finally { f.done(); }
+});
+
+test('sendBack restores a missing worktree brief from committed HEAD', () => {
+  const f = fixture({ check: 'echo retry; exit 1' });
+  try {
+    const canonical = readFileSync(join(f.repo, 'handoff/t.md'));
+    rmSync(join(f.workdir, 'handoff/t.md'));
+    const calls: string[] = [];
+    advance(f.ledger, 'repo-1', deps('', calls), 1);
+    assert.deepEqual(readFileSync(join(f.workdir, 'handoff/t.md')), canonical);
+    assert.ok(calls.includes('resend:true'));
+  } finally { f.done(); }
+});
+
+test('sendBack leaves the worktree brief alone when the canonical committed brief is missing', () => {
+  const f = fixture({ check: 'echo retry; exit 1' });
+  try {
+    const before = readFileSync(join(f.workdir, 'handoff/t.md'));
+    git(f.repo, 'rm', '-q', 'handoff/t.md'); git(f.repo, 'commit', '-qm', 'remove canonical brief');
+    const calls: string[] = [];
+    advance(f.ledger, 'repo-1', deps('', calls), 1);
+    assert.deepEqual(readFileSync(join(f.workdir, 'handoff/t.md')), before);
+    assert.ok(calls.includes('resend:false'));
+    if (existsSync(join(f.dir, 'logs/repo-1.log'))) assert.doesNotMatch(readFileSync(join(f.dir, 'logs/repo-1.log'), 'utf8'), /依頼文を本体の版で置き直した/);
+  } finally { f.done(); }
+});
+
+test('sendBack leaves a matching brief and an Issue brief untouched', () => {
+  for (const issueTask of [false, true]) {
+    const f = fixture({ check: 'echo retry; exit 1' });
+    try {
+      let brief = join(f.workdir, 'handoff/t.md');
+      if (issueTask) {
+        const issue = f.ledger.addIssue({ repo: f.repo, title: 'Issue', body: 'issue body', by: 'Claude' });
+        f.ledger.db.prepare('UPDATE tasks SET issue_id=?, brief=? WHERE id=?').run(issue.id, `handoff/${issue.id}.md`, 'repo-1');
+        brief = join(f.workdir, `handoff/${issue.id}.md`);
+        writeFileSync(brief, '# Generated Issue brief\\n');
+      }
+      const before = readFileSync(brief);
+      const calls: string[] = [];
+      advance(f.ledger, 'repo-1', deps('', calls), 1);
+      assert.deepEqual(readFileSync(brief), before);
+      assert.ok(calls.includes('resend:false'));
+      if (existsSync(join(f.dir, 'logs/repo-1.log'))) assert.doesNotMatch(readFileSync(join(f.dir, 'logs/repo-1.log'), 'utf8'), /依頼文を本体の版で置き直した/);
+    } finally { f.done(); }
+  }
 });
 
 test('sendBack preserves ordinary and Issue briefs byte-for-byte and exposes the latest reason and detail in context', () => {

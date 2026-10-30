@@ -218,7 +218,7 @@ class HerdrContractTest(unittest.TestCase):
             if key.startswith(("CODEX_", "HERDR_", "PI_")) or key in {
                 "MODEL", "TIER", "EFFORT", "REPO", "HANDOFF", "RULES", "CONTEXT_FILES", "CHECKLIST", "DESIGN_RULES",
                 "TASK_PREFIX", "BRANCH_PREFIX", "WORK_NAME", "EXTRA", "EXTRA_DIRS", "BASE_REFRESH_EXTRA_DIRS", "PATCH_EXCLUDE", "BASE", "RESUME", "SKIP_IMPL",
-                "COMMIT_DIRTY", "COMMIT_NAME", "COMMIT_EMAIL", "DIRTY_COMMIT_NAME", "DIRTY_COMMIT_EMAIL", "AGENT", "IMPL_AGENT", "REV_AGENT",
+                "COMMIT_DIRTY", "COMMIT_NAME", "COMMIT_EMAIL", "DIRTY_COMMIT_NAME", "DIRTY_COMMIT_EMAIL", "AGENT", "IMPL_AGENT", "REV_AGENT", "SEND_BACK_BRIEF_REFRESHED",
                 # The parent Herdr session may carry a live TASK_ID / DB path. These offline contract tests
                 # must never mutate a caller's task ledger while exercising the fake harness.
                 "TASK_ID", "TASK_ISSUE_ID", "TASK_LEDGER_DB",
@@ -670,6 +670,16 @@ class HerdrContractTest(unittest.TestCase):
         self.assertEqual((self.w / "keep.txt").read_text(), "keep\n")
         self.assertEqual(self.state()["serial"], 2)
         self.assertEqual(len(self.state()["prompts"]), 2)
+
+    def test_refreshed_sendback_prompt_starts_with_read_the_updated_brief(self):
+        self.run_script(mode="blocked")
+        state = self.state()
+        state["agents"] = {}
+        state["tabs"] = {}
+        self.state_path.write_text(json.dumps(state))
+        self.assert_success(self.run_script(RESUME="newtab", SKIP_IMPL="1", SEND_BACK_BRIEF_REFRESHED="1"))
+        prompt = self.state()["prompts"][-1][1]
+        self.assertTrue(prompt.startswith("/goal 依頼文が変わった。読み直してから続ける\n"), prompt[:200])
 
     def test_base_from_worktree_does_not_share_git_index(self):
         base = self.root / "base"

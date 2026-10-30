@@ -307,6 +307,7 @@ run_agent() {
       [ -z "$context" ] || goal=$(printf '%s\n\n%s' "$context" "$goal")
     fi
     goal="$goal 途中で質問せず最後までやり切り、報告ファイルを書き終えてください。"
+    [ "${SEND_BACK_BRIEF_REFRESHED:-}" != 1 ] || goal=$'依頼文が変わった。読み直してから続ける\n'"$goal"
     rm -f "$mark"
     claude_send "$agent" "$goal" "$mark" "$pane" || { log "$agent: Claude -p が正常終了し報告を書くまで完了しなかった"; return 1; }
     log "$agent: Claude -p の終端結果と報告を確認した（session_id $(cat "$WORK/claude-$name.session" 2>/dev/null)）"
@@ -344,6 +345,7 @@ run_agent() {
     fi
     goal="$goal 途中で質問せず最後までやり切り、全部終わったら最後に touch $mark を実行する（この印で次の段に進む）。"
   fi
+  [ "${SEND_BACK_BRIEF_REFRESHED:-}" != 1 ] || goal=$'依頼文が変わった。読み直してから続ける\n'"$goal"
   channel_finished() {
     local rows
     local -a args=(tail --log "$channel_log" --kind finish --from "$agent")
