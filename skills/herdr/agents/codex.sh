@@ -68,6 +68,9 @@ PY
 # herdr の working だけだと、目標が落ちても working に見えることがあった。落ちたら 3 回まで送り直す
 codex_send() {  # <agent> <text> <印のパス>
   local agent=$1 text=$2 mark=$3 j k
+  case "$agent" in
+    impl-*) text="$text GPU・起動・書き込みの許可・ダウンロード・外のサービスなど、あなたの手で直せない理由で終われないときは、報告の 1 行目を『終わりの条件: 満たしていない（環境） — 何が』と書く。依頼文の中身で直せること（コードの直し・検査の直し）には付けない。" ;;
+  esac
   for j in 1 2 3; do
     touch "$WORK/.sent-$agent"
     herdr agent prompt "$agent" "/goal $text" >> "$L" 2>&1 || return 1

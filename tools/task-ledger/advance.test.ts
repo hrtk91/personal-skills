@@ -319,7 +319,9 @@ test('a check that fails once and passes when run again moves on, keeping the fi
   } finally { f.done(); rmSync(marks, { recursive: true, force: true }); }
 });
 
-test('a missing command is an environment failure: no retry, no attempt consumed, and task trace records it', () => {
+test('a missing command is an environment failure under Japanese locale: no retry, no attempt consumed, and task trace records it', () => {
+  const previousLang = process.env.LANG;
+  process.env.LANG = 'ja_JP.UTF-8';
   const f = fixture({ check: 'definitely-not-a-real-check-command' });
   try {
     const calls: string[] = [];
@@ -338,11 +340,37 @@ test('a missing command is an environment failure: no retry, no attempt consumed
     assert.match(rendered, /判断待ち/);
     assert.match(rendered, /確かめ.*failure.kind=environment/);
     assert.match(said.join('\\n'), /環境の失敗/);
+  } finally { f.done(); if (previousLang === undefined) delete process.env.LANG; else process.env.LANG = previousLang; }
+});
+
+test('a locale-specific missing-command diagnostic is detected without English wording', () => {
+  const f = fixture({ check: 'definitely-not-a-real-check-command' });
+  try {
+    const d = deps('');
+    const said = advance(f.ledger, 'repo-1', { ...d, sh: (command, cwd, timeout) => command === 'definitely-not-a-real-check-command'
+      ? { code: 127, output: '診断メッセージの形式や言語に依存しない\\n' }
+      : d.sh(command, cwd, timeout) }, 1);
+    assert.equal(f.ledger.get('repo-1')!.status, '判断待ち');
+    assert.equal(f.ledger.get('repo-1')!.attempts, 1);
+    assert.equal(f.ledger.spans('repo-1').find((item) => item.name === '確かめ')!.attributes['failure.kind'], 'environment');
+    assert.match(said.join('\\n'), /環境の失敗/);
   } finally { f.done(); }
 });
 
-test('a missing script with exit 127 is a worker failure, not an environment failure', () => {
-  const f = fixture({ check: 'bash tools/not-yet.sh' });
+test('a missing command after cd is an environment failure, not a worker failure', () => {
+  const f = fixture({ check: 'cd /tmp && definitely-not-a-real-check-command' });
+  try {
+    const calls: string[] = [];
+    advance(f.ledger, 'repo-1', deps('', calls), 1);
+    assert.equal(f.ledger.get('repo-1')!.status, '判断待ち');
+    assert.equal(f.ledger.get('repo-1')!.attempts, 1);
+    assert.ok(!calls.includes('resend'));
+    assert.equal(f.ledger.spans('repo-1').find((item) => item.name === '確かめ')!.attributes['failure.kind'], 'environment');
+  } finally { f.done(); }
+});
+
+test('a missing relative script is a worker failure, not an environment failure', () => {
+  const f = fixture({ check: './not-yet.sh' });
   try {
     const calls: string[] = [];
     advance(f.ledger, 'repo-1', deps('', calls), 1);

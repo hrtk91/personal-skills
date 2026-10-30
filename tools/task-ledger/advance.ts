@@ -78,7 +78,7 @@ export function advance(ledger: Ledger, id: string, deps: AdvanceDeps, pid = pro
       if (!task.workdir || !existsSync(task.workdir)) return stop(`作業用のコピーが見つからない（${task.workdir ?? '記録なし'}）`);
       const check = checkTwice(ledger, task, said, () => deps.sh(task.check ?? 'true', task.workdir!, CHECK_TIMEOUT), `check-${task.attempts}`, '確かめ');
       const path = writeLog(id, `check-${task.attempts}`, check.output);
-      if (check.code === 127 && /command not found/i.test(check.output)) return stop(`環境の失敗: 確かめのコマンド \`${task.check}\` に必要なコマンドが無い（終了コード 127）。作業役へ差し戻さず、環境を直してから判断する。`);
+      if (isMissingCommand(check.code, task.workdir!, task.check ?? 'true')) return stop(`環境の失敗: 確かめのコマンド \`${task.check}\` に必要なコマンドが無い（終了コード 127）。作業役へ差し戻さず、環境を直してから判断する。`);
       if (check.code !== 0) { sendBack(ledger, task, deps, `確かめのコマンド \`${task.check}\` が落ちた（終了コード ${check.code}）。`, tail(check.output), said, stop); return said; }
       ledger.setStatus(id, 'レビュー中', `確かめが通った。出力: ${path}`);
       said.push(`${id}: 確かめが通った`);
@@ -383,10 +383,24 @@ function catchUp(ledger: Ledger, task: Task, deps: AdvanceDeps, head: string, sa
 
 // A check that fails runs once more before anything is decided: on a busy PC an e2e that the task never touched can
 // time out (10/28: three different specs did, one per run). The first output is kept and the event names it.
+function isMissingCommand(code: number, cwd: string, check: string): boolean {
+  if (code !== 127) return false;
+  // Inspect command positions in the check itself; Bash's missing-command diagnostic varies by locale/version.
+  // This also finds a command after `cd ... &&`, while path-like script names remain worker failures.
+  const candidates = [...check.matchAll(/(?:^|&&|\|\||[;&|])\s*(?:[A-Za-z_][\w]*=\S*\s+)*([^\s;&|<>]+)/g)]
+    .map((match) => match[1].replace(/^['"]|['"]$/g, ''))
+    .filter((word) => word && !word.includes('/'));
+  return candidates.some((candidate) => {
+    const found = spawnSync('bash', ['-c', 'command -v "$1" >/dev/null 2>&1', 'task-ledger-command-probe', candidate], { cwd, encoding: 'utf8' });
+    return found.status === 1;
+  });
+}
+
 function checkTwice(ledger: Ledger, task: Task, said: string[], command: () => Shell, label: string, name: string): Shell {
-  const run = (count: number) => timed(ledger, task, name, command, (result) => ({ ok: result.code === 0, attributes: { 'step.exit_code': result.code, 'step.run': count, ...(result.code === 127 && /command not found/i.test(result.output) ? { 'failure.kind': 'environment' } : {}) } }));
+  const missing = (result: Shell) => isMissingCommand(result.code, task.workdir!, task.check ?? 'true');
+  const run = (count: number) => timed(ledger, task, name, command, (result) => ({ ok: result.code === 0, attributes: { 'step.exit_code': result.code, 'step.run': count, ...(missing(result) ? { 'failure.kind': 'environment' } : {}) } }));
   const first = run(1);
-  if (first.code === 0 || (first.code === 127 && /command not found/i.test(first.output))) return first;
+  if (first.code === 0 || missing(first)) return first;
   const firstLog = writeLog(task.id, `${label}-first-fail`, first.output);
   const second = run(2);
   if (second.code === 0) said.push(`${task.id}: 確かめは 1 回目に落ち、流し直して通った（1 回目: ${firstLog}）`);

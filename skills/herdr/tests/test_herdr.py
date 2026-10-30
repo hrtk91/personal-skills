@@ -14,6 +14,7 @@ SKILL = Path(__file__).resolve().parents[1]
 GIT = shutil.which("git")
 TASK_BIN = SKILL.parents[1] / "tools/task-ledger/bin/task"
 VERIFICATION_RULE = "終わりの条件の確かめは、使う人が実際に通る入口（依頼文に書かれたスクリプト・コマンド・起動の台本）で流し、そのコマンドと出力の要所を貼る。手で組んだ代わりの命令で流したもの、手で作った成果物は「代わりの道」と書き、満たしたとは書かない"
+ENVIRONMENT_FAILURE_RULE = "終わりの条件: 満たしていない（環境） — 何が"
 
 FAKE_HERDR = r'''#!/usr/bin/env python3
 import json, os, re, sys, subprocess
@@ -482,6 +483,11 @@ class HerdrContractTest(unittest.TestCase):
         for path in (SKILL / "agents/pi-system.md", SKILL / "agents/claude.sh", SKILL / "herdr-run.sh"):
             with self.subTest(path=path.name):
                 self.assertIn(VERIFICATION_RULE, path.read_text())
+
+    def test_environment_failure_marker_is_given_to_claude_and_codex_workers(self):
+        for path in (SKILL / "agents/claude.sh", SKILL / "agents/codex.sh"):
+            with self.subTest(path=path.name):
+                self.assertIn(ENVIRONMENT_FAILURE_RULE, path.read_text())
 
     def test_legacy_work_directory_is_supported(self):
         self.config.pop("HERDR_WORK")
