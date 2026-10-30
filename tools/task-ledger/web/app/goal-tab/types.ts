@@ -96,6 +96,7 @@ export interface ClaudeUsageSummary {
 }
 
 export interface GoalTabData {
+  /** Weekly dashboard metrics include the stopped and remaining review-finding totals. */
   metrics: import("../../../metrics.ts").MetricsResult;
   /** Small display-only Claude usage summary; pending while the first transcript scan runs. */
   claudeUsage: ClaudeUsageSummary;

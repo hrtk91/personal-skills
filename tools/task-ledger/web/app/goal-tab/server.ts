@@ -113,8 +113,8 @@ export function loadGoalData(ledger:Ledger, repo:string, now=new Date()):GoalTab
  });
  const goalIssueIds=new Set(issues.filter(i=>i.goal_id).map(i=>i.id)), cutoff=now.getTime()-7*86400000;
  const recent=all.filter(t=>['済','やめ','取り下げ'].includes(t.status)&&(!t.issue_id||!goalIssueIds.has(t.issue_id))&&Date.parse(t.updated_at)>=cutoff).sort((a,b)=>b.updated_at.localeCompare(a.updated_at)).slice(0,30).map(t=>row(ledger,t));
- const claudeUsage=usageSummary(now.getTime());
- return {project,projects:ps,decisions,queue,goals:goalRows,recent,metrics:metrics(ledger,{repo,weeks:4}),claudeUsage,readAt:now.toISOString()};
+ const claudeUsage=usageSummary(now.getTime()), dashboardMetrics=metrics(ledger,{repo,weeks:4});
+ return {project,projects:ps,decisions,queue,goals:goalRows,recent,metrics:dashboardMetrics,claudeUsage,readAt:now.toISOString()};
 }
 export function submitIntent(ledger:Ledger, repo:string, data:Record<string,string>) {
  const text=(k:string)=>data[k]??'';
