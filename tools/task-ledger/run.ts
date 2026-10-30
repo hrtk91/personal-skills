@@ -91,14 +91,18 @@ export function runOnce(ledger: Ledger, deps: RunDeps): string[] {
 
 function cleanupPreviousRun(task: Task, name: string, copy: string, workRoot: string): void {
   if (existsSync(copy)) {
+    // Include non-ignored untracked files in the diff before removing the worktree.
+    const intent = spawnSync('git', ['-C', copy, 'add', '-A', '-N'], { encoding: 'utf8' });
+    if (intent.error) throw intent.error;
+    if (intent.status !== 0) throw new Error(`前回 worktree の未追跡ファイルを差分対象にできない: ${intent.stderr}`);
     const dirty = spawnSync('git', ['-C', copy, 'diff', '--binary', 'HEAD'], { encoding: 'buffer' });
     if (dirty.error) throw dirty.error;
     if (dirty.status !== 0 && dirty.status !== 1) throw new Error(`前回 worktree の diff を取得できない: ${dirty.stderr?.toString() ?? ''}`);
     if (dirty.stdout.length > 0) {
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    let patch = join(workRoot, `patch-${name}-prev-${stamp}.diff`);
-    let suffix = 1;
-    while (existsSync(patch)) patch = join(workRoot, `patch-${name}-prev-${stamp}-${suffix++}.diff`);
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      let patch = join(workRoot, `patch-${name}-prev-${stamp}.diff`);
+      let suffix = 1;
+      while (existsSync(patch)) patch = join(workRoot, `patch-${name}-prev-${stamp}-${suffix++}.diff`);
       writeFileSync(patch, dirty.stdout);
     }
     const removed = spawnSync('git', ['-C', task.repo, 'worktree', 'remove', '--force', copy], { encoding: 'utf8' });

@@ -150,6 +150,7 @@ test('reissuing a waiting task removes its old worktree and markers while preser
     writeFileSync(join(repo, 'tracked.txt'), 'original\n'); git('add', 'tracked.txt'); git('commit', '-qm', 'base');
     git('worktree', 'add', '-qb', 'herdr/requeue', copy, 'HEAD');
     writeFileSync(join(copy, 'tracked.txt'), 'changed\n');
+    writeFileSync(join(copy, 'new-untracked.txt'), 'untracked content\n');
     writeFileSync(join(workRoot, 'reviewed-requeue'), 'stopped');
     writeFileSync(join(workRoot, 'patch-requeue.diff'), 'old patch');
     const taskId = ledger.add({ repo, title: 'requeue', why: 'w', brief: 'handoff/requeue.md' }).id;
@@ -164,7 +165,11 @@ test('reissuing a waiting task removes its old worktree and markers while preser
       assert.equal(existsSync(join(workRoot, 'reviewed-requeue')), false);
       assert.equal(existsSync(join(workRoot, 'patch-requeue.diff')), false);
       const saved = readdirSync(workRoot).find((file) => /^patch-requeue-prev-.*\.diff$/.test(file));
-      assert.ok(saved); assert.match(readFileSync(join(workRoot, saved), 'utf8'), /changed/);
+      assert.ok(saved);
+      const savedDiff = readFileSync(join(workRoot, saved), 'utf8');
+      assert.match(savedDiff, /changed/);
+      assert.match(savedDiff, /new-untracked\.txt/);
+      assert.match(savedDiff, /untracked content/);
       execFileSync('git', ['-C', repo, 'worktree', 'add', '-qb', `herdr/${name}`, copy, 'HEAD']);
       recreated = true; return 4242;
     } }).deps;
