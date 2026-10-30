@@ -287,7 +287,7 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
         if(sub) throw new Error('task metrics [--repo <path>] [--weeks N] [--json] | task metrics backfill-review-kinds [--dry-run]');
         const weeks=values.weeks===undefined?4:Number(values.weeks);if(!Number.isInteger(weeks)||weeks<1||weeks>104)throw new Error('--weeks は1〜104の整数');
         const result=metrics(ledger,{repo,weeks});
-        if(values.json) out(JSON.stringify(result)); else {out('週\tリポジトリ\t済\t1回で通った\t失敗の種類\tレビュー細目\t判断待ち中央値(ms)\t走行中→済中央値(ms)\t頻出題');for(const w of result.weeks)out(`${w.week}\t${w.repo}\t${w.completed}\t${w.firstPass}\t${JSON.stringify(w.failures)}\t${JSON.stringify(w.reviewKinds)}\t${w.medianDecisionMs??'—'}\t${w.medianRunningToDoneMs??'—'}\t${JSON.stringify(w.frequentTitles)}`);}
+        if(values.json) out(JSON.stringify(result)); else {out('週\tリポジトリ\t済\t1回で通った\t失敗の種類\tレビュー細目\t止めた指摘\t残りにした指摘\t判断待ち中央値(ms)\t走行中→済中央値(ms)\t頻出題');for(const w of result.weeks)out(`${w.week}\t${w.repo}\t${w.completed}\t${w.firstPass}\t${JSON.stringify(w.failures)}\t${JSON.stringify(w.reviewKinds)}\t${w.stoppedFindings}\t${w.remainingFindings}\t${w.medianDecisionMs??'—'}\t${w.medianRunningToDoneMs??'—'}\t${JSON.stringify(w.frequentTitles)}`);}
         return 0;
       }
       case 'claude-usage': {

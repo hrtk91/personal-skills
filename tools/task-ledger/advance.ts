@@ -18,7 +18,8 @@ const CHECK_TIMEOUT = Number(process.env.TASK_CHECK_TIMEOUT_MS ?? 45 * 60_000);
 const REVIEW_TIMEOUT = Number(process.env.TASK_REVIEW_TIMEOUT_MS ?? 30 * 60_000);
 const DEPLOY_TIMEOUT = Number(process.env.TASK_DEPLOY_TIMEOUT_MS ?? 60 * 60_000);
 
-export type Verdict = { verdict: '通す' | '直す' | '判断'; reasons: string[]; fixes: string[]; kinds?: string[] };
+export type Finding = { text: string; likelihood: 'いつも' | 'ときどき' | 'まれ'; harm: '大' | '中' | '小'; blocking: boolean };
+export type Verdict = { verdict: '通す' | '直す' | '判断'; reasons: string[]; fixes: string[]; kinds?: string[]; findings?: Finding[] };
 export type Shell = { code: number; output: string };
 export type AdvanceDeps = {
   sh: (command: string, cwd: string, timeoutMs: number) => Shell;
@@ -47,7 +48,20 @@ export function parseVerdict(answer: string): Verdict | null {
         const value = JSON.parse(answer.slice(start, stop + 1)) as Partial<Verdict>;
         if (value.verdict !== '通す' && value.verdict !== '直す' && value.verdict !== '判断') break;
         const list = (items: unknown) => (Array.isArray(items) ? items.map(String) : []);
-        return { verdict: value.verdict, reasons: list(value.reasons), fixes: list(value.fixes), ...(value.kinds === undefined ? {} : { kinds: normalizeReviewKinds(value.kinds) }) };
+        let findings: Finding[] | undefined;
+        if (value.findings !== undefined) {
+          if (!Array.isArray(value.findings)) break;
+          const parsed: Finding[] = [];
+          for (const raw of value.findings) {
+            if (!raw || typeof raw !== 'object') { parsed.length = 0; break; }
+            const finding = raw as Record<string, unknown>;
+            if (typeof finding.text !== 'string' || !finding.text.trim() || !['いつも','ときどき','まれ'].includes(String(finding.likelihood)) || !['大','中','小'].includes(String(finding.harm)) || typeof finding.blocking !== 'boolean') { parsed.length = 0; break; }
+            parsed.push({ text: finding.text.trim(), likelihood: finding.likelihood as Finding['likelihood'], harm: finding.harm as Finding['harm'], blocking: finding.blocking });
+          }
+          if (parsed.length !== value.findings.length) break;
+          findings = parsed;
+        }
+        return { verdict: value.verdict, reasons: list(value.reasons), fixes: list(value.fixes), ...(value.kinds === undefined ? {} : { kinds: normalizeReviewKinds(value.kinds) }), ...(findings === undefined ? {} : { findings }) };
       } catch { /* try a shorter span */ }
     }
   }
@@ -123,12 +137,26 @@ export function advance(ledger: Ledger, id: string, deps: AdvanceDeps, pid = pro
       const verdict = parseVerdict(answer);
       if (!verdict) return stop('レビューの答えから決まった形の JSON を読めなかった');
       said.push(`${id}: レビュー ${verdict.verdict}`);
-      if (verdict.verdict === '判断') { stop(`レビュー: ${verdict.reasons.join(' / ')}`); ledger.setEventKind(task.id, ledger.events(task.id).at(-1)!.at, normalizeReviewKinds(verdict.kinds).join(',')); return said; }
-      if (verdict.verdict === '直す') {
-        sendBack(ledger, task, deps, `レビューで直すことになった。${verdict.reasons.join(' ')}`, verdict.fixes.map((fix) => `- ${fix}`).join('\n'), said, stop); ledger.setEventKind(task.id, ledger.events(task.id).at(-1)!.at, normalizeReviewKinds(verdict.kinds).join(','));
-        return said;
+      if (verdict.findings !== undefined) {
+        const blocking = verdict.findings.filter((finding) => finding.harm === '大' || (finding.harm === '中' && finding.likelihood === 'いつも'));
+        const remaining = verdict.findings.filter((finding) => !blocking.includes(finding));
+        if (blocking.length) {
+          const reason = `レビューで直すことになった。止めた指摘数: ${blocking.length} ${blocking.map((finding) => finding.text).join(' ')}`;
+          sendBack(ledger, task, deps, reason, blocking.map((finding) => `- ${finding.text}`).join('\n'), said, stop);
+          ledger.setEventKind(task.id, ledger.events(task.id).at(-1)!.at, normalizeReviewKinds(verdict.kinds).join(','));
+          return said;
+        }
+        if (verdict.verdict === '判断') { stop(`レビュー: ${verdict.reasons.join(' / ')}`); ledger.setEventKind(task.id, ledger.events(task.id).at(-1)!.at, normalizeReviewKinds(verdict.kinds).join(',')); return said; }
+        const left = remaining.length ? `残りにした指摘: ${JSON.stringify(remaining.map((finding) => finding.text))}` : '';
+        ledger.setStatus(id, '取り込み中', [`レビュー: ${verdict.reasons.join(' / ') || '通す'}`, left].filter(Boolean).join(' '));
+      } else {
+        if (verdict.verdict === '判断') { stop(`レビュー: ${verdict.reasons.join(' / ')}`); ledger.setEventKind(task.id, ledger.events(task.id).at(-1)!.at, normalizeReviewKinds(verdict.kinds).join(',')); return said; }
+        if (verdict.verdict === '直す') {
+          sendBack(ledger, task, deps, `レビューで直すことになった。${verdict.reasons.join(' ')}`, verdict.fixes.map((fix) => `- ${fix}`).join('\n'), said, stop); ledger.setEventKind(task.id, ledger.events(task.id).at(-1)!.at, normalizeReviewKinds(verdict.kinds).join(','));
+          return said;
+        }
+        ledger.setStatus(id, '取り込み中', `レビュー: ${verdict.reasons.join(' / ') || '通す'}`);
       }
-      ledger.setStatus(id, '取り込み中', `レビュー: ${verdict.reasons.join(' / ') || '通す'}`);
     } else if (task.status === '取り込み中') {
       const lock = join(dirname(defaultPath()), 'merge-locks', task.repo.replaceAll('/', '_'));
       mkdirSync(dirname(lock), { recursive: true });
@@ -311,7 +339,9 @@ git worktree remove --force "$T" >/dev/null 2>&1; rm -rf "$T"; exit $rc`, repo, 
     said.push(`${task.id}: 本番に出した`);
   }
   const cleaned = timed(ledger, task, '片付け', () => deps.sh(`bash ${quote(HERDR_RUN)} --cleanup ${quote(runName(task))}`, repo, 120_000), exitCode);
-  ledger.setStatus(task.id, '済', cleaned.code === 0 ? '取り込んだ' : `取り込んだが片付けに失敗: ${tail(cleaned.output, 3)}`, { commit });
+  const remaining = task.note?.match(/残りにした指摘: (\[[^\n]*\])/);
+  const reviewNote = remaining ? `残りにした指摘: ${remaining[1]}` : '';
+  ledger.setStatus(task.id, '済', [cleaned.code === 0 ? '取り込んだ' : `取り込んだが片付けに失敗: ${tail(cleaned.output, 3)}`, reviewNote].filter(Boolean).join('。'), { commit });
   ledger.releaseRunner(task.id);
   said.push(`${task.id}: 済（${commit.slice(0, 7)}）`);
 }
