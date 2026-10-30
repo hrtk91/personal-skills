@@ -219,14 +219,21 @@ function capacity(limits: LimitRow[], rows: UsageRow[], key: 'five_hour' | 'seve
 }
 /** The seven-day percentage now, and when it runs out at the pace of the last 24 hours (null if not before the reset). */
 function remainingOf(limits: LimitRow[], now: number) {
-  const seen = observations(limits.filter(x => Date.parse(x.at) <= now), 'seven_day');
-  const latest = seen.at(-1); if (!latest) return null;
+  const eligible = limits.filter(x => Date.parse(x.at) <= now);
+  const seen = observations(eligible, 'seven_day');
+  const latest = seen.at(-1), fiveHourLatest = observations(eligible, 'five_hour').at(-1);
+  if (!latest) return fiveHourLatest ? {
+    sevenDay: null, sevenDayResetsAt: null, observedAt: null,
+    fiveHour: fiveHourLatest.value, fiveHourResetsAt: fiveHourLatest.window,
+    pacePerHour: null, paceSince: null, exhaustAt: null,
+  } : null;
   // Only the current window: a row from before the reset says nothing about this week's pace.
   const recent = seen.filter(o => o.window === latest.window && o.t >= now - 86400000), first = recent[0];
   const rate = first && latest.t > first.t ? (latest.value - first.value) / (latest.t - first.t) : null;
   const exhaust = rate && rate > 0 ? latest.t + (100 - latest.value) / rate : null;
   return {
     sevenDay: latest.value, sevenDayResetsAt: latest.window, observedAt: new Date(latest.t).toISOString(),
+    fiveHour: fiveHourLatest?.value ?? null, fiveHourResetsAt: fiveHourLatest?.window ?? null,
     pacePerHour: rate === null ? null : rate * 3600000, paceSince: first ? new Date(first.t).toISOString() : null,
     exhaustAt: exhaust !== null && exhaust < latest.window * 1000 ? new Date(exhaust).toISOString() : null,
   };
@@ -308,7 +315,7 @@ export function renderClaudeUsage(result: ReturnType<typeof getClaudeUsage>): st
   return [
     '日\t換算値', ...[...totals].sort((a, b) => a[0].localeCompare(b[0])).map(([d, n]) => `${d}\t${fmt(n)}`), '',
     '上位 呼び手・理由\t換算値', ...[...top].sort((a, b) => b[1] - a[1]).slice(0, 10).map(([k, n]) => `${k}\t${fmt(n)}`), '',
-    rem ? `7 日の枠: ${rem.sevenDay}%（リセット ${new Date(rem.sevenDayResetsAt * 1000).toLocaleString('sv-SE')}）、直近のペース ${rem.pacePerHour === null ? '—' : rem.pacePerHour.toFixed(2)}%/時、尽きる見込み ${rem.exhaustAt ? new Date(rem.exhaustAt).toLocaleString('sv-SE') : 'リセットまで持つ'}` : '7 日の枠: 記録なし',
+    rem && rem.sevenDay !== null && rem.sevenDayResetsAt !== null ? `7 日の枠: ${rem.sevenDay}%（リセット ${new Date(rem.sevenDayResetsAt * 1000).toLocaleString('sv-SE')}）、直近のペース ${rem.pacePerHour === null ? '—' : rem.pacePerHour.toFixed(2)}%/時、尽きる見込み ${rem.exhaustAt ? new Date(rem.exhaustAt).toLocaleString('sv-SE') : 'リセットまで持つ'}` : '7 日の枠: 記録なし',
     cap('容量の推定（7 日）', result.capacity.sevenDay), cap('容量の推定（5 時間）', result.capacity.fiveHour),
     `壊れた行: ${result.malformedLines}`,
   ].join('\n');
