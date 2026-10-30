@@ -90,6 +90,10 @@ export function advance(ledger: Ledger, id: string, deps: AdvanceDeps, pid = pro
         const completion = classifyCompletion(reportCheck);
         if (completion.kind === '未完了' && completion.line) {
           const reason = `作業役の報告が、終わりの条件を満たしていないと書いている: ${completion.line}`;
+          if (/^終わりの条件:\s*満たしていない（環境）\s*—/.test(completion.line)) {
+            const environmentReason = completion.line.replace(/^終わりの条件:\s*満たしていない（環境）\s*—\s*/, '').trim();
+            return stop(`作業役の手で直せない理由で止まった: ${environmentReason || completion.line}`);
+          }
           if (completion.undecidable !== null) return stop(`作業役が終わりの条件を満たせない理由を決められない: ${completion.undecidable}`);
           sendBack(ledger, task, deps, reason,
             `依頼文の「やってよいこと」に入っている手でそれを満たしてから、報告を書き直す。満たせない理由が作業役では決められないことなら、その理由を報告に書いて「終わりの条件: 満たしていない — 決められない: <理由>」と書く。`, said, stop);

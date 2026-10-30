@@ -49,7 +49,7 @@ function deps(answer: string, calls: string[] = [], deployCode = 0): AdvanceDeps
   };
 }
 
-test('a report that says conditions are unmet returns to the worker without starting review', () => {
+test('an unmet report without the environment marker is still returned to the worker', () => {
   const f = fixture();
   try {
     writeFileSync(join(f.workdir, 'handoff/t-report.md'), '結論\n\n終わりの条件: 満たしていない — 偽物の claude を起動する；検査を通す\n');
@@ -65,6 +65,21 @@ test('a report that says conditions are unmet returns to the worker without star
     assert.match(taskContext(f.ledger, task), /## 今回の差し戻し[\s\S]*偽物の claude を起動する/);
     assert.ok(f.ledger.spans('repo-1').some((span) => span.name === '報告を見る' && span.attributes['report.status'] === '未完了'));
     assert.match(said.join('\n'), /差し戻した/);
+  } finally { f.done(); }
+});
+
+test('an unmet report marked as environmental immediately waits for a decision without consuming attempts', () => {
+  const f = fixture({ attempts: 1 });
+  try {
+    writeFileSync(join(f.workdir, 'handoff/t-report.md'), '終わりの条件: 満たしていない（環境） — GPU が使用中で学習を開始できない\n');
+    const calls: string[] = [];
+    advance(f.ledger, 'repo-1', deps('', calls), 1);
+    const task = f.ledger.get('repo-1')!;
+    assert.equal(task.status, '判断待ち');
+    assert.equal(task.attempts, 1);
+    assert.match(task.note!, /^作業役の手で直せない理由で止まった: GPU が使用中で学習を開始できない$/);
+    assert.ok(!calls.includes('resend'));
+    assert.ok(!calls.some((call) => call.startsWith('review:')));
   } finally { f.done(); }
 });
 
