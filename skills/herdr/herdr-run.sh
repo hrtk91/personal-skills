@@ -458,8 +458,10 @@ ledger_end() {
   "$TASK_BIN" ended "$TASK_ID" "$outcome" ${commit:+--commit "$commit"} --log "$L" >> "$L" 2>&1 ||
     log "台帳に終わり（$outcome）を書けなかった"
   log "台帳の $TASK_ID: $outcome"
-  # 終わりがきっかけで 1 回まわす（待っている次の仕事を出す）。この台本の終わりを待たせない
-  [ "${TASK_RUN_AFTER:-1}" = 0 ] || setsid "$TASK_BIN" run >> "$L" 2>&1 < /dev/null &
+  # 終わりがきっかけで次の仕事を出す。起動失敗は記録だけにして台本を続ける
+  if [ "${TASK_KICK:-${TASK_RUN_AFTER:-1}}" != 0 ]; then
+    systemctl --user start --no-block task-ledger.service || log "task-ledger.service の起動に失敗した"
+  fi
 }
 
 main() {
