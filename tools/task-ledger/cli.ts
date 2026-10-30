@@ -11,6 +11,7 @@ import { assembleIssueBrief, issueTemplate, meaningful, parseIssueMarkdown } fro
 import { realDeps, runOnce, type RunDeps } from './run.ts';
 import { taskContext } from './context.ts';
 import { advance, realAdvanceDeps, sweepHerdrTabs, type AdvanceDeps } from './advance.ts';
+import { refreshDecisionCards } from './decision/index.ts';
 
 const USAGE = `使い方:
   task add --title <題> --why <ユーザーの言葉と日付> [--brief <依頼文のパス>] [--check <確かめのコマンド>] [--worker pi|codex|claude] [--model <モデル>] [--effort <強さ>]
@@ -29,6 +30,7 @@ const USAGE = `使い方:
   task ready                                            いま出してよい仕事
   task hold <id> <理由といつ見直すか>
   task drop <id> <理由>
+  task decision refresh [<id>]                         判断待ちカードを作り直す
   task answer <id> <答え> [--to 待ち|やめ|保留|確かめ中|取り込み中]  判断待ちに答える（既定は 待ち に戻す。確かめ中 は Claude が作業役のコピーで直したとき、
                                                         取り込み中 は Claude がレビューの「直す」を越えて取り込むと決めたとき。答えに理由を書く）
   task export [--repo <パス>]                           ROADMAP 用の一覧（読む用の写し）
@@ -201,6 +203,7 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
         if(sub==='list'){for(const d of ledger.listDocs({repo,goal:values.goal}))out(`${d.id}\t${d.kind}\t${d.title}\t${d.path??''}`);return 0;}
         throw new Error('task doc add|list');
       }
+      case 'decision': {const [sub,id]=positionals;if(sub!=='refresh'||positionals.length>2)throw new Error('task decision refresh [<id>]');const count=refreshDecisionCards(ledger,id);out(`${count} 件の判断カードを作り直した`);return 0;}
       case 'priority': {const [id,d]=positionals;if(!id||!['first','up','down'].includes(d??''))throw new Error('task priority <task id> first|up|down');ledger.setPriority(id,d as 'first'|'up'|'down');out(line(ledger.get(id)!));return 0;}
       case 'context': {const task=ledger.get(positionals[0]??'');if(!task)throw new Error(`台帳にありません: ${positionals[0]??''}`);const text=taskContext(ledger,task,new Date(),{issueBody:false,taskSpecificOnly:values['task-specific']});if(text)out(text.trimEnd());return 0;}
       case 'show': {

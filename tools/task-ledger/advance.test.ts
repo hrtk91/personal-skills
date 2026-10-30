@@ -1,3 +1,4 @@
+if (process.env.TASK_BIN === undefined) process.env.TASK_BIN = "/bin/true";
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';

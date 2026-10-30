@@ -2,9 +2,11 @@
 // The harness moves tasks along; people and the commanding Claude only add, answer, hold or drop them.
 // Design: handoff/task-ledger-design.md
 import { DatabaseSync } from 'node:sqlite';
+import { spawn } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
+import { createDecisionCard, getDecisionCard, type Decision } from './decision/index.ts';
 
 export const STATUSES = ['依頼文待ち', '待ち', '走行中', '確かめ中', 'レビュー中', '取り込み中', '済', '判断待ち', '保留', 'やめ'] as const;
 export type Status = typeof STATUSES[number];
@@ -44,11 +46,29 @@ export function defaultPath(): string {
   return process.env.TASK_LEDGER_DB ?? join(homedir(), '.local/share/task-ledger/ledger.sqlite');
 }
 
+function spawnDecisionRefresh(id: string, ledgerPath: string): void {
+  if (process.env.NODE_TEST_CONTEXT && !process.env.TASK_BIN) return;
+  const command = process.env.TASK_BIN || join(import.meta.dirname, 'bin/task');
+  const reportFailure = (error: unknown) => {
+    const reason = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`task decision refresh 起動失敗: ${reason.replace(/[\r\n]+/g, ' ')}\n`);
+  };
+  try {
+    const child = spawn(command, ['decision', 'refresh', id], {
+      detached: true, stdio: 'ignore', env: { ...process.env, TASK_LEDGER_DB: ledgerPath },
+    });
+    child.on('error', reportFailure);
+    child.unref();
+  } catch (error) { reportFailure(error); /* Status changes are already committed. */ }
+}
+
 export class Ledger {
   readonly db: DatabaseSync;
+  readonly path: string;
   private readonly now: () => Date;
 
   constructor(path = defaultPath(), now: () => Date = () => new Date()) {
+    this.path = path;
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
     this.db = new DatabaseSync(path);
     this.now = now;
@@ -64,6 +84,7 @@ export class Ledger {
       CREATE TABLE IF NOT EXISTS events(
         task_id TEXT NOT NULL REFERENCES tasks(id), at TEXT NOT NULL,
         from_status TEXT, to_status TEXT NOT NULL, note TEXT) STRICT;
+      CREATE TABLE IF NOT EXISTS decision_cards(task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, entered_at TEXT NOT NULL, json TEXT NOT NULL, model TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(task_id,entered_at)) STRICT;
       CREATE INDEX IF NOT EXISTS events_task ON events(task_id, at);
       CREATE TABLE IF NOT EXISTS spans(
         task_id TEXT NOT NULL REFERENCES tasks(id), attempt INTEGER NOT NULL, name TEXT NOT NULL,
@@ -179,16 +200,21 @@ export class Ledger {
     if (!task) throw new Error(`台帳にありません: ${id}`);
     if (status === '保留' && !note?.trim()) throw new Error('保留には理由と、いつ見直すかを書いてください');
     const at = this.now().toISOString();
+    const decisionIds: string[] = [];
     this.db.exec('BEGIN IMMEDIATE');
     try {
       this.db.prepare(`UPDATE tasks SET status=?, note=?, agent=COALESCE(?,agent), "commit"=COALESCE(?,"commit"), attempts=COALESCE(?,attempts), runner=COALESCE(?,runner), updated_at=? WHERE id=?`)
         .run(status, note, fields.agent ?? null, fields.commit ?? null, fields.attempts ?? null, fields.runner ?? null, at, id);
       this.event(id, task.status, status, note, at);
-      if (status === 'やめ' || status === '判断待ち') this.blockDependents(id, at);
+      if (status === 'やめ' || status === '判断待ち') this.blockDependents(id, at, decisionIds);
+      if (status === '判断待ち' && task.status !== '判断待ち') decisionIds.unshift(id);
       this.db.exec('COMMIT');
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
+    if (this.path !== ':memory:') for (const decisionId of decisionIds) spawnDecisionRefresh(decisionId, this.path);
     return this.get(id)!;
   }
+
+  decisionCard(id:string,enteredAt:string):{json:Decision;model:string}|null { return getDecisionCard(this,id,enteredAt); }
 
   /** Records who is doing a running task and where, without a status change. */
   setRunner(id: string, fields: { agent?: string | null; runner?: number | null; workdir?: string | null }): Task {
@@ -253,13 +279,14 @@ export class Ledger {
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
   }
 
-  private blockDependents(id: string, at: string): void {
+  private blockDependents(id: string, at: string, decisionIds: string[]): void {
     const waiting = this.list().filter((task) => task.after.includes(id) && !CLOSED.includes(task.status) && !ACTIVE.includes(task.status) && task.status !== '判断待ち');
     for (const task of waiting) {
       const note = `先に済むはずの「${this.get(id)!.title}」が止まった`;
       this.db.prepare('UPDATE tasks SET status=?, note=?, updated_at=? WHERE id=?').run('判断待ち', note, at, task.id);
       this.event(task.id, task.status, '判断待ち', note, at);
-      this.blockDependents(task.id, at);
+      decisionIds.push(task.id);
+      this.blockDependents(task.id, at, decisionIds);
     }
   }
 

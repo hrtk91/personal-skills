@@ -1,3 +1,4 @@
+if (process.env.TASK_BIN === undefined) process.env.TASK_BIN = "/bin/true";
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';

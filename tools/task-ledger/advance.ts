@@ -55,7 +55,7 @@ export function parseVerdict(answer: string): Verdict | null {
 export function advance(ledger: Ledger, id: string, deps: AdvanceDeps, pid = process.pid): string[] {
   const said: string[] = [];
   if (!ledger.claimRunner(id, AFTER_WORK, pid)) return [...said, `${id}: ほかが進めているか、進める段ではない`];
-  const stop = (note: string) => { ledger.setStatus(id, '判断待ち', note); ledger.releaseRunner(id); said.push(`${id}: 判断待ち（${note}）`); return said; };
+  const stop = (note: string): string[] => { ledger.setStatus(id, '判断待ち', note); ledger.releaseRunner(id); said.push(`${id}: 判断待ち（${note}）`); return said; };
   for (;;) {
     const task = ledger.get(id)!;
     if (task.status === '確かめ中') {
@@ -109,7 +109,7 @@ export function advance(ledger: Ledger, id: string, deps: AdvanceDeps, pid = pro
       const lock = join(dirname(defaultPath()), 'merge-locks', task.repo.replaceAll('/', '_'));
       mkdirSync(dirname(lock), { recursive: true });
       while (!tryLock(lock)) deps.pause();
-      let again: 'again' | void;
+      let again: 'again' | void | string[];
       try { again = merge(ledger, task, deps, said, stop); } finally { rmdirSync(lock); }
       if (again !== 'again') return said;
     } else {
@@ -238,7 +238,7 @@ function gitHead(repo: string, deps: AdvanceDeps): string {
 }
 
 /** Merges the work. Returns 'again' when the worker's copy took in the repository's newer commits and must be checked again. */
-function merge(ledger: Ledger, task: Task, deps: AdvanceDeps, said: string[], stop: (note: string) => unknown): 'again' | void {
+function merge(ledger: Ledger, task: Task, deps: AdvanceDeps, said: string[], stop: (note: string) => string[]): 'again' | void | string[] {
   const repo = task.repo;
   const branch = deps.sh('git branch --show-current', task.workdir!, 60_000).output.trim();
   if (!branch) return stop('作業用のコピーのブランチが分からない');
@@ -295,7 +295,7 @@ git worktree remove --force "$T" >/dev/null 2>&1; rm -rf "$T"; exit $rc`, repo, 
 // The repository moved on while the worker was busy, and the two collide. Take the repository's commits into the
 // worker's copy: if that goes in cleanly, check again; if files collide, leave git's conflict marks in them and
 // hand the work back to the worker to settle.
-function catchUp(ledger: Ledger, task: Task, deps: AdvanceDeps, head: string, said: string[], stop: (note: string) => unknown): 'again' | void {
+function catchUp(ledger: Ledger, task: Task, deps: AdvanceDeps, head: string, said: string[], stop: (note: string) => string[]): 'again' | void | string[] {
   const workdir = task.workdir!;
   const into = timed(ledger, task, '本体を作業役のコピーへ', () => deps.sh(`git -c user.name="$(git config user.name || echo task-ledger)" -c user.email="$(git config user.email || echo task-ledger@noreply.invalid)" merge --no-edit -m ${quote(`本体の ${head.slice(0, 7)} を取り込む（${task.id}）`)} ${quote(head)}`, workdir, 120_000), exitCode);
   if (into.code === 0) {
@@ -354,9 +354,9 @@ function writeLog(id: string, name: string, text: string): string {
   return path;
 }
 
-/** Gives the work back to the worker with the reason recorded in task history, or stops after too many tries. */
-function sendBack(ledger: Ledger, task: Task, deps: AdvanceDeps, reason: string, detail: string, said: string[], stop: (note: string) => unknown): void {
-  if (task.attempts >= MAX_ATTEMPTS) return stop(`${MAX_ATTEMPTS} 回やって通らなかった。最後: ${reason}`);
+/** Gives the work back to the worker without changing the brief; the reason and details are recorded for the worker. */
+function sendBack(ledger: Ledger, task: Task, deps: AdvanceDeps, reason: string, detail: string, said: string[], stop: (note: string) => string[]): void {
+  if (task.attempts >= MAX_ATTEMPTS) { stop(`${MAX_ATTEMPTS} 回やって通らなかった。最後: ${reason}`); return; }
   if (task.issue_id && task.brief === `handoff/${task.issue_id}.md`) ledger.addIssueHistory(task.issue_id, reason);
   const detailPath = detail ? writeLog(task.id, `sendback-${task.attempts}`, detail) : null;
   const note = `差し戻し: ${reason}${detailPath ? `（詳しく: ${detailPath}）` : ''}`;

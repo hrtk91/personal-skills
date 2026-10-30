@@ -1,4 +1,5 @@
 import { existsSync, readdirSync } from "node:fs";
+import { spawn } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { Ledger, ACTIVE, filesOverlap, type Task, type Goal, type Issue } from "../../../ledger.ts";
@@ -31,10 +32,11 @@ export function loadGoalData(ledger:Ledger, repo:string, now=new Date()):GoalTab
    const events=ledger.events(t.id), entered=[...events].reverse().find(e=>e.to_status==='判断待ち');
    const note=entered?.note??t.note??'';
    let parsed:any; try { const match=note.match(/\{[\s\S]*\}/); if(match) parsed=JSON.parse(match[0]); } catch {}
+   const card=entered?ledger.decisionCard(t.id,entered.at):null;
    const report=t.brief??''; const pick=(key:string, label:string)=>parsed?.[key]??parsed?.fields?.[key]??parsed?.[label]??report.match(new RegExp(`^##?\\s*${label}\\s*\\n([\\s\\S]*?)(?=\\n##?\\s|$)`,'m'))?.[1]?.trim();
    const fields={goal:pick('goal','最終的なゴール'),how:pick('how','どう実現するか'),done:pick('done','やったこと'),undecided:pick('undecided','決められないこと')};
    const options=parsed?.options??parsed?.選択肢;
-   return {taskId:t.id,title:t.title,...(t.why?{why:t.why}:{}),...(linkedGoal(t)?{goalTitle:linkedGoal(t)!.title}:{}),question:note||'【仮】判断が必要です。',...(Object.values(fields).some(Boolean)?{fields}:{}),...(Array.isArray(options)?{options}:{}),at:entered?.at??t.updated_at};
+   return {taskId:t.id,title:t.title,...(t.why?{why:t.why}:{}),...(linkedGoal(t)?{goalTitle:linkedGoal(t)!.title}:{}),question:(card?.json.situation??note)||'【仮】判断が必要です。',...(Object.values(fields).some(Boolean)?{fields}:{}),...(Array.isArray(options)?{options}:{}),...(card?{situation:card.json.situation,options:card.json.options}:{}),at:entered?.at??t.updated_at};
  });
  const ready=ledger.ready().filter(t=>t.repo===repo), running=all.filter(t=>RUNNING.has(t.status)).sort((a,b)=>a.updated_at.localeCompare(b.updated_at));
  const waiting=all.filter(t=>t.status==='待ち'), readyIds=new Set(ready.map(t=>t.id));
@@ -64,7 +66,7 @@ export function loadGoalData(ledger:Ledger, repo:string, now=new Date()):GoalTab
 export function submitIntent(ledger:Ledger, repo:string, data:Record<string,string>) {
  const text=(k:string)=>data[k]??'';
  switch(text('intent')) {
-  case 'answer': {const t=ledger.get(text('taskId'));if(!t||t.repo!==repo)throw new Response('Task not found',{status:404});const to=text('to')||'待ち';if(!['待ち','やめ','保留'].includes(to))throw new Response('invalid answer destination',{status:400});try{answerTask(ledger,t.id,text('text'),to as any);}catch(e){throw new Response(e instanceof Error?e.message:String(e),{status:400});}return {ok:true};}
+  case 'answer': {const t=ledger.get(text('taskId'));if(!t||t.repo!==repo)throw new Response('Task not found',{status:404});let answer=text('text'),to=text('to')||'待ち';if(!text('to')){const event=[...ledger.events(t.id)].reverse().find(e=>e.to_status==='判断待ち');const card=event?ledger.decisionCard(t.id,event.at):null;const label=answer.split('。',1)[0];const selected=card?.json.options.find(option=>option.label===label);if(selected){to=selected.to;answer=[selected.answer,...answer.split('。').slice(1).filter(Boolean)].join('。');}}if(!['待ち','取り込み中','やめ','保留'].includes(to))throw new Response('invalid answer destination',{status:400});try{answerTask(ledger,t.id,answer,to as any);if(to==='取り込み中'){ledger.releaseRunner(t.id);const bin=process.env.TASK_BIN||join(import.meta.dirname,'../../../bin/task');const reportFailure=(error:unknown)=>{const reason=error instanceof Error?error.message:String(error);process.stderr.write(`task advance 起動失敗: ${reason.replace(/[\r\n]+/g,' ')}\n`);};try{const child=spawn(bin,['advance',t.id],{detached:true,stdio:'ignore',env:{...process.env,TASK_LEDGER_DB:ledger.path}});child.on('error',reportFailure);child.unref();}catch(error){reportFailure(error);}}}catch(e){throw new Response(e instanceof Error?e.message:String(e),{status:400});}return {ok:true};}
   case 'move-task': {const t=ledger.get(text('taskId'));if(!t||t.repo!==repo)throw new Response('Task not found',{status:404});if(t.status!=='待ち')throw new Response('動いている仕事は動かせません', {status:400});const move=text('move');if(!['up','down','first'].includes(move))throw new Response('invalid move',{status:400});ledger.setPriority(t.id,move as any);return {ok:true};}
   case 'move-goal': {const g=ledger.getGoal(text('goalId'));if(!g||g.repo!==repo)throw new Response('Goal not found',{status:404});ledger.moveGoal(g.id,text('move') as 'up'|'down');return {ok:true};}
   case 'create-goal': ledger.addGoal({repo,title:text('title'),why:text('why')});return {ok:true};
