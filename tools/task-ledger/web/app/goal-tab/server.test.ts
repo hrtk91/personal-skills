@@ -1,14 +1,14 @@
 if (process.env.TASK_BIN === undefined) process.env.TASK_BIN = "/bin/true";
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Ledger } from '../../../ledger.ts';
 import { loadGoalData,submitIntent } from './server.ts';
 
 test('loader emits decisions, ready queue, goal stages and recent rows; actions mutate a temporary ledger',async()=>{
- const dir=mkdtempSync(join(tmpdir(),'goal-tab-'));const l=new Ledger(join(dir,'db.sqlite'));
+ const dir=mkdtempSync(join(tmpdir(),'goal-tab-'));process.env.CLAUDE_PROJECTS_DIR=join(dir,'claude-projects');process.env.CLAUDE_USAGE_DIR=join(dir,'claude-usage');const l=new Ledger(join(dir,'db.sqlite'));mkdirSync(process.env.CLAUDE_PROJECTS_DIR,{recursive:true});
  try {
   const repo='/tmp/example-project';const goal=l.addGoal({repo,title:'Ship it',stages:['Build','Ship']});
   const issue=l.addIssue({repo,title:'Build thing',goal_id:goal.id,stage:'Build',by:'Claude'});
@@ -18,6 +18,7 @@ test('loader emits decisions, ready queue, goal stages and recent rows; actions 
   const run=l.add({repo,title:'Running item',why:'test',brief:'brief',files:['running.ts']});l.setStatus(run.id,'走行中');
   const done=l.add({repo,title:'Recent item',why:'test',brief:'brief'});l.setStatus(done.id,'済');
   const data=loadGoalData(l,repo,new Date(Date.now()+1000));
+  assert.equal(data.claudeUsage.events.length,0);assert.ok(data.claudeUsageReadMs>=0);
   assert.equal(data.decisions[0].question,'背景と停止理由。');assert.equal(data.decisions[0].situation,'背景と停止理由。');assert.equal(data.decisions[0].options?.[0].to,'待ち');assert.equal(data.decisions[0].options?.[0].answer,'続ける');assert.equal(data.queue[0].id,run.id);assert(data.queue.some(q=>q.id===ready.id&&q.movable));
   assert.equal(data.goals[0].stages[0].state,'stuck');assert(data.recent.some(r=>r.id===done.id));
   submitIntent(l,repo,{intent:'answer',taskId:decision.id,text:'approve'});assert.equal(l.get(decision.id)?.status,'待ち');
@@ -27,11 +28,11 @@ test('loader emits decisions, ready queue, goal stages and recent rows; actions 
   assert.throws(()=>submitIntent(l,repo,{intent:'move-task',taskId:run.id,move:'up'}), (e:any)=>e.status===400);
   submitIntent(l,repo,{intent:'move-goal',goalId:goal.id,move:'up'});
   submitIntent(l,repo,{intent:'create-goal',title:'New goal',why:'why'});assert.equal(l.listGoals(repo).length,2);
- } finally {l.close();rmSync(dir,{recursive:true,force:true});}
+ } finally {l.close();rmSync(dir,{recursive:true,force:true});delete process.env.CLAUDE_PROJECTS_DIR;delete process.env.CLAUDE_USAGE_DIR;}
 });
 
 test('queue includes blocked waiting tasks with reasons after ready tasks',()=>{
- const dir=mkdtempSync(join(tmpdir(),'goal-tab-blocked-'));const l=new Ledger(join(dir,'db.sqlite'));
+ const dir=mkdtempSync(join(tmpdir(),'goal-tab-blocked-'));process.env.CLAUDE_PROJECTS_DIR=join(dir,'claude-projects');process.env.CLAUDE_USAGE_DIR=join(dir,'claude-usage');mkdirSync(process.env.CLAUDE_PROJECTS_DIR,{recursive:true});const l=new Ledger(join(dir,'db.sqlite'));
  try {
   const repo='/tmp/blocked-project';
   const active=l.add({repo,title:'Active overlap blocker',why:'test',brief:'brief',files:['shared.ts']});l.setStatus(active.id,'走行中');
@@ -45,5 +46,5 @@ test('queue includes blocked waiting tasks with reasons after ready tasks',()=>{
   assert.equal(data.queue.find(q=>q.id===overlapA.id)?.blockedBy,`${active.id} が終わるのを待っています（触るファイルが重なるため）`);
   assert.equal(data.queue.find(q=>q.id===overlapB.id)?.blockedBy,`${active.id} が終わるのを待っています（触るファイルが重なるため）`);
   assert.equal(data.queue.find(q=>q.id===after.id)?.blockedBy,`${prerequisite.id} が終わるのを待っています`);
- } finally {l.close();rmSync(dir,{recursive:true,force:true});}
+ } finally {l.close();rmSync(dir,{recursive:true,force:true});delete process.env.CLAUDE_PROJECTS_DIR;delete process.env.CLAUDE_USAGE_DIR;}
 });
