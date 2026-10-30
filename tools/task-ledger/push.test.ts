@@ -10,14 +10,14 @@ const channel = join(import.meta.dirname, '../../skills/herdr/channel/bin/channe
 test('watch push and push-audit cover recipients, excluded transitions, Claude notes, missing recipients and failures', () => {
   const dir=mkdtempSync(join(tmpdir(),'task-push-')), db=join(dir,'ledger.sqlite'), log=join(dir,'channel.jsonl');
   const old={db:process.env.TASK_LEDGER_DB,channel:process.env.AGENT_CHANNEL,from:process.env.AGENT_CHANNEL_NAME,bin:process.env.TASK_CHANNEL_BIN};
-  process.env.TASK_LEDGER_DB=db;process.env.AGENT_CHANNEL=log;process.env.AGENT_CHANNEL_NAME='task-test';process.env.TASK_CHANNEL_BIN=channel;
+  process.env.TASK_LEDGER_DB=db;process.env.AGENT_CHANNEL=log;delete process.env.AGENT_CHANNEL_NAME;process.env.TASK_CHANNEL_BIN=channel;
   try {
     const l=new Ledger(db);l.watch('/repo/a','claude-a');l.watch('/repo/b','claude-b');
     assert.equal(main(['watch','--repo','/repo/c','--name','claude-c'],()=>{}),0);let listed='';main(['watchers'],s=>listed+=s);assert.match(listed,/claude-c/);assert.equal(main(['watch','--repo','/repo/c','--off'],()=>{}),0);
     const a=l.add({repo:'/repo/a',title:'one',why:'why',brief:'brief'}), b=l.add({repo:'/repo/b',title:'two',why:'why',brief:'brief'});
     const started=Date.now();l.setStatus(a.id,'走行中','running');assert.equal(existsSync(log),false);
     l.setStatus(a.id,'判断待ち','needs decision');
-    const first=JSON.parse(readFileSync(log,'utf8').trim().split('\n')[0]);assert.equal(first.to,'claude-a');assert.match(first.body,new RegExp(`${a.id} 判断待ち: one \\[event:`));assert.match(first.body,/\nneeds decision$/);assert.ok(Date.now()-started<1000);
+    const first=JSON.parse(readFileSync(log,'utf8').trim().split('\n')[0]);assert.equal(first.from,'task-ledger');assert.equal(first.to,'claude-a');assert.match(first.body,new RegExp(`${a.id} 判断待ち: one \\[event:`));assert.match(first.body,/\nneeds decision$/);assert.ok(Date.now()-started<1000);
     l.setStatus(a.id,'済','done');l.setStatus(a.id,'やめ','cancelled');
     l.setStatus(b.id,'判断待ち','other repo');assert.equal(readFileSync(log,'utf8').trim().split('\n').length,4);
     const claude=l.add({repo:'/repo/a',title:'self',why:'why',brief:'brief'});l.setStatus(claude.id,'判断待ち','Claude: self');assert.equal(readFileSync(log,'utf8').trim().split('\n').length,4);

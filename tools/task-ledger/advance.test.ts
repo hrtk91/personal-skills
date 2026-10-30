@@ -262,12 +262,12 @@ test('an uncommitted copy of a file the branch adds is moved aside so the merge 
 test('deploy success and failure are delivered to the repository watcher with their outcome', () => {
   const old={channel:process.env.AGENT_CHANNEL,from:process.env.AGENT_CHANNEL_NAME,bin:process.env.TASK_CHANNEL_BIN};
   for(const deployCode of [0,1]){
-    const f=fixture({deploy:true});const log=join(f.dir,`deploy-${deployCode}.jsonl`);process.env.AGENT_CHANNEL=log;process.env.AGENT_CHANNEL_NAME='ledger-test';process.env.TASK_CHANNEL_BIN=join(import.meta.dirname,'../../skills/herdr/channel/bin/channel');
+    const f=fixture({deploy:true});const log=join(f.dir,`deploy-${deployCode}.jsonl`);process.env.AGENT_CHANNEL=log;delete process.env.AGENT_CHANNEL_NAME;process.env.TASK_CHANNEL_BIN=join(import.meta.dirname,'../../skills/herdr/channel/bin/channel');
     try{
       writeFileSync(join(f.workdir,'handoff/t-report.md'),'報告\\n');git(f.workdir,'add','-A');git(f.workdir,'commit','-qm','report');f.ledger.watch(f.repo,'claude-deploy');
       advance(f.ledger,'repo-1',deps('{"verdict":"通す","reasons":[],"fixes":[]}',[],deployCode),1);
       const task=f.ledger.get('repo-1')!;assert.equal(task.status,deployCode===0?'済':'判断待ち');assert.match(task.note??'',deployCode===0?/本番に出した/:/本番に出せなかった/);
-      const rows=readFileSync(log,'utf8').trim().split(/\r?\n/).map(x=>JSON.parse(x));assert.equal(rows.length,1);assert.equal(rows[0].to,'claude-deploy');assert.match(rows[0].body,deployCode===0?/済:[\s\S]*本番に出した/:/判断待ち:[\s\S]*本番に出せなかった/);
+      const rows=readFileSync(log,'utf8').trim().split(/\r?\n/).map(x=>JSON.parse(x));assert.equal(rows.length,1);assert.equal(rows[0].from,'task-ledger');assert.equal(rows[0].to,'claude-deploy');assert.match(rows[0].body,deployCode===0?/済:[\s\S]*本番に出した/:/判断待ち:[\s\S]*本番に出せなかった/);
     }finally{f.done();}
   }
   for(const [key,value] of Object.entries({AGENT_CHANNEL:old.channel,AGENT_CHANNEL_NAME:old.from,TASK_CHANNEL_BIN:old.bin}))if(value===undefined)delete process.env[key];else process.env[key]=value;

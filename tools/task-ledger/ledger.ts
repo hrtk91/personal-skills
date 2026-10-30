@@ -246,7 +246,7 @@ export class Ledger {
       const watcher=this.db.prepare('SELECT name FROM watchers WHERE repo=?').get(e.repo) as {name:string}|undefined;
       if(!watcher){this.logPush(e.task_id,e.at,'unwatched','');continue;}
       const message=`${e.task_id} ${e.to_status}: ${e.title} [event:${e.at}]\n${(e.note??'').slice(0,200)}`;
-      try { const cmd=process.env.TASK_CHANNEL_BIN??join(import.meta.dirname,'../../skills/herdr/channel/bin/channel'); execFileSync(cmd,['post','--to',watcher.name,message],{encoding:'utf8',timeout:5000,env:process.env}); this.logPush(e.task_id,e.at,'sent',watcher.name); }
+      try { const cmd=process.env.TASK_CHANNEL_BIN??join(import.meta.dirname,'../../skills/herdr/channel/bin/channel'); execFileSync(cmd,['post','--to',watcher.name,'--from','task-ledger',message],{encoding:'utf8',timeout:5000,env:process.env}); this.logPush(e.task_id,e.at,'sent',watcher.name); }
       catch(error){const reason=error instanceof Error?error.message:String(error);this.logPush(e.task_id,e.at,'failed',reason.replace(/[\r\n]+/g,' ').slice(0,300));process.stderr.write(`task push failed ${e.task_id}: ${reason.replace(/[\r\n]+/g,' ')}\n`);}
     }
   }
