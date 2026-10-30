@@ -123,6 +123,19 @@ fi
 # 文書が名指すファイル。``` で囲んだ所（差し戻しに貼った検査の出力など）は名指しに数えない（2026-10-30: 検査の出力にあった handoff/missing-brief.md で止まった）
 named_files() { awk '/^[[:space:]]*```/{f=!f; next} !f' "$1" 2>/dev/null | grep -oE '(^|[^A-Za-z0-9_./-])[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)+\.[A-Za-z0-9]+' | sed -E 's/^[^A-Za-z0-9_.-]//' | sort -u; }
 
+# Same-named tasks in another repository must not block cleanup; process-name-only searches collide.
+same_task_running() {
+  local pid args cwd
+  for pid in $(pgrep -f 'herdr-run\.sh [A-Za-z0-9]'); do
+    [ "$pid" = "$$" ] && continue
+    args=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null) || continue
+    [[ "$args" =~ herdr-run\.sh\ $name( |$) ]] || continue
+    cwd=$(readlink -f "/proc/$pid/cwd" 2>/dev/null) || continue
+    [ "$cwd" = "$REPO" ] && return 0
+  done
+  return 1
+}
+
 # 動いているほかの herdr の台本の依頼名
 running_tasks() {
   local pid args
@@ -167,7 +180,7 @@ preflight() {
 # 片付け: 写し・ブランチ・タブ。取り込んでいないブランチは --discard のときだけ消す
 cleanup_task() {
   local line tab f merged=0
-  if running_tasks | grep -qx "$name" || pgrep -f "herdr-run\.sh $name( |\$)" | grep -vx $$ >/dev/null; then
+  if running_tasks | grep -qx "$name" || same_task_running; then
     echo "台本 $name がまだ動いている。止めてから片付ける" >&2; return 1
   fi
   git -C "$REPO" rev-parse -q --verify "refs/heads/$BRANCH" >/dev/null && git -C "$REPO" merge-base --is-ancestor "$BRANCH" HEAD && merged=1
