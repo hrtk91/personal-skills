@@ -6,9 +6,44 @@ import { Ledger, ACTIVE, filesOverlap, type Task, type Goal, type Issue } from "
 import { answerTask } from "../../../answer.ts";
 import { metrics } from "../../../metrics.ts";
 import { getClaudeUsage } from "../../../claude-usage.ts";
-import type { DecisionItem, GoalTabData, GoalRow, IssueRow, TaskRow, TaskStatus, StageState, ProjectSummary } from "./types.js";
+import type { DecisionItem, GoalTabData, GoalRow, IssueRow, TaskRow, TaskStatus, StageState, ProjectSummary, ClaudeUsageSummary } from "./types.js";
 
 const RUNNING = new Set<string>(ACTIVE);
+let usageCache: { at: number; summary: ClaudeUsageSummary } | null = null;
+let usageLoading: Promise<void> | null = null;
+function usageSummary(now: number): ClaudeUsageSummary {
+ if (usageCache && Date.now() - usageCache.at < 60_000) return usageCache.summary;
+ if (!usageLoading) {
+  usageLoading = Promise.resolve().then(() => {
+   const started = performance.now();
+   try {
+    const raw = getClaudeUsage(7, now), groups = (rows: typeof raw.rows) => {
+     const sums = new Map<string, { caller: string; reason: string | null; weighted: number }>();
+     for (const r of rows) { const k = r.caller, v = sums.get(k) ?? { caller: r.caller, reason: null, weighted: 0 }; v.weighted += r.weighted; sums.set(k,v); }
+     const callers = [...sums.values()].sort((a,b)=>b.weighted-a.weighted).slice(0,8);
+     sums.clear();
+     for (const r of rows) { const k = `${r.caller}\t${r.reason??''}`, v = sums.get(k) ?? { caller:r.caller, reason:r.reason, weighted:0 }; v.weighted += r.weighted; sums.set(k,v); }
+     return [...callers,...[...sums.values()].sort((a,b)=>b.weighted-a.weighted).slice(0,8)];
+    };
+    const remaining = raw.remaining, capacity = (c: typeof raw.capacity.sevenDay) => ({ perPercent:c.perPercent, median:c.medianPerPercent, low:c.rangePerPercent.low, high:c.rangePerPercent.high, intervals:c.intervals });
+    const today = new Date(now).toLocaleDateString('sv-SE');
+    const byDay = new Map<string, { day:string; caller:string; weighted:number }>();
+    for (const r of raw.rows) { const k = `${r.day}\t${r.caller}`, v = byDay.get(k) ?? { day:r.day, caller:r.caller, weighted:0 }; v.weighted += r.weighted; byDay.set(k,v); }
+    const summary: ClaudeUsageSummary = {
+     now: { sevenDay:{percent:remaining?.sevenDay??null,resetsAt:remaining?.sevenDayResetsAt===null||remaining?.sevenDayResetsAt===undefined?null:new Date(remaining.sevenDayResetsAt*1000).toISOString()}, fiveHour:{percent:remaining?.fiveHour??null,resetsAt:remaining?.fiveHourResetsAt===null||remaining?.fiveHourResetsAt===undefined?null:new Date(remaining.fiveHourResetsAt*1000).toISOString()} },
+     pace:{perHour:remaining?.pacePerHour??null,exhaustAt:remaining?.exhaustAt??null,since:remaining?.paceSince??null},
+     capacity:{sevenDay:capacity(raw.capacity.sevenDay),fiveHour:capacity(raw.capacity.fiveHour)},
+     today:groups(raw.rows.filter(r=>r.day===today)),
+     week:groups(raw.rows),
+     days:[...byDay.values()].sort((a,b)=>a.day.localeCompare(b.day)||a.caller.localeCompare(b.caller)),
+     readMs:performance.now()-started,
+    };
+    usageCache = { at:Date.now(), summary };
+   } finally { usageLoading = null; }
+  }).catch(() => {});
+ }
+ return { pending:true };
+}
 const mapStatus = (s:string):TaskStatus => (s === '取り下げ' ? '取り下げ' : s) as TaskStatus;
 function repoName(repo:string) { return repo.split('/').filter(Boolean).at(-1) ?? repo; }
 // Every git repository under ~/repos is listed (10/29 「台帳にないプロジェクトも出す」): the ones with work in
@@ -63,10 +98,8 @@ export function loadGoalData(ledger:Ledger, repo:string, now=new Date()):GoalTab
  });
  const goalIssueIds=new Set(issues.filter(i=>i.goal_id).map(i=>i.id)), cutoff=now.getTime()-7*86400000;
  const recent=all.filter(t=>['済','やめ','取り下げ'].includes(t.status)&&(!t.issue_id||!goalIssueIds.has(t.issue_id))&&Date.parse(t.updated_at)>=cutoff).sort((a,b)=>b.updated_at.localeCompare(a.updated_at)).slice(0,30).map(t=>row(ledger,t));
- const claudeStarted=performance.now();
- const claudeUsage=getClaudeUsage(7,now.getTime());
- const claudeUsageReadMs=performance.now()-claudeStarted;
- return {project,projects:ps,decisions,queue,goals:goalRows,recent,metrics:metrics(ledger,{repo,weeks:4}),claudeUsage,claudeUsageReadMs,readAt:now.toISOString()};
+ const claudeUsage=usageSummary(now.getTime());
+ return {project,projects:ps,decisions,queue,goals:goalRows,recent,metrics:metrics(ledger,{repo,weeks:4}),claudeUsage,readAt:now.toISOString()};
 }
 export function submitIntent(ledger:Ledger, repo:string, data:Record<string,string>) {
  const text=(k:string)=>data[k]??'';

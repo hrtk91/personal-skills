@@ -25,8 +25,16 @@ test('loader emits decisions, ready queue, goal stages and recent rows; actions 
   const ready=l.add({repo,title:'Queued item',why:'test',brief:'brief',files:['queued.ts']});
   const run=l.add({repo,title:'Running item',why:'test',brief:'brief',files:['running.ts']});l.setStatus(run.id,'走行中');
   const done=l.add({repo,title:'Recent item',why:'test',brief:'brief'});l.setStatus(done.id,'済');
-  const data=loadGoalData(l,repo,new Date(Date.now()+1000));
-  assert.equal(data.claudeUsage.events.length,0);assert.ok(data.claudeUsageReadMs>=0);
+  const first=loadGoalData(l,repo,new Date(Date.now()+1000));
+  const concurrent=loadGoalData(l,repo,new Date(Date.now()+1000));
+  assert.deepEqual(first.claudeUsage,{pending:true});assert.deepEqual(concurrent.claudeUsage,{pending:true});
+  let data=first;
+  for(let i=0;i<100&&data.claudeUsage.pending;i++){await new Promise(resolve=>setTimeout(resolve,10));data=loadGoalData(l,repo,new Date(Date.now()+1000));}
+  assert.equal(data.claudeUsage.pending,undefined);
+  assert.ok((data.claudeUsage.readMs??-1)>=0);
+  const usageJson=JSON.stringify(data.claudeUsage);
+  assert.equal(usageJson.includes('events'),false);assert.ok(Buffer.byteLength(usageJson)<50*1024);
+  assert.deepEqual(loadGoalData(l,repo,new Date(Date.now()+1000)).claudeUsage,data.claudeUsage);
   assert.equal(data.decisions[0].question,'背景と停止理由。');assert.equal(data.decisions[0].situation,'背景と停止理由。');assert.equal(data.decisions[0].options?.[0].to,'待ち');assert.equal(data.decisions[0].options?.[0].answer,'続ける');assert.equal(data.queue[0].id,run.id);assert(data.queue.some(q=>q.id===ready.id&&q.movable));
   assert.equal(data.goals[0].stages[0].state,'stuck');assert(data.recent.some(r=>r.id===done.id));
   submitIntent(l,repo,{intent:'answer',taskId:decision.id,text:'approve'});assert.equal(l.get(decision.id)?.status,'待ち');

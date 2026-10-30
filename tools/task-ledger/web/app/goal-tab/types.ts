@@ -83,12 +83,21 @@ export interface GoalRow {
   issues: IssueRow[];
 }
 
+export interface ClaudeUsageSummary {
+  pending?: true;
+  now?: { sevenDay: { percent: number | null; resetsAt: string | null }; fiveHour: { percent: number | null; resetsAt: string | null } };
+  pace?: { perHour: number | null; exhaustAt: string | null; since: string | null };
+  capacity?: Record<"sevenDay" | "fiveHour", { perPercent: number | null; median: number | null; low: number | null; high: number | null; intervals: number }>;
+  today?: { caller: string; reason: string | null; weighted: number }[];
+  week?: { caller: string; reason: string | null; weighted: number }[];
+  days?: { day: string; caller: string; weighted: number }[];
+  readMs?: number;
+}
+
 export interface GoalTabData {
   metrics: import("../../../metrics.ts").MetricsResult;
-  /** Claude transcript usage for the last seven days, across all projects. */
-  claudeUsage: ReturnType<typeof import("../../../claude-usage.ts").getClaudeUsage>;
-  /** Time spent reading and aggregating Claude usage on this request. */
-  claudeUsageReadMs: number;
+  /** Small display-only Claude usage summary; pending while the first transcript scan runs. */
+  claudeUsage: ClaudeUsageSummary;
   project: ProjectSummary;
   projects: ProjectSummary[];
   decisions: DecisionItem[];
