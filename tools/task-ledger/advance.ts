@@ -141,7 +141,7 @@ export function advance(ledger: Ledger, id: string, deps: AdvanceDeps, pid = pro
       const verdict = parseVerdict(answer);
       if (!verdict) return stop('レビューの答えから決まった形の JSON を読めなかった');
       said.push(`${id}: レビュー ${verdict.verdict}`);
-      const blocking = verdict.findings?.filter((finding) => finding.harm === '大' || (finding.harm === '中' && finding.likelihood === 'いつも')) ?? [];
+      const blocking = verdict.findings?.filter((finding) => finding.harm === '大') ?? [];
       const remaining = verdict.findings?.filter((finding) => !blocking.includes(finding)) ?? [];
       if (verdict.findings !== undefined) {
         ledger.setStatus(id, 'レビュー中', `レビュー指摘: ${JSON.stringify({ stopped: verdict.verdict === '判断' ? [] : blocking.map((finding) => finding.text), remaining: remaining.map((finding) => finding.text), findings: verdict.findings.map((finding) => finding.text) })}`);

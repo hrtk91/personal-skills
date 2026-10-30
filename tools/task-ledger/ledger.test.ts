@@ -87,7 +87,7 @@ test('a task with no listed files runs alone in its repository', () => {
   assert.deepEqual(ledger.ready().map((t) => t.id), [b.id]);
 });
 
-test('dropping or stalling a task sends what depends on it, transitively, to 判断待ち', () => {
+test('dropping a task sends dependents to 判断待ち, but a stalled task leaves them 待ち', () => {
   const ledger = make();
   const a = ledger.add({ ...base, title: 'A', brief: 'x', files: ['a'] });
   const b = ledger.add({ ...base, title: 'B', brief: 'x', files: ['b'], after: [a.id] });
@@ -95,7 +95,17 @@ test('dropping or stalling a task sends what depends on it, transitively, to 判
   ledger.setStatus(a.id, 'やめ', '要らなくなった');
   assert.equal(ledger.get(b.id)!.status, '判断待ち');
   assert.equal(ledger.get(c.id)!.status, '判断待ち');
-  assert.match(ledger.get(b.id)!.note!, /「A」が止まった/);
+  assert.match(ledger.get(b.id)!.note!, /「A」がやめになった/);
+});
+
+test('a decision-waiting predecessor leaves dependent tasks waiting without notes', () => {
+  const ledger = make();
+  const a = ledger.add({ ...base, title: 'A', brief: 'x', files: ['a'] });
+  const b = ledger.add({ ...base, title: 'B', brief: 'x', files: ['b'], after: [a.id] });
+  ledger.setStatus(a.id, '判断待ち', '確認が必要');
+  assert.equal(ledger.get(b.id)!.status, '待ち');
+  assert.equal(ledger.get(b.id)!.note, null);
+  assert.deepEqual(ledger.ready(), []);
 });
 
 test('holding needs a reason; closed tasks leave the default list', () => {

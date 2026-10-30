@@ -225,7 +225,7 @@ export class Ledger {
       this.db.prepare(`UPDATE tasks SET status=?, note=?, agent=COALESCE(?,agent), "commit"=COALESCE(?,"commit"), attempts=COALESCE(?,attempts), runner=COALESCE(?,runner), updated_at=? WHERE id=?`)
         .run(status, note, fields.agent ?? null, fields.commit ?? null, fields.attempts ?? null, fields.runner ?? null, at, id);
       this.event(id, task.status, status, note, at);
-      if (status === 'やめ' || status === '判断待ち') this.blockDependents(id, at, decisionIds);
+      if (status === 'やめ') this.blockDependents(id, at, decisionIds);
       if (status === '判断待ち' && task.status !== '判断待ち') decisionIds.unshift(id);
       this.db.exec('COMMIT');
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
@@ -319,7 +319,7 @@ export class Ledger {
   private blockDependents(id: string, at: string, decisionIds: string[]): void {
     const waiting = this.list().filter((task) => task.after.includes(id) && !CLOSED.includes(task.status) && !ACTIVE.includes(task.status) && task.status !== '判断待ち');
     for (const task of waiting) {
-      const note = `先に済むはずの「${this.get(id)!.title}」が止まった`;
+      const note = `先に済むはずの「${this.get(id)!.title}」がやめになった`;
       this.db.prepare('UPDATE tasks SET status=?, note=?, updated_at=? WHERE id=?').run('判断待ち', note, at, task.id);
       this.event(task.id, task.status, '判断待ち', note, at);
       decisionIds.push(task.id);
