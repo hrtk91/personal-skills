@@ -43,10 +43,10 @@ test('judgment takes precedence over blocking findings and leaves the task for a
  const f=fixture();try{writeFileSync(join(f.workdir,'handoff/t-report.md'),'終わりの条件: 満たした\\n');const calls:string[]=[];advance(f.ledger,'repo-1',deps(JSON.stringify({verdict:'判断',reasons:['need user context'],fixes:[],findings:[finding('major concern','いつも','大',false)]}),calls),1);assert.equal(f.ledger.get('repo-1')!.status,'判断待ち');assert.match(f.ledger.events('repo-1').at(-1)?.note??'',/need user context/);assert.equal(calls.some(c=>c.includes('resend')),false);}finally{f.cleanup();}
 });
 
-test('no-findings legacy answer keeps its old verdict behavior; malformed structured findings are rejected',()=>{
+test('no-findings legacy fixes are recorded as remaining instead of causing another review; malformed structured findings are rejected',()=>{
  assert.equal(parseVerdict('{"verdict":"直す","reasons":["x"],"fixes":["y"]}')?.verdict,'直す');
  assert.equal(parseVerdict('{"verdict":"通す","reasons":[],"fixes":[],"findings":[{"text":"x","likelihood":"often","harm":"大","blocking":false}]}'),null);
- const f=fixture();try{writeFileSync(join(f.workdir,'handoff/t-report.md'),'終わりの条件: 満たした\n');const calls:string[]=[];advance(f.ledger,'repo-1',deps('{"verdict":"直す","reasons":["legacy"],"fixes":["legacy fix"]}',calls),1);assert.equal(f.ledger.get('repo-1')!.status,'走行中');assert.match(f.ledger.events('repo-1').at(-1)?.note??'',/legacy/);}finally{f.cleanup();}
+ const f=fixture();try{writeFileSync(join(f.workdir,'handoff/t-report.md'),'終わりの条件: 満たした\n');const calls:string[]=[];advance(f.ledger,'repo-1',deps('{"verdict":"直す","reasons":["legacy"],"fixes":["legacy fix"]}',calls),1);assert.equal(f.ledger.get('repo-1')!.status,'済');assert.match(f.ledger.get('repo-1')!.note??'',/残りにした指摘: \["legacy","legacy fix"\]/);assert.equal(f.ledger.spans('repo-1').filter(span=>span.name==='レビュー').length,1);}finally{f.cleanup();}
 });
 
 test('remaining findings survive into task show and weekly finding metrics',()=>{

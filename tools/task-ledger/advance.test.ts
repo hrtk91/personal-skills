@@ -231,6 +231,60 @@ test('files allow exact paths and files beneath declared folders only', () => {
   assert.deepEqual(outsideTaskFiles(['src/a.ts', 'skills/herdr/tests/test_x.py', 'other.txt'], ['src/a.ts', 'skills/herdr/tests']), ['other.txt']);
 });
 
+test('major findings are sent back once, then only the original findings are checked and new findings do not block', () => {
+  const f = fixture();
+  try {
+    writeFileSync(join(f.workdir, 'handoff/t-report.md'), '終わりの条件: 満たした\\n');
+    const calls: string[] = [];
+    const reviewAnswers = [
+      JSON.stringify({ verdict: '通す', reasons: [], fixes: [], findings: [
+        { text: '大指摘A', likelihood: 'いつも', harm: '大', blocking: true },
+        { text: '中指摘B', likelihood: 'いつも', harm: '中', blocking: false },
+      ] }),
+      JSON.stringify({ items: [{ text: '大指摘A', status: '直った' }], newFindings: ['新しい指摘C'] }),
+    ];
+    const d = deps('', calls);
+    d.review = (prompt) => { calls.push(`review:${prompt}`); return reviewAnswers.shift()!; };
+    advance(f.ledger, 'repo-1', d, 1);
+    assert.equal(f.ledger.get('repo-1')!.status, '走行中');
+    assert.match(readFileSync(join(f.dir, 'logs/repo-1-sendback-1.log'), 'utf8'), /大指摘A/);
+    assert.doesNotMatch(readFileSync(join(f.dir, 'logs/repo-1-sendback-1.log'), 'utf8'), /中指摘B/);
+    f.ledger.setStatus('repo-1', '確かめ中', 'worker fixed');
+    f.ledger.releaseRunner('repo-1');
+    advance(f.ledger, 'repo-1', d, 1);
+    const reviewCalls = calls.filter((call) => call.startsWith('review:'));
+    assert.equal(reviewCalls.length, 2);
+    assert.match(reviewCalls[1]!, /大指摘A/);
+    assert.doesNotMatch(reviewCalls[1]!, /中指摘B/);
+    assert.match(reviewCalls[1]!, /新しい指摘は禁止/);
+    assert.equal(f.ledger.get('repo-1')!.status, '済');
+    assert.match(f.ledger.get('repo-1')!.note!, /新しい指摘C/);
+    assert.equal(reviewAnswers.length, 0);
+  } finally { f.done(); }
+});
+
+test('a second review with any unresolved original major finding waits and cannot trigger a third review', () => {
+  const f = fixture();
+  try {
+    writeFileSync(join(f.workdir, 'handoff/t-report.md'), '終わりの条件: 満たした\\n');
+    const calls: string[] = [];
+    const answers = [
+      JSON.stringify({ verdict: '通す', reasons: [], fixes: [], findings: [{ text: '重大X', likelihood: 'いつも', harm: '大', blocking: true }] }),
+      JSON.stringify({ items: [{ text: '重大X', status: '直っていない' }], newFindings: [] }),
+    ];
+    const d = deps('', calls);
+    d.review = (prompt) => { calls.push(`review:${prompt}`); return answers.shift()!; };
+    advance(f.ledger, 'repo-1', d, 1);
+    f.ledger.setStatus('repo-1', '確かめ中', 'worker returned');
+    f.ledger.releaseRunner('repo-1');
+    advance(f.ledger, 'repo-1', d, 1);
+    assert.equal(f.ledger.get('repo-1')!.status, '判断待ち');
+    assert.match(f.ledger.get('repo-1')!.note!, /直っていない指摘: 重大X/);
+    assert.equal(calls.filter((call) => call.startsWith('review:')).length, 2);
+    assert.equal(answers.length, 0);
+  } finally { f.done(); }
+});
+
 test('a report that says conditions are met proceeds to review', () => {
   const f = fixture();
   try {
@@ -466,7 +520,7 @@ test('a review asking for fixes after the last attempt waits for a decision inst
   const f = fixture({ attempts: 3 });
   try {
     const calls: string[] = [];
-    advance(f.ledger, 'repo-1', deps('{"verdict":"直す","reasons":["検査が中身を見ていない"],"fixes":["mul を検査する"]}', calls), 1);
+    advance(f.ledger, 'repo-1', deps('{"verdict":"通す","reasons":[],"fixes":[],"findings":[{"text":"検査が中身を見ていない","likelihood":"いつも","harm":"大","blocking":true}]}', calls), 1);
     const task = f.ledger.get('repo-1')!;
     assert.equal(task.status, '判断待ち');
     assert.match(task.note!, /3 回やって通らなかった/);
@@ -604,17 +658,17 @@ test('review sessions resume only through use four, then start over; cwd changes
   } finally { f.done(); }
 });
 
-test('review resume uses the latest sendback event, excludes success note, and includes outsideFiles through real status transitions',()=>{
+test('review confirmation uses only the original major finding list and does not resume a full review session',()=>{
   const f=fixture();try{
     writeFileSync(join(f.workdir,'handoff/t-report.md'),'current report');mkdirSync(join(f.dir,'logs'),{recursive:true});
     let n=0;const calls:{prompt:string;session?:{sessionId?:string;resumePrompt?:string}}[]=[];const d=deps('');
-    d.review=(prompt,_cwd,_dirs,session)=>{calls.push({prompt,session});n++;return {answer:n===1?'{"verdict":"直す","reasons":["fix"],"fixes":["repair"]}':'{"verdict":"判断","reasons":["hold"],"fixes":[]}',attributes:{'review.session_id':`s${n}`}};};
+    d.review=(prompt,_cwd,_dirs,session)=>{calls.push({prompt,session});n++;return {answer:n===1?'{"verdict":"通す","reasons":[],"fixes":[],"findings":[{"text":"fix","likelihood":"いつも","harm":"大","blocking":true}]}':'{"items":[{"text":"fix","status":"直った"}]}',attributes:{'review.session_id':`s${n}`}};};
     advance(f.ledger,'repo-1',d,410);assert.equal(f.ledger.get('repo-1')!.status,'走行中');
     f.ledger.setStatus('repo-1','確かめ中','worker returned');f.ledger.releaseRunner('repo-1');
     advance(f.ledger,'repo-1',d,411);
-    assert.equal(calls.length,2);assert.match(calls[1]!.prompt,/差し戻しの文: 差し戻し: レビューで直すことになった/);
-    assert.doesNotMatch(calls[1]!.prompt,/確かめが通った/);assert.match(calls[1]!.prompt,/対象外ファイルの変更: mul.js/);
-    assert.match(calls[1]!.prompt,/前回のレビュー以後の変化だけ/);
+    assert.equal(calls.length,2);assert.match(calls[1]!.prompt,/初回の大指摘一覧:[\s\S]*fix/);
+    assert.doesNotMatch(calls[1]!.prompt,/外の変更|前回のレビュー以後/);
+    assert.equal(f.ledger.get('repo-1')!.status,'済');
   }finally{f.done();}
 });
 
