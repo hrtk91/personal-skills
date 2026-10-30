@@ -85,6 +85,10 @@ export interface GoalRow {
 
 export interface GoalTabData {
   metrics: import("../../../metrics.ts").MetricsResult;
+  /** Claude transcript usage for the last seven days, across all projects. */
+  claudeUsage: ReturnType<typeof import("../../../claude-usage.ts").getClaudeUsage>;
+  /** Time spent reading and aggregating Claude usage on this request. */
+  claudeUsageReadMs: number;
   project: ProjectSummary;
   projects: ProjectSummary[];
   decisions: DecisionItem[];

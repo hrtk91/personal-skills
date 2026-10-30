@@ -13,6 +13,7 @@ import { taskContext } from './context.ts';
 import { advance, realAdvanceDeps, sweepHerdrTabs, type AdvanceDeps } from './advance.ts';
 import { refreshDecisionCards } from './decision/index.ts';
 import { metrics, normalizeReviewKinds, REVIEW_KINDS } from './metrics.ts';
+import { getClaudeUsage, renderClaudeUsage } from './claude-usage.ts';
 
 const USAGE = `使い方:
   task add --title <題> --why <ユーザーの言葉と日付> [--brief <依頼文のパス>] [--check <確かめのコマンド>] [--worker pi|codex|claude] [--model <モデル>] [--effort <強さ>]
@@ -38,6 +39,7 @@ const USAGE = `使い方:
   task run                                              1 回まわす（消えたプロセスを見つけ、終わった仕事を先へ進め、次の仕事を 1 つ出す）
   task trace <id>                                       1 件の時間の流れ（状態ごと・ハーネスの段ごと）
   task report [--since <日時>] [--repo <パス>] [--json]  段ごとのかかった時間・戻った理由・レビューの費用
+  task claude-usage [--days N] [--json]                 Claude のトークン利用量・プラン容量推定
   task otel [--since <日時>] [--repo <パス>] [--out <パス>]  OTLP の JSON に書き出す（既定 ~/.local/share/task-ledger/traces/）
 ハーネスの中で使うもの:
   task started <id> --agent <名> --runner <PID> [--workdir <パス>]   台本が動き始めた（herdr-run.sh が呼ぶ）
@@ -104,7 +106,7 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
     worker: { type: 'string' }, model: { type: 'string' }, effort: { type: 'string' },
     repo: { type: 'string' }, all: { type: 'boolean' }, status: { type: 'string' }, to: { type: 'string' },
     agent: { type: 'string' }, runner: { type: 'string' }, commit: { type: 'string' }, log: { type: 'string' }, workdir: { type: 'string' },
-    since: { type: 'string' }, json: { type: 'boolean' }, 'dry-run': { type: 'boolean' }, weeks: { type: 'string' }, out: { type: 'string' }, issue: { type: 'string' }, body: { type: 'string' }, by: { type: 'string' }, from: { type: 'string' }, goal: { type: 'string' }, stage: { type: 'string' }, stages: { type: 'string' }, loose: { type: 'boolean' }, open: { type: 'boolean' }, docKind: { type: 'string' }, path: { type: 'string' },
+    since: { type: 'string' }, json: { type: 'boolean' }, days: { type: 'string' }, 'dry-run': { type: 'boolean' }, weeks: { type: 'string' }, out: { type: 'string' }, issue: { type: 'string' }, body: { type: 'string' }, by: { type: 'string' }, from: { type: 'string' }, goal: { type: 'string' }, stage: { type: 'string' }, stages: { type: 'string' }, loose: { type: 'boolean' }, open: { type: 'boolean' }, docKind: { type: 'string' }, path: { type: 'string' },
     'なぜ': { type: 'string' }, '今の状態': { type: 'string' }, '関係する所': { type: 'string' }, 'やること': { type: 'string' }, 'やってよいこと': { type: 'string' }, 'やらないこと': { type: 'string' }, '終わりの条件': { type: 'string' }, '確かめのコマンド': { type: 'string' }, '触るファイル': { type: 'string' }, '種類': { type: 'string' }, '本番に出すか': { type: 'string' }, 'task-specific': { type: 'boolean' },
   } });
   const ledger = new Ledger();
@@ -286,6 +288,13 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
         const weeks=values.weeks===undefined?4:Number(values.weeks);if(!Number.isInteger(weeks)||weeks<1||weeks>104)throw new Error('--weeks は1〜104の整数');
         const result=metrics(ledger,{repo,weeks});
         if(values.json) out(JSON.stringify(result)); else {out('週\tリポジトリ\t済\t1回で通った\t失敗の種類\tレビュー細目\t判断待ち中央値(ms)\t走行中→済中央値(ms)\t頻出題');for(const w of result.weeks)out(`${w.week}\t${w.repo}\t${w.completed}\t${w.firstPass}\t${JSON.stringify(w.failures)}\t${JSON.stringify(w.reviewKinds)}\t${w.medianDecisionMs??'—'}\t${w.medianRunningToDoneMs??'—'}\t${JSON.stringify(w.frequentTitles)}`);}
+        return 0;
+      }
+      case 'claude-usage': {
+        const days = values.days === undefined ? 7 : Number(values.days);
+        if (!Number.isInteger(days) || days < 1 || days > 365) throw new Error('--days は1〜365の整数');
+        const result = getClaudeUsage(days);
+        out(values.json ? JSON.stringify(result) : renderClaudeUsage(result));
         return 0;
       }
       case 'report': case 'otel': {
