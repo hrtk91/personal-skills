@@ -78,7 +78,7 @@ export function advance(ledger: Ledger, id: string, deps: AdvanceDeps, pid = pro
       if (!task.workdir || !existsSync(task.workdir)) return stop(`作業用のコピーが見つからない（${task.workdir ?? '記録なし'}）`);
       const check = checkTwice(ledger, task, said, () => deps.sh(task.check ?? 'true', task.workdir!, CHECK_TIMEOUT), `check-${task.attempts}`, '確かめ');
       const path = writeLog(id, `check-${task.attempts}`, check.output);
-      if (isMissingCommand(check.code, task.check ?? 'true', task.workdir!)) return stop(`環境の失敗: 確かめのコマンド \`${task.check}\` に必要なコマンドが無い（終了コード 127）。作業役へ差し戻さず、環境を直してから判断する。`);
+      if (isMissingCommand(check.code, task.workdir!, check.output)) return stop(`環境の失敗: 確かめのコマンド \`${task.check}\` に必要なコマンドが無い（終了コード 127）。作業役へ差し戻さず、環境を直してから判断する。`);
       if (check.code !== 0) { sendBack(ledger, task, deps, `確かめのコマンド \`${task.check}\` が落ちた（終了コード ${check.code}）。`, tail(check.output), said, stop); return said; }
       ledger.setStatus(id, 'レビュー中', `確かめが通った。出力: ${path}`);
       said.push(`${id}: 確かめが通った`);
@@ -383,18 +383,18 @@ function catchUp(ledger: Ledger, task: Task, deps: AdvanceDeps, head: string, sa
 
 // A check that fails runs once more before anything is decided: on a busy PC an e2e that the task never touched can
 // time out (10/28: three different specs did, one per run). The first output is kept and the event names it.
-function isMissingCommand(code: number, check: string, cwd: string): boolean {
+function isMissingCommand(code: number, cwd: string, output: string): boolean {
   if (code !== 127) return false;
-  // The check is a shell snippet; use its first executable word (skipping simple VAR=value prefixes).
-  // This deliberately classifies `bash missing-script.sh` as a worker failure: bash exists.
-  const words = check.trim().match(/^(?:[A-Za-z_][A-Za-z0-9_]*=[^\s]+\s+)*([A-Za-z0-9_./+-]+)/);
-  if (!words?.[1]) return false;
-  const found = spawnSync('bash', ['-c', 'command -v "$1" >/dev/null 2>&1', 'task-ledger-command-probe', words[1]], { cwd, encoding: 'utf8' });
+  // Bash reports the command that was actually missing, which can be after `cd ... &&` or another prefix.
+  // Extract the word from its line-numbered diagnostic instead of guessing from the snippet's start.
+  const missing = output.match(/^.*?: (?:line|行) \d+: ([^:\s]+): /m)?.[1];
+  if (!missing || missing.includes('/')) return false; // A missing script/file belongs to the worker, not the environment.
+  const found = spawnSync('bash', ['-c', 'command -v "$1" >/dev/null 2>&1', 'task-ledger-command-probe', missing], { cwd, encoding: 'utf8' });
   return found.status === 1;
 }
 
 function checkTwice(ledger: Ledger, task: Task, said: string[], command: () => Shell, label: string, name: string): Shell {
-  const missing = (result: Shell) => isMissingCommand(result.code, task.check ?? 'true', task.workdir!);
+  const missing = (result: Shell) => isMissingCommand(result.code, task.workdir!, result.output);
   const run = (count: number) => timed(ledger, task, name, command, (result) => ({ ok: result.code === 0, attributes: { 'step.exit_code': result.code, 'step.run': count, ...(missing(result) ? { 'failure.kind': 'environment' } : {}) } }));
   const first = run(1);
   if (first.code === 0 || missing(first)) return first;
