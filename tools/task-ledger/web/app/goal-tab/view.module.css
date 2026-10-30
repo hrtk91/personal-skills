@@ -195,3 +195,10 @@ textarea.t { width: 100%; min-height: 64px; resize: vertical; }
 .more { margin-top: 4px; font-size: 12px; color: var(--sub); }
 .more summary { cursor: pointer; color: var(--bad); }
 .more p { margin: 4px 0 0; }
+
+/* Decision card choices: name and おすすめ on one line, what happens next under it. */
+.optText { display: grid; gap: 2px; min-width: 0; }
+.optHead { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.recChip { font-size: .72rem; font-weight: 600; padding: 0 7px; border-radius: 99px; background: var(--run-bg); color: var(--run); white-space: nowrap; }
+.situ { display: grid; gap: 4px; min-width: 0; }
+.situ p { margin: 0; line-height: 1.75; }

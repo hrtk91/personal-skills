@@ -197,7 +197,12 @@ function Decision({ item, submit, busy, now, consultHref }: { item: DecisionItem
   return (
     <article className={`${styles.card} ${styles.ask}`} aria-label={item.title}>
       <TaskStory title={item.title} why={item.why} status="判断待ち" meta={[item.goalTitle, `${ago(item.at, now)}から`].filter(Boolean).join(" ・ ")} />
-      <p className={styles.q}><b className={styles.lbl}>止まった理由</b>{item.question}</p>
+      {item.situation ? (
+        <>
+          <div className={styles.situ}><b className={styles.lbl}>いまの状況</b><p>{item.situation}</p></div>
+          <details className={styles.more}><summary>ハーネスが書いた止まった理由</summary><p>{item.question}</p></details>
+        </>
+      ) : <p className={styles.q}><b className={styles.lbl}>止まった理由</b>{item.question}</p>}
       {fields.length ? (
         <dl className={styles.fmt}>
           {fields.map(([key, label]) => <div key={key} className={styles.fmtRow}><dt>{label}</dt><dd>{item.fields![key]}</dd></div>)}
@@ -208,7 +213,10 @@ function Decision({ item, submit, busy, now, consultHref }: { item: DecisionItem
           {options.map((option, index) => (
             <label key={option.label} className={option.recommended ? `${styles.opt} ${styles.rec}` : styles.opt}>
               <input type="radio" name={`answer-${item.taskId}`} checked={choice === index} onChange={() => setChoice(index)} />
-              <span><b>{option.label}</b>{option.detail || option.recommended ? <span className={styles.s}>{option.recommended ? "おすすめ" : ""}{option.recommended && option.detail ? ": " : ""}{option.detail}</span> : null}</span>
+              <span className={styles.optText}>
+                <span className={styles.optHead}><b>{option.label}</b>{option.recommended ? <span className={styles.recChip}>おすすめ</span> : null}</span>
+                {option.detail ? <span className={styles.s}>{option.detail}</span> : null}
+              </span>
             </label>
           ))}
         </div>
@@ -217,8 +225,12 @@ function Decision({ item, submit, busy, now, consultHref }: { item: DecisionItem
         <input className={styles.t} value={memo} onChange={(event) => setMemo(event.target.value)} placeholder={options.length ? "ひとこと（任意）" : "どうするか（例: この直し方で続けて）"} aria-label="ひとこと" />
         <button type="button" className={`${styles.b} ${styles.pri}`} disabled={busy || (!options.length && !memo.trim())} onClick={() => send()}>{options.length ? "これで決める" : "続けさせる"}</button>
         {consultHref ? <a className={styles.b} href={consultHref(item.taskId)}>相談する</a> : null}
-        <button type="button" className={styles.b} disabled={busy} onClick={() => send("保留")}>保留</button>
-        <button type="button" className={`${styles.b} ${styles.quiet}`} disabled={busy} onClick={() => send("やめ")}>やめる</button>
+        {options.length ? null : (
+          <>
+            <button type="button" className={styles.b} disabled={busy} onClick={() => send("保留")}>保留</button>
+            <button type="button" className={`${styles.b} ${styles.quiet}`} disabled={busy} onClick={() => send("やめ")}>やめる</button>
+          </>
+        )}
       </div>
     </article>
   );
