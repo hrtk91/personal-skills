@@ -1,7 +1,7 @@
 import type { Ledger } from './ledger.ts';
 
 export const REVIEW_KINDS = ['終わりの条件が未達','依頼の外の変更','検査が中身を確かめていない','実装の誤り','報告が不正確','依頼文の食い違い','その他'] as const;
-export type MetricsOptions = { repo?: string; weeks: number };
+export type MetricsOptions = { repo?: string; weeks: number; now?: number };
 export type MetricsResult = { weeks: Array<{ week: string; repo: string; completed: number; firstPass: number; failures: Record<string, number>; reviewKinds: Record<string, number>; medianDecisionMs: number | null; medianRunningToDoneMs: number | null; frequentTitles: Array<{ kind: string; title: string; count: number }> }> };
 type Row = { task_id:string; repo:string; title:string; at:string; from_status:string|null; to_status:string; note:string|null; kind:string|null; created_at:string };
 export function classify(event: Pick<Row,'note'|'from_status'|'to_status'>): string {
@@ -21,7 +21,7 @@ const ms=(s:string)=>Date.parse(s);
 const weekOf=(s:string)=>{const d=new Date(s);d.setUTCHours(0,0,0,0);d.setUTCDate(d.getUTCDate()-((d.getUTCDay()+6)%7));return d.toISOString().slice(0,10);};
 const median=(values:number[])=>{if(!values.length)return null;values.sort((a,b)=>a-b);const m=Math.floor(values.length/2);return values.length%2?values[m]!:Math.round((values[m-1]!+values[m]!)/2);};
 export function metrics(ledger:Ledger, options:MetricsOptions):MetricsResult {
- const now=Date.now(), floor=new Date(now-options.weeks*7*86400000), rows=ledger.db.prepare(`SELECT e.task_id,t.repo,t.title,e.at,e.from_status,e.to_status,e.note,e.kind,t.created_at FROM events e JOIN tasks t ON t.id=e.task_id ORDER BY e.at,e.rowid`).all() as Row[];
+ const now=options.now??Date.now(), floor=new Date(now-options.weeks*7*86400000), rows=ledger.db.prepare(`SELECT e.task_id,t.repo,t.title,e.at,e.from_status,e.to_status,e.note,e.kind,t.created_at FROM events e JOIN tasks t ON t.id=e.task_id ORDER BY e.at,e.rowid`).all() as Row[];
  const byTask=new Map<string,Row[]>();for(const r of rows){if(options.repo&&r.repo!==options.repo)continue;byTask.set(r.task_id,[...(byTask.get(r.task_id)??[]),r]);}
  const buckets=new Map<string,{week:string;repo:string;completed:number;firstPass:number;failures:Record<string,number>;reviewKinds:Record<string,number>;decision:number[];running:number[];freq:Map<string,Map<string,number>>}>();
  const bucket=(week:string,repo:string)=>{const k=`${week}\0${repo}`;let b=buckets.get(k);if(!b){b={week,repo,completed:0,firstPass:0,failures:{},reviewKinds:{},decision:[],running:[],freq:new Map()};buckets.set(k,b);}return b;};
