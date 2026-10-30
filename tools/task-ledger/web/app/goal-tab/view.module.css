@@ -225,8 +225,12 @@ textarea.t { width: 100%; min-height: 64px; resize: vertical; }
 .retroFacts dt { font-size: 12px; color: var(--sub); }
 .retroFacts dd { margin: 2px 0 0; display: grid; gap: 2px; font-variant-numeric: tabular-nums; }
 .retroTitle { display: block; font-size: 13px; }
+.barsWide .barRow { grid-template-columns: minmax(0, 15rem) minmax(0, 1fr) 5.5rem; }
+.barsWide .barNum { white-space: nowrap; }
+.usageWarn span { color: var(--bad); font-weight: 600; }
 .retroTitle .s { display: inline; margin-left: 6px; }
 @media (max-width: 560px) {
   .barRow { grid-template-columns: minmax(0, 1fr) 2.5rem; }
+  .barsWide .barRow { grid-template-columns: minmax(0, 1fr) 5.5rem; }
   .barTrack { grid-column: 1 / -1; grid-row: 2; }
 }

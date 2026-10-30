@@ -160,6 +160,7 @@ export function GoalTabView({ data, submit, busy, consultHref }: { data: GoalTab
       <NewGoal submit={submit} busy={busy} />
       <Recent rows={data.recent} now={now} />
       <Retro metrics={data.metrics} />
+      <Usage usage={data.claudeUsage} />
     </div>
   );
 }
@@ -474,15 +475,15 @@ function sum(records: Array<Record<string, number>>) {
   return Object.entries(total).sort((a, b) => b[1] - a[1]);
 }
 
-function Bars({ rows, fixAt }: { rows: Array<[string, number]>; fixAt: Record<string, string> }) {
+function Bars({ rows, fixAt = {}, format = String, wide = false }: { rows: Array<[string, number]>; fixAt?: Record<string, string>; format?: (n: number) => string; wide?: boolean }) {
   const max = Math.max(1, ...rows.map(([, n]) => n));
   return (
-    <ul className={styles.bars}>
+    <ul className={wide ? `${styles.bars} ${styles.barsWide}` : styles.bars}>
       {rows.map(([label, n]) => (
         <li key={label} className={styles.barRow}>
           <span className={styles.barLabel}>{label}{fixAt[label] ? <span className={styles.fixAt}>{fixAt[label]}</span> : null}</span>
           <span className={styles.barTrack}><span className={styles.barFill} style={{ width: `${(n / max) * 100}%` }} /></span>
-          <span className={styles.barNum}>{n}</span>
+          <span className={styles.barNum}>{format(n)}</span>
         </li>
       ))}
     </ul>
@@ -526,6 +527,73 @@ function Retro({ metrics }: { metrics?: GoalTabData["metrics"] }) {
           <div><dt>判断待ちで止まっていた時間</dt><dd>{span(latest.medianDecisionMs)}<span className={styles.s}>今週の真ん中の値。私かあなたの返事待ち</span></dd></div>
           <div><dt>始めてから済むまで</dt><dd>{span(latest.medianRunningToDoneMs)}<span className={styles.s}>今週の真ん中の値</span></dd></div>
           {titles.length ? <div><dt>何度も落ちた仕事</dt><dd>{titles.map(([title, n]) => <span key={title} className={styles.retroTitle}>{title}<span className={styles.s}>{n} 回</span></span>)}</dd></div> : null}
+        </dl>
+      </div>
+    </section>
+  );
+}
+
+/** Tokens weighted by price (cache reads a tenth, output five times), shown in 万. */
+function man(n: number | null | undefined) {
+  if (n === null || n === undefined) return "—";
+  return n >= 1e8 ? `${(n / 1e8).toFixed(1)} 億` : `${Math.round(n / 1e4).toLocaleString("ja-JP")} 万`;
+}
+
+function when(iso: string | null | undefined) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return `${d.getMonth() + 1}/${d.getDate()}（${"日月火水木金土"[d.getDay()]}）${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+// The usage reader names some wake-ups after Claude Code's internals; these say what woke the session.
+const REASON_NAMES: Record<string, string> = { "見張り（Monitor）": "台帳の見張りの知らせ", "見張り（expired）": "見張りが切れた知らせ" };
+
+// How much of the Claude plan is used, how fast, and who used it: measured before cutting (10/30).
+function Usage({ usage }: { usage?: GoalTabData["claudeUsage"] }) {
+  if (!usage) return null;
+  const hint = "7 日の枠がいつまで持つかと、どこで使っているか";
+  if (usage.pending || usage.error) {
+    return (
+      <section className={styles.section}>
+        <SectionHead title="Claude の使い方" hint={hint} />
+        <div className={styles.card}><p className={styles.s}>{usage.pending ? "会話の記録を読んでいます。最初の 1 回だけ 10 秒ほどかかります。" : `記録を読めませんでした: ${usage.error}`}</p></div>
+      </section>
+    );
+  }
+  const seven = usage.now?.sevenDay; const five = usage.now?.fiveHour;
+  const exhaust = usage.pace?.exhaustAt ? new Date(usage.pace.exhaustAt).getTime() : null;
+  const reset = seven?.resetsAt ? new Date(seven.resetsAt).getTime() : null;
+  const lasts = exhaust === null || (reset !== null && exhaust >= reset);
+  const label = (r: { caller: string; reason: string | null }) => r.reason ? `${r.caller}・${REASON_NAMES[r.reason] ?? r.reason}` : r.caller;
+  const today = (usage.today?.byCallerReason ?? []).filter((r) => r.reason !== null).map((r): [string, number] => [label(r), r.weighted]);
+  const week = (usage.week?.byCaller ?? []).map((r): [string, number] => [r.caller, r.weighted]);
+  const cap = usage.capacity?.sevenDay; const cap5 = usage.capacity?.fiveHour;
+  return (
+    <section className={styles.section}>
+      <SectionHead title="Claude の使い方" hint={hint} />
+      <div className={`${styles.card} ${styles.retro}`}>
+        <div className={styles.retroHead}>
+          <p className={styles.big}><b>{seven?.percent ?? "—"}%</b><span>7 日の枠を使った。リセットは {when(seven?.resetsAt)}</span></p>
+          <p className={`${styles.big} ${lasts ? "" : styles.usageWarn}`}>
+            <span>{usage.pace?.perHour == null ? "ペースはまだ測れていない" : lasts ? `1 時間に ${usage.pace.perHour.toFixed(1)}% のペースなら、リセットまで持つ` : `1 時間に ${usage.pace.perHour.toFixed(1)}% のペースだと、${when(usage.pace.exhaustAt)} に尽きる`}</span>
+          </p>
+          <p className={styles.s}>5 時間の枠 {five?.percent ?? "—"}%（リセット {when(five?.resetsAt)}）{usage.pace?.hours != null && usage.pace.hours < 24 ? `。ペースは直近 ${usage.pace.hours.toFixed(1)} 時間の記録から` : ""}</p>
+        </div>
+        {today.length ? (
+          <div className={styles.retroCol}>
+            <h3 className={styles.h3}>今日どこで使ったか<span className={styles.h2hint}>誰の会話か・何で起こされたか。単位はトークンを値段で重み付けしたもの</span></h3>
+            <Bars rows={today} format={man} wide />
+          </div>
+        ) : null}
+        {week.length ? (
+          <div className={styles.retroCol}>
+            <h3 className={styles.h3}>この 7 日<span className={styles.h2hint}>会話の種類ごと</span></h3>
+            <Bars rows={week} format={man} wide />
+          </div>
+        ) : null}
+        <dl className={styles.retroFacts}>
+          <div><dt>7 日の枠の 1%</dt><dd>{man(cap?.perPercent)}<span className={styles.s}>{cap?.intervals ? `幅 ${man(cap.low)}〜${man(cap.high)}、${cap.intervals} 区間から` : "割合が上がるのを待っている"}</span></dd></div>
+          <div><dt>5 時間の枠の 1%</dt><dd>{man(cap5?.perPercent)}<span className={styles.s}>{cap5?.intervals ? `幅 ${man(cap5.low)}〜${man(cap5.high)}、${cap5.intervals} 区間から` : "割合が上がるのを待っている"}</span></dd></div>
         </dl>
       </div>
     </section>
