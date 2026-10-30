@@ -3,9 +3,10 @@
 // Design: handoff/task-ledger-design.md
 import { DatabaseSync } from 'node:sqlite';
 import { spawn } from 'node:child_process';
-import { mkdirSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
+import { execFileSync } from 'node:child_process';
 import { createDecisionCard, getDecisionCard, type Decision } from './decision/index.ts';
 
 export const STATUSES = ['依頼文待ち', '待ち', '走行中', '確かめ中', 'レビュー中', '取り込み中', '済', '判断待ち', '保留', 'やめ'] as const;
@@ -86,6 +87,8 @@ export class Ledger {
         from_status TEXT, to_status TEXT NOT NULL, note TEXT, kind TEXT) STRICT;
       CREATE TABLE IF NOT EXISTS decision_cards(task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, entered_at TEXT NOT NULL, json TEXT NOT NULL, model TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(task_id,entered_at)) STRICT;
       CREATE INDEX IF NOT EXISTS events_task ON events(task_id, at);
+      CREATE TABLE IF NOT EXISTS watchers(repo TEXT PRIMARY KEY, name TEXT NOT NULL, at TEXT NOT NULL) STRICT;
+      CREATE TABLE IF NOT EXISTS push_log(task_id TEXT NOT NULL, at TEXT NOT NULL, outcome TEXT NOT NULL, detail TEXT) STRICT;
       CREATE TABLE IF NOT EXISTS spans(
         task_id TEXT NOT NULL REFERENCES tasks(id), attempt INTEGER NOT NULL, name TEXT NOT NULL,
         start TEXT NOT NULL, "end" TEXT NOT NULL, ok INTEGER NOT NULL, attributes_json TEXT NOT NULL DEFAULT '{}') STRICT;
@@ -227,9 +230,27 @@ export class Ledger {
       this.db.exec('COMMIT');
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
     if (this.path !== ':memory:') for (const decisionId of decisionIds) spawnDecisionRefresh(decisionId, this.path);
+    this.pushEvents(id, at);
+    for (const decisionId of decisionIds) if (decisionId !== id) this.pushEvents(decisionId, at);
     return this.get(id)!;
   }
 
+  watch(repo: string, name: string): void { this.db.prepare('INSERT INTO watchers(repo,name,at) VALUES(?,?,?) ON CONFLICT(repo) DO UPDATE SET name=excluded.name,at=excluded.at').run(repo,name,this.now().toISOString()); }
+  unwatch(repo: string): void { this.db.prepare('DELETE FROM watchers WHERE repo=?').run(repo); }
+  watchers(): {repo:string;name:string;at:string}[] { return this.db.prepare('SELECT repo,name,at FROM watchers ORDER BY repo').all() as {repo:string;name:string;at:string}[]; }
+  private pushEvents(taskId: string, at: string): void {
+    const events=this.db.prepare("SELECT e.task_id,e.at,e.to_status,e.note,t.repo,t.title FROM events e JOIN tasks t ON t.id=e.task_id WHERE e.task_id=? AND e.at=?").all(taskId,at) as {task_id:string;at:string;to_status:string;note:string|null;repo:string;title:string}[];
+    for(const e of events){
+      if(!['判断待ち','済','やめ'].includes(e.to_status)||e.note?.startsWith('Claude:'))continue;
+      if(this.db.prepare('SELECT 1 FROM push_log WHERE task_id=? AND at=?').get(e.task_id,e.at))continue;
+      const watcher=this.db.prepare('SELECT name FROM watchers WHERE repo=?').get(e.repo) as {name:string}|undefined;
+      if(!watcher){this.logPush(e.task_id,e.at,'unwatched','');continue;}
+      const message=`${e.task_id} ${e.to_status}: ${e.title} [event:${e.at}]\n${(e.note??'').slice(0,200)}`;
+      try { const cmd=process.env.TASK_CHANNEL_BIN??join(import.meta.dirname,'../../skills/herdr/channel/bin/channel'); execFileSync(cmd,['post','--to',watcher.name,message],{encoding:'utf8',timeout:5000,env:process.env}); this.logPush(e.task_id,e.at,'sent',watcher.name); }
+      catch(error){const reason=error instanceof Error?error.message:String(error);this.logPush(e.task_id,e.at,'failed',reason.replace(/[\r\n]+/g,' ').slice(0,300));process.stderr.write(`task push failed ${e.task_id}: ${reason.replace(/[\r\n]+/g,' ')}\n`);}
+    }
+  }
+  private logPush(taskId:string,at:string,outcome:string,detail:string):void { this.db.prepare('INSERT INTO push_log(task_id,at,outcome,detail) VALUES(?,?,?,?)').run(taskId,at,outcome,detail); }
   decisionCard(id:string,enteredAt:string):{json:Decision;model:string}|null { return getDecisionCard(this,id,enteredAt); }
 
   /** Records who is doing a running task and where, without a status change. */
