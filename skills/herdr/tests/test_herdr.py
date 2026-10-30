@@ -836,11 +836,43 @@ class HerdrContractTest(unittest.TestCase):
         self.assertFalse(self.w.exists())
         self.assertIn("片付けた（取り込み済み）", self.log_text())
 
+    def test_cleanup_ignores_same_name_runner_in_another_repository(self):
+        self.assert_success(self.run_script())
+        (self.repo / "handoff/contract.md").unlink()
+        try: self.git("-c", "user.name=F", "-c", "user.email=f@f", "merge", "-q", "--no-edit", "herdr/contract")
+        except subprocess.CalledProcessError as e: self.fail(e.output)
+        unrelated_repo = self.root / "unrelated-repo"
+        unrelated_repo.mkdir()
+        other = subprocess.Popen(["bash", "-c", 'exec -a "bash herdr-run.sh contract" /usr/bin/sleep 30'], cwd=unrelated_repo)
+        try:
+            result = self.cleanup()
+        finally:
+            other.kill()
+            other.wait(timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.w.exists())
+
+    def test_cleanup_refuses_same_name_runner_in_the_same_repository(self):
+        self.assert_success(self.run_script())
+        same_repo_runner = subprocess.Popen(["bash", "-c", 'exec -a "bash herdr-run.sh contract" /usr/bin/sleep 30'], cwd=self.repo)
+        try:
+            result = self.cleanup()
+        finally:
+            same_repo_runner.kill()
+            same_repo_runner.wait(timeout=5)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("台本 contract がまだ動いている", result.stderr)
+        self.assertTrue(self.w.is_dir())
+
     def test_preflight_stops_when_a_running_task_touches_the_same_file(self):
         (self.repo / "handoff" / "other.md").write_text("Change src/app.tsx\n")
         (self.repo / "handoff" / "contract.md").write_text("Also edit `src/app.tsx`\n")
         other = subprocess.Popen(["bash", "-c", 'exec -a "bash herdr-run.sh other" /usr/bin/sleep 30'])
-        self.addCleanup(other.kill)
+        def stop_other():
+            try: other.kill()
+            except ProcessLookupError: pass
+            other.wait(timeout=5)
+        self.addCleanup(stop_other)
         result = self.run_script()
         self.assertEqual(result.returncode, 1)
         self.assertIn("動いている仕事 other と触るファイルが重なる: src/app.tsx", self.log_text())
