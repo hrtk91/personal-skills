@@ -88,7 +88,8 @@ COMMIT_EMAIL=${COMMIT_EMAIL:-codex@noreply.invalid}
 | `DESIGN_RULES` | 空。指定時は設計の手順・結論の書式を優先し、両担当に読ませる |
 | `CONTEXT_FILES` | `CLAUDE.md AGENTS.md`。本体の今の版をコピーして両担当に読ませる |
 | `CHECKLIST` | `handoff/review-checklist.md`。あれば追加のレビュー観点に使う |
-| `EXTRA_DIRS` | 空。git の外にあるディレクトリをリンクせずコピーする |
+| `EXTRA_DIRS` | 空。git の外にあるディレクトリをコピーする |
+| `LINK_DIRS` | 空。本体のディレクトリを写しへリンクする。node_modules のような読むだけの部品はこちら |
 | `BASE_REFRESH_EXTRA_DIRS` | `1`。`BASE` でも本体から追加ディレクトリをコピーする。`0` なら前の写しの在庫を保持する |
 | `EXTRA` | 空。git の外の単体ファイルを読み取り専用でコピーし、パッチ・コミットから除外する |
 | `PATCH_EXCLUDE` | 空。Git の除外 pathspec をパッチとコミットの両方に適用する |

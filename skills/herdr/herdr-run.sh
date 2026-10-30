@@ -43,6 +43,7 @@ CONTEXT_FILES=${CONTEXT_FILES-"CLAUDE.md AGENTS.md"}  # 写しにも入れて読
 CHECKLIST=${CHECKLIST-$HANDOFF/review-checklist.md}   # あればレビューの観点に足す
 DESIGN_RULES=${DESIGN_RULES:-}                    # 指定した文書の手順・結論の書式を、既定の下見より優先する
 EXTRA_DIRS=${EXTRA_DIRS:-}                        # git の外にある、写しにコピーしたいディレクトリ
+LINK_DIRS=${LINK_DIRS:-}                          # 本体から写しへシンボリックリンクで貸すディレクトリ
 BASE_REFRESH_EXTRA_DIRS=${BASE_REFRESH_EXTRA_DIRS:-1} # BASE でも本体からコピーし直す。0 なら前の写しの在庫を保つ
 PATCH_EXCLUDE=${PATCH_EXCLUDE:-}                  # パッチに入れないパス（例 ":!*.png :!assets"）
 IMPL_AGENT=${IMPL_AGENT:-${AGENT:-codex}}; REV_AGENT=${REV_AGENT:-$IMPL_AGENT}
@@ -96,8 +97,17 @@ if [ -n "${TASK_ISSUE_ID:-}" ]; then
   # The Issue-generated prompt is run input, not a repository artifact; keep it out of the patch and commit.
   PATCH_EXCLUDE="${PATCH_EXCLUDE:+$PATCH_EXCLUDE }:!$REQ"
 fi
+# LINK_DIRS はコピーより優先。置き場に既存のファイルやディレクトリがあれば、それだけを外して ln -sT する。
+for d in $LINK_DIRS; do
+  case " $EXTRA_DIRS " in *" $d "*) log "$d は LINK_DIRS と EXTRA_DIRS の両方にあるため LINK_DIRS を優先" ;; esac
+  [ -d "$REPO/$d" ] || continue
+  mkdir -p "$(dirname "$W/$d")" || return 1
+  rm -rf -- "$W/$d" || return 1
+  ln -sT -- "$REPO/$d" "$W/$d" || return 1
+done
 if [ -z "${BASE:-}" ] || [ "$BASE_REFRESH_EXTRA_DIRS" != 0 ]; then
   for d in $EXTRA_DIRS; do
+    case " $LINK_DIRS " in *" $d "*) continue ;; esac
     [ -d "$REPO/$d" ] || continue
     mkdir -p "$W/$d" && cp -r "$REPO/$d/." "$W/$d/" || return 1
   done
@@ -105,7 +115,9 @@ fi
 # git の外で読ませたいもの（例 EXTRA="data/history.jsonl"）は、写しに読み取り専用で置く（パッチには入らない）
 for f in ${EXTRA:-}; do mkdir -p "$W/$(dirname "$f")" && cp -f "$REPO/$f" "$W/$f" && chmod a-w "$W/$f" || return 1; done
 log "写しを作った: $W（実装 $IMPL_AGENT・レビュー $REV_AGENT・追加: ${EXTRA:-なし}）"
-preflight || return 1
+preflight
+local_preflight_rc=$?
+[ "$local_preflight_rc" = 0 ] || return "$local_preflight_rc"
 # 作業役を起こす前に、worktree 上で確かめを一度流して依存コマンドの欠落を検出する。
 # 実装前に不成立な通常の検査 (多くは終了 1) は続行し、command not found (127) のみ環境失敗にする。
 if [ -n "${TASK_CHECK:-}" ]; then
@@ -148,7 +160,37 @@ running_tasks() {
 
 # 起動前の確かめ（2026-10-26: 写しに無い依頼文を指した・自分で「待ち」と書いた仕事を出した・同じファイルを触る仕事を重ねた）
 preflight() {
-  local f other theirs overlap
+  local f other theirs overlap scan_output scan_rc
+  # EXTRA_DIRS / LINK_DIRS 内に自分または設定ディレクトリの祖先へ戻るリンクがないか、本体と写しを点検する。
+  scan_output=$(python3 - "$REPO" "$W" "$EXTRA_DIRS $LINK_DIRS" <<'PY'
+import os, sys
+repo, work, configured = sys.argv[1:]
+failed = False
+for base in (repo, work):
+    for rel in configured.split():
+        root = os.path.join(base, rel)
+        if not os.path.isdir(root):
+            continue
+        resolved_root = os.path.realpath(root)
+        for current, dirs, files in os.walk(root, followlinks=False):
+            for name in dirs + files:
+                link = os.path.join(current, name)
+                if not os.path.islink(link):
+                    continue
+                target = os.path.realpath(link)
+                if target == resolved_root or resolved_root.startswith(target.rstrip(os.sep) + os.sep):
+                    print(f"{base}: {link} -> {os.readlink(link)} は {rel} 自身または祖先を指す")
+                    failed = True
+if failed:
+    sys.exit(1)
+PY
+  )
+  scan_rc=$?
+  if [ "$scan_rc" != 0 ]; then
+    log "環境の失敗: EXTRA_DIRS / LINK_DIRS に自分や祖先を指すリンクがある。作業用コピーと本体を確認し、本体は直さない: $scan_output"
+    echo environment-failed > "$WORK/reviewed-$name"
+    return 2
+  fi
   # 1. 依頼文が指す handoff の文書が写しに無ければ、本体からコピーする。どこにも無ければ止める（自分の出力の報告・下見・レビューは除く）
   for f in $(named_files "$W/$REQ" | grep "^$HANDOFF/"); do
     case $f in "$DESIGN"|"$REPORT"|"$REVIEW") continue ;; esac

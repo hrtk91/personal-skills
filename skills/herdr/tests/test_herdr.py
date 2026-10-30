@@ -186,9 +186,13 @@ class HerdrContractTest(unittest.TestCase):
         for path, source in {
             self.bin / "herdr": FAKE_HERDR,
             self.bin / "sleep": "#!/bin/sh\nexit 0\n",
-            self.bin / "git": "#!/usr/bin/env python3\nimport os,sys\n"
+            self.bin / "git": "#!/usr/bin/env python3\nimport os,sys,subprocess\nfrom pathlib import Path\n"
                 "if os.environ.get('FAKE_COMMIT_FAIL') == '1' and 'commit' in sys.argv and os.environ['FAKE_W'] in sys.argv:\n    sys.exit(1)\n"
-                f"os.execv({GIT!r}, [{GIT!r}] + sys.argv[1:])\n",
+                f"result = subprocess.run([{GIT!r}] + sys.argv[1:])\n"
+                "if result.returncode == 0 and 'worktree' in sys.argv and 'add' in sys.argv and os.environ.get('FAKE_PREEXISTING_LINK_DIR'):\n"
+                "    Path(os.environ['FAKE_W'], os.environ['FAKE_PREEXISTING_LINK_DIR']).mkdir(parents=True, exist_ok=True)\n"
+                "    Path(os.environ['FAKE_W'], os.environ['FAKE_PREEXISTING_LINK_DIR'], 'stale.txt').write_text('stale')\n"
+                "sys.exit(result.returncode)\n",
         }.items():
             path.write_text(source)
             path.chmod(0o755)
@@ -217,7 +221,7 @@ class HerdrContractTest(unittest.TestCase):
         for key in list(self.env):
             if key.startswith(("CODEX_", "HERDR_", "PI_")) or key in {
                 "MODEL", "TIER", "EFFORT", "REPO", "HANDOFF", "RULES", "CONTEXT_FILES", "CHECKLIST", "DESIGN_RULES",
-                "TASK_PREFIX", "BRANCH_PREFIX", "WORK_NAME", "EXTRA", "EXTRA_DIRS", "BASE_REFRESH_EXTRA_DIRS", "PATCH_EXCLUDE", "BASE", "RESUME", "SKIP_IMPL",
+                "TASK_PREFIX", "BRANCH_PREFIX", "WORK_NAME", "EXTRA", "EXTRA_DIRS", "LINK_DIRS", "BASE_REFRESH_EXTRA_DIRS", "PATCH_EXCLUDE", "BASE", "RESUME", "SKIP_IMPL",
                 "COMMIT_DIRTY", "COMMIT_NAME", "COMMIT_EMAIL", "DIRTY_COMMIT_NAME", "DIRTY_COMMIT_EMAIL", "AGENT", "IMPL_AGENT", "REV_AGENT", "SEND_BACK_BRIEF_REFRESHED",
                 # The parent Herdr session may carry a live TASK_ID / DB path. These offline contract tests
                 # must never mutate a caller's task ledger while exercising the fake harness.
@@ -391,6 +395,38 @@ class HerdrContractTest(unittest.TestCase):
         self.assertIn("終わりの条件: 満たしていない", impl_text)
         self.assertIn(VERIFICATION_RULE, impl_text)
         self.assertNotIn("10 行程度", impl_text)
+
+    def test_link_dirs_are_symlinks_and_replace_preexisting_directories(self):
+        (self.repo / "node_modules").mkdir()
+        (self.repo / "node_modules" / "dependency.txt").write_text("external dependency\n")
+        self.config.update({"LINK_DIRS": "node_modules", "EXTRA_DIRS": "node_modules"})
+        result = self.run_script(FAKE_PREEXISTING_LINK_DIR="node_modules")
+        self.assert_success(result)
+        self.assertTrue((self.w / "node_modules").is_symlink())
+        self.assertEqual(os.readlink(self.w / "node_modules"), str(self.repo / "node_modules"))
+        self.assertTrue((self.w / "node_modules/dependency.txt").is_file())
+        log = (self.work / "herdr-contract.log").read_text()
+        self.assertIn("LINK_DIRS を優先", log)
+
+    def test_recursive_self_link_in_extra_dirs_stops_as_environment_failure(self):
+        (self.repo / "node_modules").mkdir()
+        (self.repo / "node_modules" / "nested").mkdir()
+        (self.repo / "node_modules" / "nested" / "node_modules").symlink_to(self.repo / "node_modules", target_is_directory=True)
+        self.config["EXTRA_DIRS"] = "node_modules"
+        result = self.run_script()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.marker(), "environment-failed")
+        self.assertIn("自分や祖先を指すリンク", (self.work / "herdr-contract.log").read_text())
+        self.assertTrue((self.repo / "node_modules/nested/node_modules").is_symlink())
+        self.assertFalse((self.work / ("done-impl-contract")).exists())
+
+    def test_extra_dirs_still_copy_the_directory(self):
+        (self.repo / "shared-data").mkdir()
+        (self.repo / "shared-data" / "value.txt").write_text("copy\n")
+        self.config["EXTRA_DIRS"] = "shared-data"
+        self.assert_success(self.run_script())
+        self.assertFalse((self.w / "shared-data").is_symlink())
+        self.assertEqual((self.w / "shared-data/value.txt").read_text(), "copy\n")
 
     def test_ignored_extra_and_excluded_paths_do_not_fail_staging(self):
         (self.repo / ".gitignore").write_text("assets/\nreference.txt\n")
