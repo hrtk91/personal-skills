@@ -11,6 +11,8 @@ const MODELS = ["opus", "sonnet", "haiku", "pi-default"];
 const transcriptDir = () => process.env.TASK_LEDGER_CONSULT_DIR ?? join(homedir(), ".local/share/task-ledger/consult");
 const fileFor = (repo: string, taskId: string, kind: string) => join(transcriptDir(), `${createHash('sha256').update(repo).digest('hex').slice(0,16)}-${taskId.replace(/[^a-zA-Z0-9_-]/g, "_")}-${kind}.jsonl`);
 const active = new Set<string>();
+/** Where the harness keeps Pi's sessions, apart from the everyday ~/.pi/agent/sessions (skills/herdr/agents/pi.sh). */
+const PI_HARNESS_SESSIONS=process.env.PI_SESSION_DIR??join(homedir(),'.local/share/herdr/pi-sessions');
 /** When the Pi session files were last walked for a task without finding its session. */
 const piScanAt = new Map<string, number>();
 /** The reply being written, per task and partner. */
@@ -37,9 +39,10 @@ function workerSession(task:Task):string|undefined {
   if(task.worker==='pi') {
     // The sidebar reloads every few seconds while a reply is written; walk the session files at most once a minute per task.
     const last=piScanAt.get(task.id);if(last!==undefined&&Date.now()-last<60_000)return undefined;piScanAt.set(task.id,Date.now());
-    const root=join(homedir(),'.pi/agent/sessions'); let newest:{mtime:number,id:string}|undefined; let seen=0;
+    let newest:{mtime:number,id:string}|undefined; let seen=0;
     const visit=(dir:string,depth:number)=>{if(depth>5||seen>5000)return;let entries;try{entries=readdirSync(dir,{withFileTypes:true})}catch{return}for(const ent of entries){const p=join(dir,ent.name);if(ent.isDirectory()){visit(p,depth+1);continue;}if(!ent.isFile()||!ent.name.endsWith('.jsonl'))continue;seen++;try{const st=statSync(p);if(newest&&st.mtimeMs<=newest.mtime)continue;const first=readFileSync(p,"utf8").split("\n",1)[0];const header=JSON.parse(first);const cwd=safeDecode(String(header.cwd??header.path??''));if(cwd===task.workdir||cwd===task.repo)newest={mtime:st.mtimeMs,id:String(header.id??header.sessionId??'')};}catch{}}};
-    visit(root,0);if(newest?.id)return newest.id;
+    // The harness keeps Pi's sessions apart from the everyday ones (10/30); older ones may still sit in the everyday folder.
+    for(const root of [PI_HARNESS_SESSIONS,join(homedir(),'.pi/agent/sessions')])visit(root,0);if(newest?.id)return newest.id;
   }
   return undefined;
 }
@@ -83,7 +86,7 @@ export function submitConsultIntent(ledger:Ledger,repo:string,value:unknown):{ok
   const env={...process.env,TMPDIR:'/tmp'};const priorConsultSession=ledger.consultSessionId(task.id,intent.partner);const resumeId=priorConsultSession??partner.sessionId;const forkId=randomUUID();
   if(task.worker==='pi'&&intent.partner==='worker') {
     const args=priorConsultSession?['--session',resumeId]:['--fork',partner.sessionId,'--session-id',forkId];
-    args.push('--no-mcp','--no-extensions','--no-skills','--tools','read,grep,find,ls','-p','--',prompt);
+    args.push('--session-dir',PI_HARNESS_SESSIONS,'--no-mcp','--no-extensions','--no-skills','--tools','read,grep,find,ls','-p','--',prompt);
     child=spawn(process.env.TASK_PI_BIN??'pi',args,{cwd:task.workdir??task.repo,env,stdio:['ignore','pipe','pipe']});
     if(!priorConsultSession)ledger.setConsultSessionId(task.id,intent.partner,forkId);
   } else {
