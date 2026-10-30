@@ -120,7 +120,8 @@ fi
 }
 
 # 依頼文が名指すファイル（src/a.ts や handoff/b.md の形）
-named_files() { grep -oE '(^|[^A-Za-z0-9_./-])[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)+\.[A-Za-z0-9]+' "$1" 2>/dev/null | sed -E 's/^[^A-Za-z0-9_.-]//' | sort -u; }
+# 文書が名指すファイル。``` で囲んだ所（差し戻しに貼った検査の出力など）は名指しに数えない（2026-10-30: 検査の出力にあった handoff/missing-brief.md で止まった）
+named_files() { awk '/^[[:space:]]*```/{f=!f; next} !f' "$1" 2>/dev/null | grep -oE '(^|[^A-Za-z0-9_./-])[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)+\.[A-Za-z0-9]+' | sed -E 's/^[^A-Za-z0-9_.-]//' | sort -u; }
 
 # 動いているほかの herdr の台本の依頼名
 running_tasks() {
