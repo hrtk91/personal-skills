@@ -205,6 +205,25 @@ test('task add / brief / ready / answer / export through the command', async () 
   } finally { rmSync(dir, { recursive: true, force: true }); delete process.env.TASK_LEDGER_DB; }
 });
 
+test('task answer --to 確かめ中 reapplies a reverted merge before resuming', async () => {
+  const dir=mkdtempSync(join(tmpdir(),'task-ledger-answer-reapply-'));process.env.TASK_LEDGER_DB=join(dir,'db.sqlite');const {main}=await import('./cli.ts');
+  const run=runner(main), repo=join(dir,'repo'), workdir=join(dir,'worktree');mkdirSync(join(repo,'handoff'),{recursive:true});
+  const git=(cwd:string,...args:string[])=>execFileSync('git',['-c','user.name=Test','-c','user.email=test@example.invalid',...args],{cwd,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
+  try {
+    git(repo,'init','-q','-b','main');writeFileSync(join(repo,'base.txt'),'base\n');git(repo,'add','base.txt');git(repo,'commit','-qm','base');
+    git(repo,'worktree','add','-q','-b','herdr/reapply',workdir,'HEAD');writeFileSync(join(workdir,'feature.txt'),'worker change\n');git(workdir,'add','feature.txt');git(workdir,'commit','-qm','worker change');
+    git(repo,'merge','--no-ff','-m','task merge','herdr/reapply');const merged=git(repo,'rev-parse','HEAD');writeFileSync(join(repo,'other.txt'),'other commit\n');git(repo,'add','other.txt');git(repo,'commit','-qm','someone else');git(repo,'revert','--no-edit','-m','1',merged);const reverted=git(repo,'rev-parse','HEAD');
+    writeFileSync(join(repo,'handoff/reapply.md'),'## 困りごと\n問題\n\n## やること\n再開\n\n## やってよいこと\n一時 repo\n\n## やらないこと\n本物の repo\n\n## 終わりの条件\n終わりの条件: 満たした\n');
+    assert.equal(run('add','--repo',repo,'--title','Resume','--why','w','--brief','handoff/reapply.md','--check','true').code,0);
+    const {Ledger}=await import('./ledger.ts');const ledger=new Ledger();ledger.setStatus('repo-1','走行中','started',{attempts:1});ledger.setRunner('repo-1',{workdir});ledger.setStatus('repo-1','判断待ち',`取り消しコミット: ${reverted}（取り消した取り込み: ${merged}）`);ledger.close();
+    const answered=run('answer','repo-1','手で直したので確かめる','--to','確かめ中');assert.equal(answered.code,0,answered.err);
+    assert.equal(readFileSync(join(workdir,'feature.txt'),'utf8'),'worker change\n','the reverted feature is restored before verification');
+    assert.match(git(workdir,'log','--format=%s'),/Revert/,'the revert-of-revert was committed on the worker branch');
+    git(repo,'merge','--no-ff','-m','reapply from worker branch','herdr/reapply');
+    assert.equal(readFileSync(join(repo,'feature.txt'),'utf8'),'worker change\n','the worker branch change reaches the repository');
+  } finally {rmSync(dir,{recursive:true,force:true});delete process.env.TASK_LEDGER_DB;}
+});
+
 test('task answer --attempts sets the requested count and zero cleans the previous worktree', async () => {
   const dir=mkdtempSync(join(tmpdir(),'task-ledger-answer-attempts-'));
   process.env.TASK_LEDGER_DB=join(dir,'db.sqlite');
