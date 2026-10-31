@@ -141,7 +141,7 @@ export function advance(ledger: Ledger, id: string, deps: AdvanceDeps, pid = pro
       const currentHead = gitHead(workdir, deps);
       // A design-session fork is a separate, read-only gate. Failure returns work before any third-party review.
       if (task.design_session && !pendingConfirmation) {
-        const designPrompt = `${readFileSync(join(HERE, 'design-review-prompt.md'), 'utf8')}\n\n仕事: ${task.title}\n設計会話ID: ${task.design_session}\n差分: ${diffPath}\n依頼文: ${task.brief}\n`;
+        const designPrompt = `${readFileSync(join(HERE, 'design-review-prompt.md'), 'utf8')}\n\n仕事: ${task.title}\n設計会話ID: ${task.design_session}\n差分: ${diffPath}\n依頼文: ${task.brief}\n\n${verdictShape()}`;
         const designResult = timed(ledger, task, '設計どおりか確認', () => deps.review(designPrompt, workdir, [dirname(diffPath)], { sessionId: task.design_session!, resumePrompt: designPrompt, forkSession: true, model: 'opus' }), (got) => {
           const answer = typeof got === 'string' ? got : got.answer;
           const verdict = parseVerdict(answer);
@@ -153,13 +153,21 @@ export function advance(ledger: Ledger, id: string, deps: AdvanceDeps, pid = pro
         const forkId = typeof designResult === 'string' ? undefined : designResult.attributes?.['review.session_id'];
         writeLog(id, `design-review-${task.attempts}`, designAnswer);
         if (typeof forkId === 'string') ledger.setSessionId(id, 'review', forkId);
-        if (!designVerdict || designVerdict.verdict !== '通す') {
-          sendBack(ledger, task, deps, `設計どおりか確認が通らなかった: ${designVerdict?.reasons.join(' / ') ?? '答えを読めない'}`, designVerdict?.fixes.join('\n') ?? designAnswer, said, stop);
+        if (!designVerdict) return stop('設計どおりか確認の答えから決まった形の JSON を読めなかった');
+        if (designVerdict.verdict === '判断') {
+          stop(`設計どおりか確認: ${designVerdict.reasons.join(' / ')}`);
+          ledger.setEventKind(task.id, ledger.events(task.id).at(-1)!.at, normalizeReviewKinds(designVerdict.kinds).join(','));
+          return said;
+        }
+        if (designVerdict.verdict === '直す') {
+          const detail = designVerdict.findings?.map((finding) => finding.text).join('\n') || designVerdict.fixes.join('\n');
+          sendBack(ledger, task, deps, `設計どおりか確認が通らなかった: ${designVerdict.reasons.join(' / ')}`, detail, said, stop);
           return said;
         }
         ledger.setStatus(id, 'レビュー中', `設計確認通過: fork=${typeof forkId === 'string' ? forkId : '記録なし'}`);
       }
-      const canResume = !pendingConfirmation && previous && previous.cwd === workdir && previous.uses < 4;
+      const choice = chooseReviewModel(deps.quota?.() ?? readReviewQuota());
+      const canResume = choice.model === 'sonnet' && !pendingConfirmation && previous && previous.cwd === workdir && previous.uses < 4;
       let sessionId = canResume ? previous.session_id : randomUUID();
       let uses = canResume ? previous.uses + 1 : 1;
       const deltaPath = canResume && previous.head ? writeLog(id, `review-delta-${task.attempts}`, deps.sh(`git diff ${quote(previous.head)} HEAD`, workdir, 60_000).output) : diffPath;
@@ -167,7 +175,6 @@ export function advance(ledger: Ledger, id: string, deps: AdvanceDeps, pid = pro
       const reportNow = reportPathNow && existsSync(reportPathNow) ? readFileSync(reportPathNow, 'utf8') : '（報告なし）';
       const sendbackNote = [...ledger.events(id)].reverse().find((event) => event.note?.startsWith('差し戻し:'))?.note ?? 'なし';
       const resumePrompt = `前回のレビュー以後の変化だけを確認してください。\n差分: ${deltaPath}\n差し戻しの文: ${sendbackNote}\n作業役の報告（現在版）:\n${reportNow}\n確かめのコマンド ${task.check ?? '（無い）'} の出力:\n${tail(existsSync(checkPath) ? readFileSync(checkPath, 'utf8') : '（確かめ出力なし）', 60)}\n対象外ファイルの変更: ${outsideFiles.length ? outsideFiles.join('、') : 'なし'}\n\n前回と同じ見方で判定し、最後に前回と同じ形の JSON を 1 つだけ出してください:\n${verdictShape()}`;
-      const choice = chooseReviewModel(deps.quota?.() ?? readReviewQuota());
       const reply = timed(ledger, task, 'レビュー', () => {
         let result = deps.review(canResume ? resumePrompt : fullPrompt, workdir, [dirname(diffPath)], canResume ? { sessionId, resumePrompt, model: choice.model } : { sessionId, model: choice.model });
         let answer = typeof result === 'string' ? result : result.answer;
