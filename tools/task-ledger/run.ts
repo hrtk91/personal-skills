@@ -7,7 +7,7 @@ import { cpus, homedir } from 'node:os';
 import { basename, dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ACTIVE, defaultPath, type Ledger, type Task, type Worker } from './ledger.ts';
-import { sweepHerdrTabs } from './advance.ts';
+import { reapplyRevertedMerge, realAdvanceDeps, sweepHerdrTabs } from './advance.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const HERDR_RUN = process.env.TASK_HERDR_RUN ?? join(HERE, '../../skills/herdr/herdr-run.sh');
@@ -76,12 +76,18 @@ export function runOnce(ledger: Ledger, deps: RunDeps): string[] {
     const copy = task.workdir ?? join(workRoot, 'wt', name);
     // claimNext increments attempts before start; 2 means there was an earlier attempt before this launch.
     const resume: Record<string, string> = task.attempts >= 2 && existsSync(copy) ? { RESUME: 'newtab' } : {};
-    // A task returned to 待ち after an earlier run starts from a clean copy. Retries within
-    // the same attempt still use RESUME=newtab and retain their existing worktree.
-    if (task.attempts === 1 && (existsSync(copy) || existsSync(join(workRoot, `reviewed-${name}`)) || existsSync(join(workRoot, `patch-${name}.diff`)))) cleanupPreviousRun(task, name, copy, workRoot);
-    const pid = deps.start(task, name, resume);
-    ledger.setRunner(task.id, { runner: pid });
-    said.push(`${task.id}: 出した（${runName(task)}、PID ${pid}）`);
+    const recovery = resume.RESUME === 'newtab' && task.workdir ? reapplyRevertedMerge(ledger, task, realAdvanceDeps) : null;
+    if (recovery) {
+      ledger.setStatus(task.id, '判断待ち', recovery);
+      said.push(`${task.id}: 判断待ち（${recovery}）`);
+    } else {
+      // A task returned to 待ち after an earlier run starts from a clean copy. Retries within
+      // the same attempt still use RESUME=newtab and retain their existing worktree.
+      if (task.attempts === 1 && (existsSync(copy) || existsSync(join(workRoot, `reviewed-${name}`)) || existsSync(join(workRoot, `patch-${name}.diff`)))) cleanupPreviousRun(ledger, task, name, copy, workRoot);
+      const pid = deps.start(task, name, resume);
+      ledger.setRunner(task.id, { runner: pid });
+      said.push(`${task.id}: 出した（${runName(task)}、PID ${pid}）`);
+    }
   } catch (error) {
     ledger.setStatus(task.id, '判断待ち', `出せなかった: ${error instanceof Error ? error.message : String(error)}`);
     said.push(`${task.id}: 出せなかったので判断待ち`);
@@ -89,7 +95,7 @@ export function runOnce(ledger: Ledger, deps: RunDeps): string[] {
   return said;
 }
 
-function cleanupPreviousRun(task: Task, name: string, copy: string, workRoot: string): void {
+function cleanupPreviousRun(ledger: Ledger, task: Task, name: string, copy: string, workRoot: string): void {
   if (existsSync(copy)) {
     // Include non-ignored untracked files in the diff before removing the worktree.
     const intent = spawnSync('git', ['-C', copy, 'add', '-A', '-N'], { encoding: 'utf8' });
@@ -112,6 +118,8 @@ function cleanupPreviousRun(task: Task, name: string, copy: string, workRoot: st
   if (branch.status !== 0 && !branch.stderr.includes('not found')) throw new Error(`前回ブランチを片付けられない: ${branch.stderr}`);
   rmSync(join(workRoot, `reviewed-${name}`), { force: true });
   rmSync(join(workRoot, `patch-${name}.diff`), { force: true });
+  const reverted = ledger.events(task.id).flatMap((event) => event.note?.match(/取り消しコミット: ([0-9a-f]{40})/)?.[1] ?? []);
+  if (reverted.length) ledger.setStatus(task.id, task.status, `再出しで枝を作り直した。過去の取り消しを処理済み: ${[...new Set(reverted)].join(',')}`);
 }
 
 export function logPath(id: string): string {
