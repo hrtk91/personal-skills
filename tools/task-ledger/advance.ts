@@ -8,6 +8,9 @@ import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defaultPath, type Ledger, type SpanAttributes, type Status, type Task } from './ledger.ts';
 import { normalizeReviewKinds } from './metrics.ts';
+import { chooseReviewModel } from './review-model.ts';
+import { readCodexWeeklyRemaining } from './codex-quota.ts';
+import { getClaudeUsage } from './claude-usage.ts';
 import { herdrRunPath, logPath, runName, workerEnv } from './run.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -27,12 +30,22 @@ export type Shell = { code: number; output: string };
 export type AdvanceDeps = {
   sh: (command: string, cwd: string, timeoutMs: number) => Shell;
   /** Asks the reviewer and returns its whole answer, with what the call cost when that is known (for the trace). */
-  review: (prompt: string, cwd: string, readable: string[], session?: { sessionId?: string; resumePrompt?: string }) => string | { answer: string; attributes: SpanAttributes };
+  review: (prompt: string, cwd: string, readable: string[], session?: { sessionId?: string; resumePrompt?: string; forkSession?: boolean; model?: string }) => string | { answer: string; attributes: SpanAttributes };
+  quota?: () => { claudeRemaining: number | null; codexRemaining: number | null };
   /** Starts herdr-run.sh again on the task's existing worktree and returns its process id. */
   resend: (task: Task, name: string, briefRefreshed?: boolean) => number;
   /** Waits a little before looking again (merges in one repository go one at a time). */
   pause: () => void;
 };
+
+function readReviewQuota(): { claudeRemaining: number | null; codexRemaining: number | null } {
+  let claudeRemaining: number | null = null;
+  try { const usage = getClaudeUsage(7).remaining; if (usage?.sevenDay !== null && usage?.sevenDay !== undefined) claudeRemaining = 100 - usage.sevenDay; } catch { /* quota failure never stops review */ }
+  let codexRemaining: number | null = null;
+  const codex = readCodexWeeklyRemaining();
+  if (codex?.windowDurationMins === 10080 && Number.isFinite(codex.usedPercent)) codexRemaining = 100 - codex.usedPercent;
+  return { claudeRemaining, codexRemaining };
+}
 
 function tail(text: string, lines = 80): string {
   return text.split('\n').slice(-lines).join('\n');
@@ -126,6 +139,26 @@ export function advance(ledger: Ledger, id: string, deps: AdvanceDeps, pid = pro
         ? `確認レビューです。全体の再レビューは禁止です。以下の初回の害「大」の指摘だけを対象に、直しの差分 ${confirmationDiffPath} のみを確認してください。各番号を必ず fixed または unfixed のどちらか一方に含めてください。指摘の文面は書き直さず、番号で答えてください。新しい指摘は new に記録してください。\n初回の大指摘一覧:\n${pendingConfirmation.map((text, index) => `${index + 1}. ${text}`).join('\n')}\n\nJSONのみ: {"fixed":[1,3],"unfixed":[2],"new":["…"]}`
         : reviewPrompt(task, diffPath, checkPath, outsideFiles);
       const currentHead = gitHead(workdir, deps);
+      // A design-session fork is a separate, read-only gate. Failure returns work before any third-party review.
+      if (task.design_session && !pendingConfirmation) {
+        const designPrompt = `${readFileSync(join(HERE, 'design-review-prompt.md'), 'utf8')}\n\n仕事: ${task.title}\n設計会話ID: ${task.design_session}\n差分: ${diffPath}\n依頼文: ${task.brief}\n`;
+        const designResult = timed(ledger, task, '設計どおりか確認', () => deps.review(designPrompt, workdir, [dirname(diffPath)], { sessionId: task.design_session!, resumePrompt: designPrompt, forkSession: true, model: 'opus' }), (got) => {
+          const answer = typeof got === 'string' ? got : got.answer;
+          const verdict = parseVerdict(answer);
+          const attrs = typeof got === 'string' ? {} : got.attributes;
+          return { ok: verdict !== null, attributes: { ...attrs, 'model.role': '設計確認', 'review.verdict': verdict?.verdict ?? '読めない' } };
+        });
+        const designAnswer = typeof designResult === 'string' ? designResult : designResult.answer;
+        const designVerdict = parseVerdict(designAnswer);
+        const forkId = typeof designResult === 'string' ? undefined : designResult.attributes?.['review.session_id'];
+        writeLog(id, `design-review-${task.attempts}`, designAnswer);
+        if (typeof forkId === 'string') ledger.setSessionId(id, 'review', forkId);
+        if (!designVerdict || designVerdict.verdict !== '通す') {
+          sendBack(ledger, task, deps, `設計どおりか確認が通らなかった: ${designVerdict?.reasons.join(' / ') ?? '答えを読めない'}`, designVerdict?.fixes.join('\n') ?? designAnswer, said, stop);
+          return said;
+        }
+        ledger.setStatus(id, 'レビュー中', `設計確認通過: fork=${typeof forkId === 'string' ? forkId : '記録なし'}`);
+      }
       const canResume = !pendingConfirmation && previous && previous.cwd === workdir && previous.uses < 4;
       let sessionId = canResume ? previous.session_id : randomUUID();
       let uses = canResume ? previous.uses + 1 : 1;
@@ -134,12 +167,13 @@ export function advance(ledger: Ledger, id: string, deps: AdvanceDeps, pid = pro
       const reportNow = reportPathNow && existsSync(reportPathNow) ? readFileSync(reportPathNow, 'utf8') : '（報告なし）';
       const sendbackNote = [...ledger.events(id)].reverse().find((event) => event.note?.startsWith('差し戻し:'))?.note ?? 'なし';
       const resumePrompt = `前回のレビュー以後の変化だけを確認してください。\n差分: ${deltaPath}\n差し戻しの文: ${sendbackNote}\n作業役の報告（現在版）:\n${reportNow}\n確かめのコマンド ${task.check ?? '（無い）'} の出力:\n${tail(existsSync(checkPath) ? readFileSync(checkPath, 'utf8') : '（確かめ出力なし）', 60)}\n対象外ファイルの変更: ${outsideFiles.length ? outsideFiles.join('、') : 'なし'}\n\n前回と同じ見方で判定し、最後に前回と同じ形の JSON を 1 つだけ出してください:\n${verdictShape()}`;
+      const choice = chooseReviewModel(deps.quota?.() ?? readReviewQuota());
       const reply = timed(ledger, task, 'レビュー', () => {
-        let result = deps.review(canResume ? resumePrompt : fullPrompt, workdir, [dirname(diffPath)], canResume ? { sessionId, resumePrompt } : { sessionId });
+        let result = deps.review(canResume ? resumePrompt : fullPrompt, workdir, [dirname(diffPath)], canResume ? { sessionId, resumePrompt, model: choice.model } : { sessionId, model: choice.model });
         let answer = typeof result === 'string' ? result : result.answer;
         if (canResume && (!parseVerdict(answer) || reviewerExitedBadly(answer))) {
           sessionId = randomUUID(); uses = 1;
-          result = deps.review(fullPrompt, workdir, [dirname(diffPath)], { sessionId });
+          result = deps.review(fullPrompt, workdir, [dirname(diffPath)], { sessionId, model: choice.model });
         }
         const got = typeof result === 'string' ? undefined : result;
         const sid = got?.attributes?.['review.session_id'];
@@ -157,6 +191,7 @@ export function advance(ledger: Ledger, id: string, deps: AdvanceDeps, pid = pro
       });
       const answer = typeof reply === 'string' ? reply : reply.answer;
       const reviewSession = typeof reply === 'string' ? undefined : reply.attributes?.['review.session_id'];
+      ledger.recordSpan({ task_id: id, attempt: task.attempts, name: '第三者モデル選択', start: new Date().toISOString(), end: new Date().toISOString(), ok: true, attributes: { 'model.role': '第三者レビュー', 'model.model': choice.model, 'model.reason': choice.reason, 'model.claude_remaining': choice.claudeRemaining ?? '読めない', 'model.codex_remaining': choice.codexRemaining ?? '読めない' } });
       if (typeof reviewSession === 'string') ledger.setSessionId(id, 'review', reviewSession);
       writeLog(id, `review-${task.attempts}`, answer);
       if (pendingConfirmation) {
@@ -659,20 +694,32 @@ export const realAdvanceDeps: AdvanceDeps = {
     const output = `${result.stdout ?? ''}${result.stderr ?? ''}${result.error ? `\n${result.error.message}` : ''}`;
     return { code: result.status ?? 124, output };
   },
+  quota: readReviewQuota,
   review(prompt, cwd, readable, session) {
+    const model = session?.model ?? REVIEW_MODEL;
+    if (model === 'gpt-6.1-terra') {
+      const bin = process.env.TASK_PI_BIN ?? 'pi';
+      const args = ['-p', '--provider', 'openai-codex', '--model', 'gpt-6.1-terra', '--thinking', 'high', '--tools', 'read,grep,find,ls', '--no-mcp', '--no-extensions', '--no-skills', '--no-context-files', prompt];
+      const result = spawnSync(bin, args, { cwd, encoding: 'utf8', timeout: REVIEW_TIMEOUT, maxBuffer: 64 * 1024 * 1024, env: { ...process.env, TMPDIR: '/tmp' } });
+      const failed = result.status === 0 ? '' : `\n（レビュー役が終了コード ${result.status} で終わった）${result.stderr ?? ''}`;
+      return { answer: `${result.stdout ?? ''}${failed}`, attributes: { 'model.role': 'レビュー役', 'model.agent': 'Pi', 'model.provider': 'openai-codex', 'model.model': 'gpt-6.1-terra', 'model.effort': 'high', 'model.fast': false } };
+    }
     // Opus reads and judges only (10/27 「Opus」). It may read the work and the logs, never write.
     // Without the user's hooks and MCP servers: a Stop hook that waits for an hour kept `claude -p` from exiting (10/28).
     const bin = process.env.TASK_CLAUDE_BIN ?? 'claude';
-    const args = ['-p', '--model', REVIEW_MODEL, '--output-format', 'json',
+    const args = ['-p', '--model', model, '--output-format', 'json',
       '--settings', JSON.stringify({ disableAllHooks: true }), '--strict-mcp-config',
       '--allowedTools', 'Read', 'Grep', 'Glob', 'Bash(git diff:*)', 'Bash(git log:*)', 'Bash(git show:*)', 'Bash(git status:*)',
       '--disallowedTools', 'Edit', 'Write', 'NotebookEdit', ...readable.flatMap((dir) => ['--add-dir', dir])];
-    if (session?.sessionId) args.push(session.resumePrompt ? '--resume' : '--session-id', session.sessionId);
+    if (session?.sessionId) {
+      if (session.forkSession) args.push('--resume', session.sessionId, '--fork-session');
+      else args.push(session.resumePrompt ? '--resume' : '--session-id', session.sessionId);
+    }
     const result = spawnSync(bin, args,
     { cwd, input: prompt, encoding: 'utf8', timeout: REVIEW_TIMEOUT, maxBuffer: 64 * 1024 * 1024 });
     const failed = result.status === 0 ? '' : `\n（レビュー役が終了コード ${result.status} で終わった）${result.stderr ?? ''}`;
     // The JSON result carries the answer and what the call cost; anything else is passed on as it came.
-    const attributes: SpanAttributes = { 'model.role': 'レビュー役', 'model.agent': 'Claude', 'model.provider': 'anthropic', 'model.model': REVIEW_MODEL, 'model.effort': REVIEW_EFFORT_NOTE, 'model.fast': false };
+    const attributes: SpanAttributes = { 'model.role': 'レビュー役', 'model.agent': 'Claude', 'model.provider': 'anthropic', 'model.model': model, 'model.effort': REVIEW_EFFORT_NOTE, 'model.fast': false };
     try {
       const json = JSON.parse(result.stdout ?? '') as { result?: string; session_id?: string; total_cost_usd?: number; duration_ms?: number; num_turns?: number; usage?: Record<string, number> };
       const usage = json.usage ?? {};

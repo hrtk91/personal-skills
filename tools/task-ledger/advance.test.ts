@@ -912,12 +912,55 @@ test('a resumed review that really exited non-zero (review() mark) is redone in 
   }finally{f.done();}
 });
 
+test('design-session review forks first, and a failed design gate sends back without third-party review', () => {
+  for (const designAnswer of ['{"verdict":"通す","reasons":[],"fixes":[]}', '{"verdict":"直す","reasons":["設計との差"],"fixes":["直す"]}']) {
+    const f = fixture();
+    try {
+      f.ledger.db.prepare('UPDATE tasks SET design_session=? WHERE id=?').run('design-session-id', 'repo-1');
+      writeFileSync(join(f.workdir, 'handoff/t-report.md'), '終わりの条件: 満たした\\n');
+      const calls: string[] = [];
+      const d = deps('');
+      d.quota = () => ({ claudeRemaining: 20, codexRemaining: 80 });
+      d.review = (_prompt, _cwd, _dirs, session) => {
+        calls.push(`${session?.forkSession ? 'design' : 'third'}:${session?.model}:${session?.sessionId}`);
+        return session?.forkSession ? { answer: designAnswer, attributes: { 'review.session_id': 'forked-id' } } : { answer: '{"verdict":"判断","reasons":["hold"],"fixes":[]}', attributes: { 'review.session_id': 'third-id' } };
+      };
+      advance(f.ledger, 'repo-1', d, 1);
+      assert.match(calls[0]!, /^design:opus:design-session-id$/);
+      if (designAnswer.includes('通す')) {
+        assert.match(calls[1]!, /^third:gpt-6.1-terra:/);
+        assert.equal(calls.length, 2);
+        const selected = f.ledger.spans('repo-1').find((span) => span.name === '第三者モデル選択')!;
+        assert.equal(selected.attributes['model.claude_remaining'], 20);
+        assert.equal(selected.attributes['model.codex_remaining'], 80);
+      } else {
+        assert.equal(calls.length, 1);
+        assert.equal(f.ledger.get('repo-1')!.status, '走行中');
+      }
+    } finally { f.done(); }
+  }
+});
+
 test('real review uses explicit session-id for a new call and resume with a short delta prompt', () => {
   const dir=mkdtempSync(join(tmpdir(),'review-session-cli-')),oldBin=process.env.TASK_CLAUDE_BIN,bin=join(dir,'claude'),argsFile=join(dir,'args'),inputFile=join(dir,'input');
   writeFileSync(bin,`#!/bin/sh\nprintf '%s\\n' "$*" > '${argsFile}'\ncat > '${inputFile}'\nprintf '%s' '{"result":"{\\"verdict\\":\\"通す\\",\\"reasons\\":[],\\"fixes\\":[]}","session_id":"fake-session"}'\n`);chmodSync(bin,0o755);
   try {process.env.TASK_CLAUDE_BIN=bin;const first=realAdvanceDeps.review('whole prompt','/tmp',[dir],{sessionId:'new-id'});assert.match(readFileSync(argsFile,'utf8'),/--session-id new-id/);assert.equal(typeof first,'object');
     const second=realAdvanceDeps.review('only changed prompt','/tmp',[dir],{sessionId:'fake-session',resumePrompt:'only changed prompt'});assert.match(readFileSync(argsFile,'utf8'),/--resume fake-session/);assert.match(readFileSync(inputFile,'utf8'),/^only changed prompt$/);
   } finally {if(oldBin===undefined)delete process.env.TASK_CLAUDE_BIN;else process.env.TASK_CLAUDE_BIN=oldBin;rmSync(dir,{recursive:true,force:true});}
+});
+
+test('real terra review uses the read-only Pi invocation and returns its raw harness-readable answer', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'review-terra-cli-'));
+  const old = process.env.TASK_PI_BIN, bin = join(dir, 'pi'), argsFile = join(dir, 'args');
+  try {
+    process.env.TASK_PI_BIN = bin;
+    writeFileSync(bin, `#!/bin/sh\nprintf '%s\\n' "$*" > '${argsFile}'\ncat <<'JSON'\n{"verdict":"通す","reasons":[],"fixes":[]}\nJSON\n`); chmodSync(bin, 0o755);
+    const result = realAdvanceDeps.review('review prompt', dir, [dir], { model: 'gpt-6.1-terra', sessionId: 'unused' }) as { answer: string; attributes: Record<string, unknown> };
+    assert.deepEqual(parseVerdict(result.answer), { verdict: '通す', reasons: [], fixes: [] });
+    assert.match(readFileSync(argsFile, 'utf8'), /--provider openai-codex --model gpt-6.1-terra --thinking high --tools read,grep,find,ls --no-mcp --no-extensions --no-skills --no-context-files/);
+    assert.equal(result.attributes['model.agent'], 'Pi');
+    assert.equal(result.attributes['model.model'], 'gpt-6.1-terra');
+  } finally { if (old === undefined) delete process.env.TASK_PI_BIN; else process.env.TASK_PI_BIN = old; rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('the verdict is the last valid JSON object in the answer', () => {

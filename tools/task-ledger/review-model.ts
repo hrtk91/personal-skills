@@ -2,6 +2,15 @@ export type ReviewModel = 'sonnet' | 'gpt-6.1-terra';
 export type ReviewChoiceInput = { claudeRemaining: number | null; codexRemaining: number | null };
 export type ReviewChoice = { model: ReviewModel; reason: string; claudeRemaining: number | null; codexRemaining: number | null };
 
+/** Convert source readings into comparable weekly remaining percentages. */
+export function weeklyRemaining(input: { claudePercent: number | null; codexUsedPercent: number | null; codexWindowDurationMins: number | null }): ReviewChoiceInput {
+  const valid = (n: number | null) => n !== null && Number.isFinite(n) && n >= 0 && n <= 100;
+  return {
+    claudeRemaining: valid(input.claudePercent) ? 100 - input.claudePercent! : null,
+    codexRemaining: input.codexWindowDurationMins === 10080 && valid(input.codexUsedPercent) ? 100 - input.codexUsedPercent! : null,
+  };
+}
+
 /** Choose deterministically; unknown quota is ignored and Claude wins ties/fallback. */
 export function chooseReviewModel(input: ReviewChoiceInput): ReviewChoice {
   const claude = Number.isFinite(input.claudeRemaining) ? input.claudeRemaining : null;
