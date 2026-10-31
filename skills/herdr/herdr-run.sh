@@ -379,7 +379,6 @@ run_agent() {
       context=$("$TASK_BIN" context "$TASK_ID" --task-specific 2>/dev/null) || context=
       goal=$(worker_prompt "$context" "$task" "全部終わったら、最後に touch $mark を実行する（この印で次の段に進む）。")
     fi
-    goal="$goal 途中で質問せず最後までやり切り、報告ファイルを書き終えてください。"
     [ "${SEND_BACK_BRIEF_REFRESHED:-}" != 1 ] || goal=$'依頼文が変わった。読み直してから続ける\n'"$goal"
     rm -f "$mark"
     claude_send "$agent" "$goal" "$mark" "$pane" || { log "$agent: Claude -p が正常終了し報告を書くまで完了しなかった"; return 1; }
