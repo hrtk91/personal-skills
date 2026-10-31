@@ -36,3 +36,7 @@ test('daily answers use local date',()=>{const old=process.env.TZ;process.env.TZ
 test('goal counts and daily answer aggregation are stable',()=>{
  const db=new Ledger(':memory:');try {const g=db.addGoal({repo:'/repo',title:'Epic'}),t=db.add({repo:'/repo',title:'x',why:'y'});db.setTaskGoal(t.id,g.id);assert.equal(goalTaskCounts(db).goals[0]?.total,1);assert.equal(goalTaskCounts(db).unassigned.length,0);assert.deepEqual(dailyAnswerCounts([{at:'2026-01-01T12:00:00+12:00',by:'Claude'},{at:'2026-01-01T13:00:00+12:00',by:'Claude'}]),[{day:'2026-01-01',by:'Claude',count:2}]);}finally{db.close();}
 });
+test('putting a task into an Epic keeps its updated_at', () => {
+  const db = new Ledger(':memory:');
+  try { const g = db.addGoal({ repo: '/repos/alpha', title: 'Epic' }); const t = db.add({ repo: '/repos/alpha', title: 't', why: 'w' }); const before = db.get(t.id)!.updated_at; db.setTaskGoal(t.id, g.id); assert.equal(db.get(t.id)!.updated_at, before); assert.equal(db.get(t.id)!.goal_id, g.id); } finally { db.close(); }
+});
