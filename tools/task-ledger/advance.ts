@@ -8,7 +8,7 @@ import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defaultPath, type Ledger, type SpanAttributes, type Status, type Task } from './ledger.ts';
 import { normalizeReviewKinds } from './metrics.ts';
-import { chooseReviewModel } from './review-model.ts';
+import { chooseReviewModel, weeklyRemaining } from './review-model.ts';
 import { readCodexWeeklyRemaining } from './codex-quota.ts';
 import { getClaudeUsage } from './claude-usage.ts';
 import { herdrRunPath, logPath, runName, workerEnv } from './run.ts';
@@ -18,9 +18,8 @@ export const AFTER_WORK: readonly Status[] = ['確かめ中', 'レビュー中',
 // Sending work back to the worker, by a failed check or a review, counts toward this many runs in all.
 export const MAX_ATTEMPTS = Number(process.env.TASK_MAX_ATTEMPTS ?? 3);
 const CHECK_TIMEOUT = Number(process.env.TASK_CHECK_TIMEOUT_MS ?? 45 * 60_000);
-// レビュー役の起動値。`claude -p` に --effort は渡さないので、考える強さは claude の既定に任せる（値は分からないため、そう書く）。
+// レビュー役の起動値。設計確認は別設定で、第三者レビューの既定は Opus。
 const REVIEW_MODEL = 'opus';
-const REVIEW_EFFORT_NOTE = '指定なし（claude の既定）';
 const REVIEW_TIMEOUT = Number(process.env.TASK_REVIEW_TIMEOUT_MS ?? 30 * 60_000);
 const DEPLOY_TIMEOUT = Number(process.env.TASK_DEPLOY_TIMEOUT_MS ?? 60 * 60_000);
 
@@ -31,7 +30,7 @@ export type AdvanceDeps = {
   sh: (command: string, cwd: string, timeoutMs: number) => Shell;
   /** Asks the reviewer and returns its whole answer, with what the call cost when that is known (for the trace). */
   review: (prompt: string, cwd: string, readable: string[], session?: { sessionId?: string; resumePrompt?: string; forkSession?: boolean; model?: string }) => string | { answer: string; attributes: SpanAttributes };
-  quota?: () => { claudeRemaining: number | null; codexRemaining: number | null };
+  quota: () => { claudeRemaining: number | null; codexRemaining: number | null };
   /** Starts herdr-run.sh again on the task's existing worktree and returns its process id. */
   resend: (task: Task, name: string, briefRefreshed?: boolean) => number;
   /** Waits a little before looking again (merges in one repository go one at a time). */
@@ -39,12 +38,14 @@ export type AdvanceDeps = {
 };
 
 function readReviewQuota(): { claudeRemaining: number | null; codexRemaining: number | null } {
-  let claudeRemaining: number | null = null;
-  try { const usage = getClaudeUsage(7).remaining; if (usage?.sevenDay !== null && usage?.sevenDay !== undefined) claudeRemaining = 100 - usage.sevenDay; } catch { /* quota failure never stops review */ }
-  let codexRemaining: number | null = null;
+  let claudePercent: number | null = null;
+  try { claudePercent = getClaudeUsage(7).remaining?.sevenDay ?? null; } catch { /* quota failure never stops review */ }
   const codex = readCodexWeeklyRemaining();
-  if (codex?.windowDurationMins === 10080 && Number.isFinite(codex.usedPercent)) codexRemaining = 100 - codex.usedPercent;
-  return { claudeRemaining, codexRemaining };
+  return weeklyRemaining({
+    claudePercent,
+    codexUsedPercent: codex?.usedPercent ?? null,
+    codexWindowDurationMins: codex?.windowDurationMins ?? null,
+  });
 }
 
 function tail(text: string, lines = 80): string {
@@ -166,7 +167,7 @@ export function advance(ledger: Ledger, id: string, deps: AdvanceDeps, pid = pro
         }
         ledger.setStatus(id, 'レビュー中', `設計確認通過: fork=${typeof forkId === 'string' ? forkId : '記録なし'}`);
       }
-      const choice = chooseReviewModel(deps.quota?.() ?? readReviewQuota());
+      const choice = chooseReviewModel(deps.quota());
       const canResume = choice.model === 'sonnet' && !pendingConfirmation && previous && previous.cwd === workdir && previous.uses < 4;
       let sessionId = canResume ? previous.session_id : randomUUID();
       let uses = canResume ? previous.uses + 1 : 1;
@@ -198,7 +199,7 @@ export function advance(ledger: Ledger, id: string, deps: AdvanceDeps, pid = pro
       });
       const answer = typeof reply === 'string' ? reply : reply.answer;
       const reviewSession = typeof reply === 'string' ? undefined : reply.attributes?.['review.session_id'];
-      ledger.recordSpan({ task_id: id, attempt: task.attempts, name: '第三者モデル選択', start: new Date().toISOString(), end: new Date().toISOString(), ok: true, attributes: { 'model.role': '第三者レビュー', 'model.model': choice.model, 'model.reason': choice.reason, 'model.claude_remaining': choice.claudeRemaining ?? '読めない', 'model.codex_remaining': choice.codexRemaining ?? '読めない' } });
+      ledger.recordSpan({ task_id: id, attempt: task.attempts, name: '第三者モデル選択', start: new Date().toISOString(), end: new Date().toISOString(), ok: true, attributes: { 'model.role': '第三者レビュー', 'model.model': choice.model, 'model.reason': choice.reason, 'model.claude_remaining': choice.claudeRemaining ?? '読めない', 'model.codex_remaining': choice.codexRemaining ?? '読めない', 'model.effort': 'high' } });
       if (typeof reviewSession === 'string') ledger.setSessionId(id, 'review', reviewSession);
       writeLog(id, `review-${task.attempts}`, answer);
       if (pendingConfirmation) {
@@ -714,7 +715,7 @@ export const realAdvanceDeps: AdvanceDeps = {
     // Opus reads and judges only (10/27 「Opus」). It may read the work and the logs, never write.
     // Without the user's hooks and MCP servers: a Stop hook that waits for an hour kept `claude -p` from exiting (10/28).
     const bin = process.env.TASK_CLAUDE_BIN ?? 'claude';
-    const args = ['-p', '--model', model, '--output-format', 'json',
+    const args = ['-p', '--model', model, ...(model === 'sonnet' ? ['--effort', 'high'] : []), '--output-format', 'json',
       '--settings', JSON.stringify({ disableAllHooks: true }), '--strict-mcp-config',
       '--allowedTools', 'Read', 'Grep', 'Glob', 'Bash(git diff:*)', 'Bash(git log:*)', 'Bash(git show:*)', 'Bash(git status:*)',
       '--disallowedTools', 'Edit', 'Write', 'NotebookEdit', ...readable.flatMap((dir) => ['--add-dir', dir])];
@@ -726,7 +727,7 @@ export const realAdvanceDeps: AdvanceDeps = {
     { cwd, input: prompt, encoding: 'utf8', timeout: REVIEW_TIMEOUT, maxBuffer: 64 * 1024 * 1024 });
     const failed = result.status === 0 ? '' : `\n（レビュー役が終了コード ${result.status} で終わった）${result.stderr ?? ''}`;
     // The JSON result carries the answer and what the call cost; anything else is passed on as it came.
-    const attributes: SpanAttributes = { 'model.role': 'レビュー役', 'model.agent': 'Claude', 'model.provider': 'anthropic', 'model.model': model, 'model.effort': REVIEW_EFFORT_NOTE, 'model.fast': false };
+    const attributes: SpanAttributes = { 'model.role': 'レビュー役', 'model.agent': 'Claude', 'model.provider': 'anthropic', 'model.model': model, 'model.effort': model === 'sonnet' ? 'high' : '指定なし（claude の既定）', 'model.fast': false };
     try {
       const json = JSON.parse(result.stdout ?? '') as { result?: string; session_id?: string; total_cost_usd?: number; duration_ms?: number; num_turns?: number; usage?: Record<string, number> };
       const usage = json.usage ?? {};

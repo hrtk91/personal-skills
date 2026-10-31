@@ -212,6 +212,7 @@ const answerAdvanceDeps = (): AdvanceDeps => ({
   ...realAdvanceDeps,
   sh: (command, cwd, timeout) => command.includes('--cleanup') ? { code: 0, output: '' } : realAdvanceDeps.sh(command, cwd, timeout),
   review: () => '{"verdict":"通す","reasons":[],"fixes":[]}',
+  quota: () => ({ claudeRemaining: 50, codexRemaining: 50 }),
   resend: () => 4242,
   pause: () => {},
 });

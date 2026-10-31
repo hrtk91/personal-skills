@@ -27,7 +27,7 @@ function fixture() {
 }
 function deps(answer:string,calls:string[]):AdvanceDeps { return {
   sh:(command,cwd,timeout)=>{calls.push(command);return command.includes('--cleanup')?{code:0,output:''}:realAdvanceDeps.sh(command,cwd,timeout)},
-  review:(prompt)=>{calls.push(prompt);return answer},resend:()=>1234,pause:()=>{},
+  review:(prompt)=>{calls.push(prompt);return answer},quota:()=>({claudeRemaining:50,codexRemaining:50}),resend:()=>1234,pause:()=>{},
 };}
 const finding=(text:string,likelihood:string,harm:string,blocking:boolean)=>({text,likelihood,harm,blocking});
 

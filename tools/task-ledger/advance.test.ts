@@ -44,6 +44,7 @@ function deps(answer: string, calls: string[] = [], deployCode = 0): AdvanceDeps
       return command.includes('--cleanup') ? { code: 0, output: '' } : realAdvanceDeps.sh(command, cwd, timeout);
     },
     review: (prompt) => { calls.push(`review:${prompt}`); return answer; },
+    quota: () => ({ claudeRemaining: 50, codexRemaining: 50 }),
     resend: (_task, _name, briefRefreshed) => { calls.push('resend'); calls.push(`resend:${briefRefreshed === true}`); return 777; },
     pause: () => {},
   };
@@ -218,6 +219,21 @@ test('a report that cannot decide why conditions are unmet waits for a decision,
     assert.match(f.ledger.get('repo-1')!.note!, /外部サービスの権限が必要/);
     assert.ok(!calls.includes('resend'));
     assert.ok(!calls.some((call) => call.startsWith('review:')));
+  } finally { f.done(); }
+});
+
+test('without a design conversation, only third-party review runs and it does not fork a session', () => {
+  const f = fixture();
+  try {
+    writeFileSync(join(f.workdir, 'handoff/t-report.md'), '終わりの条件: 満たした\\n');
+    const calls: Array<{ prompt: string; session: Parameters<AdvanceDeps['review']>[3] }> = [];
+    const d = deps('{"verdict":"判断","reasons":["hold"],"fixes":[]}');
+    d.review = (prompt, _cwd, _readable, session) => { calls.push({ prompt, session }); return '{"verdict":"判断","reasons":["hold"],"fixes":[]}'; };
+    advance(f.ledger, 'repo-1', d, 1);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0]!.session?.forkSession, undefined);
+    assert.equal(calls[0]!.session?.model, 'sonnet');
+    assert.equal(calls.some(({ prompt }) => prompt.includes('設計会話ID')), false);
   } finally { f.done(); }
 });
 
@@ -1003,6 +1019,20 @@ test('a prior review session is not resumed when quota selects terra', () => {
   } finally { f.done(); }
 });
 
+test('real sonnet review passes --effort high to fake claude and records it in trace attributes', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'review-sonnet-effort-'));
+  const oldBin = process.env.TASK_CLAUDE_BIN, bin = join(dir, 'claude'), argsFile = join(dir, 'args');
+  try {
+    process.env.TASK_CLAUDE_BIN = bin;
+    writeFileSync(bin, `#!/bin/sh\nprintf '%s\\n' "$*" > '${argsFile}'\ncat >/dev/null\nprintf '%s' '{"result":"ok"}'\n`);
+    chmodSync(bin, 0o755);
+    const result = realAdvanceDeps.review('prompt', dir, [dir], { model: 'sonnet' }) as { answer: string; attributes: Record<string, unknown> };
+    assert.match(readFileSync(argsFile, 'utf8'), /--model sonnet --effort high --output-format json/);
+    assert.equal(result.attributes['model.model'], 'sonnet');
+    assert.equal(result.attributes['model.effort'], 'high');
+  } finally { if (oldBin === undefined) delete process.env.TASK_CLAUDE_BIN; else process.env.TASK_CLAUDE_BIN = oldBin; rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('real review uses explicit session-id for a new call and resume with a short delta prompt', () => {
   const dir=mkdtempSync(join(tmpdir(),'review-session-cli-')),oldBin=process.env.TASK_CLAUDE_BIN,bin=join(dir,'claude'),argsFile=join(dir,'args'),inputFile=join(dir,'input');
   writeFileSync(bin,`#!/bin/sh\nprintf '%s\\n' "$*" > '${argsFile}'\ncat > '${inputFile}'\nprintf '%s' '{"result":"{\\"verdict\\":\\"通す\\",\\"reasons\\":[],\\"fixes\\":[]}","session_id":"fake-session"}'\n`);chmodSync(bin,0o755);
@@ -1038,7 +1068,7 @@ test('real review returns the launch values it passed to claude, also when the a
   try {process.env.TASK_CLAUDE_BIN=bin;
     writeFileSync(bin,`#!/bin/sh\nprintf '%s\\n' "$*" > '${argsFile}'\ncat > /dev/null\nprintf '%s' '{"result":"ok","session_id":"s1","total_cost_usd":0.5}'\n`);chmodSync(bin,0o755);
     const good=realAdvanceDeps.review('p','/tmp',[dir],{sessionId:'new-id'});assert.equal(typeof good,'object');
-    const args=readFileSync(argsFile,'utf8');assert.match(args,/--model opus /);assert.doesNotMatch(args,/--effort/); // 渡した引数どおりの値を記録する
+    const args=readFileSync(argsFile,'utf8');assert.match(args,/--model opus /);assert.doesNotMatch(args,/--effort/); // Opus は既定の effort のまま
     assert.deepEqual({...(good as {attributes:Record<string,unknown>}).attributes},{...expected,'review.session_id':'s1','review.cost_usd':0.5});
     writeFileSync(bin,'#!/bin/sh\ncat > /dev/null\necho "not json"\nexit 3\n');
     const bad=realAdvanceDeps.review('p','/tmp',[dir],{sessionId:'new-id'});assert.equal(typeof bad,'object');
