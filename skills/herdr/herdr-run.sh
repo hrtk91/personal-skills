@@ -64,6 +64,14 @@ print(d)' "$1"; }
 for f in "$SKILL_DIR"/agents/*.sh; do . "$f"; done   # codex_start・codex_send・pi_start・pi_send ...
 TASK_BIN=${TASK_BIN:-$SKILL_DIR/../../tools/task-ledger/bin/task}
 
+# 台帳の仕事なら、いま起動する作業役の実際の値を、回ごとに台帳へ残す（pi_start・codex_start・claude_start が起動の直前に呼ぶ）。
+# 頼んだ値でなく、起動に渡す値。記録できなくても作業は止めない（ログに残すだけ）。
+record_model_run() {  # <agent> <作業役の種類> <provider> <model> <effort> [fast なら何か]
+  [ -n "${TASK_ID:-}" ] && [[ "$1" == impl-* ]] || return 0
+  "$TASK_BIN" model-run "$TASK_ID" --role 作業役 --agent "$2" --provider "$3" --model "$4" --effort "$5" ${6:+--fast} >/dev/null 2>&1 \
+    || log "$1: 台帳に起動値を記録できなかった（作業は続ける）"
+}
+
 # 写しに入れる文書（本体の作業ツリーにある今の版。未コミットでもよい）
 docs() { for f in $REQ $RULES $CONTEXT_FILES $CHECKLIST $DESIGN_RULES; do [ -f "$REPO/$f" ] && echo "$f"; done; }
 

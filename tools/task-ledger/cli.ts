@@ -133,6 +133,7 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
     repo: { type: 'string' }, name: { type: 'string' }, off: { type: 'boolean' }, all: { type: 'boolean' }, status: { type: 'string' }, to: { type: 'string' },
     agent: { type: 'string' }, runner: { type: 'string' }, commit: { type: 'string' }, log: { type: 'string' }, workdir: { type: 'string' }, attempts: { type: 'string' },
     since: { type: 'string' }, json: { type: 'boolean' }, days: { type: 'string' }, 'dry-run': { type: 'boolean' }, weeks: { type: 'string' }, out: { type: 'string' }, issue: { type: 'string' }, body: { type: 'string' }, by: { type: 'string' }, from: { type: 'string' }, goal: { type: 'string' }, stage: { type: 'string' }, stages: { type: 'string' }, loose: { type: 'boolean' }, open: { type: 'boolean' }, docKind: { type: 'string' }, path: { type: 'string' },
+    role: { type: 'string' }, provider: { type: 'string' }, fast: { type: 'boolean' },
     'なぜ': { type: 'string' }, '今の状態': { type: 'string' }, '関係する所': { type: 'string' }, 'やること': { type: 'string' }, 'やってよいこと': { type: 'string' }, 'やらないこと': { type: 'string' }, '終わりの条件': { type: 'string' }, '確かめのコマンド': { type: 'string' }, '触るファイル': { type: 'string' }, '種類': { type: 'string' }, '本番に出すか': { type: 'string' }, 'task-specific': { type: 'boolean' },
   } });
   const ledger = new Ledger();
@@ -373,6 +374,16 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
         for (const said of advance(ledger, positionals[0]!, advanceDeps)) out(said);
         // A merge or a send-back may let the next task start.
         for (const said of runOnce(ledger, deps)) out(said);
+        return 0;
+      }
+      case 'model-run': {
+        const id = positionals[0] ?? '';
+        const task = ledger.get(id);
+        if (!task) throw new Error(`台帳にありません: ${id}`);
+        if (!['作業役', 'レビュー役'].includes(values.role ?? '')) throw new Error('--role は 作業役 または レビュー役');
+        const now = new Date().toISOString();
+        ledger.recordSpan({ task_id: id, attempt: task.attempts, name: values.role === 'レビュー役' ? 'レビュー' : '作業役', start: now, end: now, ok: true, attributes: { 'model.role': values.role!, 'model.agent': values.agent ?? '記録なし', 'model.provider': values.provider ?? '記録なし', 'model.model': values.model ?? '記録なし', 'model.effort': values.effort ?? '記録なし', 'model.fast': values.fast ?? false } });
+        out(`${id}: ${values.role} の起動値を記録`);
         return 0;
       }
       case 'started': {

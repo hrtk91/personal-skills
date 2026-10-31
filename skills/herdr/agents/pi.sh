@@ -60,10 +60,12 @@ pi_goal_extension() {  # <agent> <作業場所> → 拡張のパス（使わな�
 
 # ハーネスの Pi の会話は、ふだん使いの ~/.pi/agent/sessions（pi-web が一覧にする）と分けて置く（10/30「セッション履歴汚してて普段使いに悪影響」）。
 pi_start() {  # <agent> <pane> <作業場所>（作業場所はペインの cwd で決まる）
-  local ext goal channel; ext=$(pi_tier_extension "$1"); goal=$(pi_goal_extension "$1" "$3"); channel=$(pi_channel_extension "$1" "$3")
+  local ext goal channel provider model effort; ext=$(pi_tier_extension "$1"); goal=$(pi_goal_extension "$1" "$3"); channel=$(pi_channel_extension "$1" "$3")
+  provider=${PI_PROVIDER:-openai-codex}; model=${PI_MODEL:-gpt-6-luna}; effort=${PI_THINKING:-high}
+  record_model_run "$1" Pi "$provider" "$model" "$effort" "${PI_SERVICE_TIER:-}"
   herdr agent start "$1" --kind pi --pane "$2" --timeout 90000 -- \
     ${ext:+-e "$ext"} ${goal:+-e "$goal"} ${channel:+-e "$channel"} \
-    --provider "${PI_PROVIDER:-openai-codex}" --model "${PI_MODEL:-gpt-6-luna}" --thinking "${PI_THINKING:-high}" \
+    --provider "$provider" --model "$model" --thinking "$effort" \
     --session-dir "${PI_SESSION_DIR:-$HOME/.local/share/herdr/pi-sessions}" \
     --system-prompt "${PI_SYSTEM_PROMPT:-${PI_SYSTEM:-$SKILL_DIR/agents/pi-system.md}}" >/dev/null
 }

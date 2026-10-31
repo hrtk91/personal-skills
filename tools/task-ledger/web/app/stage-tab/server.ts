@@ -1,5 +1,6 @@
 import { ACTIVE, filesOverlap, type Ledger, type Task, type Status } from "../../../ledger.ts";
 import type { StageName, StageTabData, StageTask, WaitReason } from "./types.js";
+import { modelRunsFor } from "./model-runs.ts";
 
 const STAGES: StageName[] = ["出す前", "作業", "確かめ", "レビュー", "取り込み", "本番"];
 const stageFor = (status: Status): StageName | null => {
@@ -35,7 +36,8 @@ export function loadStageData(ledger: Ledger, repo: string, now = new Date()): S
       }
     }
     const entered = [...ledger.events(task.id)].reverse().find(e => e.to_status === task.status)?.at ?? task.created_at;
-    taskRows.set(task.id, { id:task.id,title:task.title,why:task.why.split(/[\r\n]/,1)[0],status:task.status,stage,position,attempts:task.attempts,enteredAt:entered,waitsFor,worker:task.worker??"pi",model:task.model,deploy:task.deploy });
+    const modelRuns = modelRunsFor(ledger.spans(task.id), task.attempts);
+    taskRows.set(task.id, { id:task.id,title:task.title,why:task.why.split(/[\r\n]/,1)[0],status:task.status,stage,position,attempts:task.attempts,enteredAt:entered,waitsFor,worker:task.worker??"pi",model:task.model,deploy:task.deploy,modelRuns });
   }
   const lists = STAGES.map((name,index) => {
     let tasks = [...taskRows.values()].filter(t => t.stage === name);

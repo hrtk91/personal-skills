@@ -142,6 +142,7 @@ echo failed > "$state"; exit 1
 CLAUDE_HELPER
   chmod +x "$helper"
   local model=${CLAUDE_MODEL:-opus} effort=${CLAUDE_EFFORT:-high} timeout=${CLAUDE_TIMEOUT_SECONDS:-1800}
+  record_model_run "$agent" Claude anthropic "$model" "$effort"
   cmd=$(printf 'SEND_BACK=%q bash %q %q %q %q %q %q %q %q %q %q %q %q' "${SEND_BACK:-}" "$helper" "$prompt" "$full" "$raw" "$session" "$state" "$W/$REPORT" "$model" "$effort" "$L" "$agent" "$timeout")
   herdr pane send-text "$4" "$cmd" >/dev/null || return 1
   herdr pane send-keys "$4" Enter >/dev/null || return 1
