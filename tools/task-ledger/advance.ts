@@ -342,21 +342,10 @@ function merge(ledger: Ledger, task: Task, deps: AdvanceDeps, said: string[], st
   // The repository's own name for commits, or the harness's when it has none.
   const merged = timed(ledger, task, '本体に入れる', () => deps.sh(`git -c user.name="$(git config user.name || echo task-ledger)" -c user.email="$(git config user.email || echo task-ledger@noreply.invalid)" merge --no-ff --no-edit -m ${quote(`${task.title}\n\nTask: ${task.id}`)} ${quote(branch)}`, repo, 120_000), exitCode);
   if (merged.code !== 0) {
-    const conflicted = deps.sh('git diff --name-only --diff-filter=U', repo, 60_000).output.split('\n').filter(Boolean);
-    const allowed = new Set([...task.files, ...(task.brief ? [task.brief.replace(/\.md$/, '-report.md')] : [])]);
-    if (conflicted.length && conflicted.every((path) => allowed.has(path) || path.startsWith('handoff/'))) {
-      let resolved = true;
-      for (const path of conflicted) resolved = deps.sh(`git checkout --theirs -- ${quote(path)} && git add -- ${quote(path)}`, repo, 60_000).code === 0 && resolved;
-      if (resolved) {
-        const completed = deps.sh(`git -c user.name="$(git config user.name || echo task-ledger)" -c user.email="$(git config user.email || echo task-ledger@noreply.invalid)" commit --no-edit`, repo, 60_000);
-        if (completed.code === 0) { /* merge is complete with the worker's task/report versions */ }
-        else { deps.sh('git merge --abort', repo, 60_000); return stop(`作業枝側の衝突を選んだ後に取り込めなかった: ${tail(completed.output, 5)}`); }
-      } else { deps.sh('git merge --abort', repo, 60_000); return stop('本体で作業枝側の衝突を解けなかった'); }
-    } else {
-      deps.sh('git merge --abort', repo, 60_000);
-      if (!conflicted.length) return stop(`本体に入れられなかった: ${tail(merged.output, 5)}`);
-      return catchUp(ledger, task, deps, before, said, stop);
-    }
+    const conflicted = deps.sh('git diff --name-only --diff-filter=U', repo, 60_000).output.trim();
+    deps.sh('git merge --abort', repo, 60_000);
+    if (!conflicted) return stop(`本体に入れられなかった: ${tail(merged.output, 5)}`);
+    return catchUp(ledger, task, deps, before, said, stop);
   }
   const mergeCommit = gitHead(repo, deps);
   if (task.check) {
@@ -490,7 +479,7 @@ export function reapplyRevertedMerge(ledger: Ledger, task: Task, deps: AdvanceDe
         deps.sh('git revert --abort', task.workdir!, 60_000); return `revert 中に handoff の枝側を残せなかった: ${path}`;
       }
     }
-    reapplied = deps.sh(`git -c user.name="$(git config user.name || echo task-ledger)" -c user.email="$(git config user.email || echo task-ledger@noreply.invalid)" revert --continue`, task.workdir!, 60_000);
+    reapplied = deps.sh(`GIT_EDITOR=true git -c user.name="$(git config user.name || echo task-ledger)" -c user.email="$(git config user.email || echo task-ledger@noreply.invalid)" revert --continue`, task.workdir!, 60_000);
     if (reapplied.code !== 0) return `handoff 衝突を解いた後に revert --continue できなかった: ${tail(reapplied.output, 5)}`;
   }
   ledger.setStatus(task.id, task.status, `取り消しを再適用: ${pending}`);

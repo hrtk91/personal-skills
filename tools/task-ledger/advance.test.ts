@@ -655,6 +655,71 @@ test('reapply refuses non-handoff conflicts instead of choosing the worker branc
   } finally { f.done(); }
 });
 
+// The repository merged the branch and then undid it (another commit sat on top), as a failed check after merging does.
+function undoneByRevert(f: ReturnType<typeof fixture>, report?: string): { undo: string; merged: string } {
+  if (report !== undefined) { writeFileSync(join(f.workdir, 'handoff/t-report.md'), report); git(f.workdir, 'add', 'handoff/t-report.md'); git(f.workdir, 'commit', '-qm', 'first report'); }
+  git(f.repo, 'merge', '--no-ff', '-qm', 'task merge', 'herdr/t');
+  const merged = git(f.repo, 'rev-parse', 'HEAD').trim();
+  git(f.repo, 'commit', '--allow-empty', '-qm', 'someone else');
+  git(f.repo, 'revert', '--no-edit', '-m', '1', merged);
+  const undo = git(f.repo, 'rev-parse', 'HEAD').trim();
+  f.ledger.setStatus('repo-1', '判断待ち', `本体に入れたあとの確かめが落ちたので戻した。取り消しコミット: ${undo}（取り消した取り込み: ${merged}）。`);
+  return { undo, merged };
+}
+const clean = (cwd: string) => {
+  assert.equal(git(cwd, 'status', '--porcelain', '--untracked-files=no').trim(), '', 'no unmerged or modified files are left');
+  assert.throws(() => git(cwd, 'rev-parse', '-q', '--verify', 'REVERT_HEAD'), undefined, 'no revert is left half done');
+  assert.throws(() => git(cwd, 'rev-parse', '-q', '--verify', 'MERGE_HEAD'), undefined, 'no merge is left half done');
+};
+
+test('reapply keeps the worker branch\'s report when a hand-fixed report collides with the undo (merge and revert both conflict on handoff/)', () => {
+  const f = fixture({ files: ['mul.js'] });
+  const editor = process.env.GIT_EDITOR;
+  try {
+    undoneByRevert(f, '初回の報告\n');
+    // The branch kept working after the merge: a report fixed by hand is committed in the copy.
+    writeFileSync(join(f.workdir, 'handoff/t-report.md'), '手で直した報告\n終わりの条件: 満たした\n');
+    git(f.workdir, 'add', 'handoff/t-report.md'); git(f.workdir, 'commit', '-qm', 'report fixed by hand');
+    process.env.GIT_EDITOR = 'false'; // a reapply that opens an editor cannot finish
+    assert.equal(reapplyRevertedMerge(f.ledger, f.ledger.get('repo-1')!, realAdvanceDeps), null);
+    clean(f.workdir);
+    assert.equal(readFileSync(join(f.workdir, 'handoff/t-report.md'), 'utf8'), '手で直した報告\n終わりの条件: 満たした\n', 'the branch side of the report stays');
+    assert.equal(readFileSync(join(f.workdir, 'mul.js'), 'utf8'), 'export const mul = (a, b) => a * b;\n', 'the undone work is back on the branch');
+    git(f.repo, 'merge', '--no-ff', '-qm', 'merge again', 'herdr/t');
+    assert.equal(readFileSync(join(f.repo, 'mul.js'), 'utf8'), 'export const mul = (a, b) => a * b;\n', 'the branch change reaches the repository');
+    assert.equal(readFileSync(join(f.repo, 'handoff/t-report.md'), 'utf8'), '手で直した報告\n終わりの条件: 満たした\n', 'and so does the new report');
+  } finally { if (editor === undefined) delete process.env.GIT_EDITOR; else process.env.GIT_EDITOR = editor; f.done(); }
+});
+
+test('reapply aborts a failing revert and leaves the worker copy clean when a file other than handoff/ collides', () => {
+  const f = fixture({ files: ['mul.js'] });
+  try {
+    undoneByRevert(f);
+    // Someone re-wrote the undone file in the repository; undoing the undo would put the old text over it.
+    writeFileSync(join(f.repo, 'mul.js'), 'export const mul = (a, b) => b * a;\n');
+    git(f.repo, 'add', 'mul.js'); git(f.repo, 'commit', '-qm', 'mul written again');
+    const result = reapplyRevertedMerge(f.ledger, f.ledger.get('repo-1')!, realAdvanceDeps);
+    assert.match(result ?? '', /取り消しの取り消しを作業用コピーに作れなかった/);
+    clean(f.workdir);
+    assert.equal(readFileSync(join(f.workdir, 'mul.js'), 'utf8'), 'export const mul = (a, b) => b * a;\n', 'the copy keeps what the repository had');
+    assert.ok(!f.ledger.events('repo-1').some((event) => event.note?.includes('取り消しを再適用')), 'a failed reapply is not recorded as done');
+  } finally { f.done(); }
+});
+
+test('reapply stops when handoff/ and another file collide together, leaving the copy as it was', () => {
+  const f = fixture({ files: ['mul.js'] });
+  try {
+    undoneByRevert(f, '初回の報告\n');
+    writeFileSync(join(f.workdir, 'handoff/t-report.md'), '手で直した報告\n');
+    writeFileSync(join(f.workdir, 'mul.js'), 'export const mul = (a, b) => a * b + 2;\n');
+    git(f.workdir, 'add', '-A'); git(f.workdir, 'commit', '-qm', 'hand-fixed report and mul');
+    const before = git(f.workdir, 'rev-parse', 'HEAD').trim();
+    assert.match(reapplyRevertedMerge(f.ledger, f.ledger.get('repo-1')!, realAdvanceDeps) ?? '', /handoff\/ 以外の衝突.*mul\.js/);
+    clean(f.workdir);
+    assert.equal(git(f.workdir, 'rev-parse', 'HEAD').trim(), before);
+  } finally { f.done(); }
+});
+
 test('when failed merged check uses reset --keep, a retry still merges the work', () => {
   const f = fixture({ check: 'test -f only-in-worktree' });
   try {

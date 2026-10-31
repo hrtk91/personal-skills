@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Ledger } from './ledger.ts';
 import { runOnce, workerEnv, type RunDeps } from './run.ts';
+import { reapplyRevertedMerge, realAdvanceDeps } from './advance.ts';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -179,6 +180,32 @@ test('reissuing a waiting task removes its old worktree and markers while preser
     assert.equal(recreated, true, ledger.get(taskId)?.note ?? 'start was not called'); assert.equal(existsSync(copy), true);
     assert.ok(ledger.events(taskId).some((event) => event.note?.includes(`過去の取り消しを処理済み: ${'a'.repeat(40)}`)));
     assert.equal(readFileSync(join(copy, 'tracked.txt'), 'utf8'), 'original\n', 'the discarded old work is not restored in the recreated branch');
+  } finally { ledger.close(); if (oldHerdrWork === undefined) delete process.env.HERDR_WORK; else process.env.HERDR_WORK = oldHerdrWork; rmSync(root, { recursive: true, force: true }); }
+});
+
+test('a branch made again from scratch does not get the earlier undone work back', () => {
+  const root = mkdtempSync(join(tmpdir(), 'task-ledger-requeue-reverted-'));
+  const repo = join(root, 'repo'); const workRoot = join(root, 'work'); const copy = join(workRoot, 'wt', 'again'); mkdirSync(repo); mkdirSync(join(workRoot, 'wt'), { recursive: true });
+  const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-C', cwd, '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', ...args], { encoding: 'utf8' });
+  const ledger = new Ledger(':memory:'); const oldHerdrWork = process.env.HERDR_WORK; process.env.HERDR_WORK = workRoot;
+  try {
+    git(repo, 'init', '-q', '-b', 'main'); writeFileSync(join(repo, 'base.txt'), 'base\n'); git(repo, 'add', '.'); git(repo, 'commit', '-qm', 'base');
+    git(repo, 'worktree', 'add', '-qb', 'herdr/again', copy, 'HEAD');
+    writeFileSync(join(copy, 'old-work.js'), 'export const old = true;\n'); git(copy, 'add', '.'); git(copy, 'commit', '-qm', 'old task change');
+    git(repo, 'merge', '--no-ff', '-qm', 'task merge', 'herdr/again'); const merged = git(repo, 'rev-parse', 'HEAD').trim();
+    git(repo, 'commit', '--allow-empty', '-qm', 'another commit'); git(repo, 'revert', '--no-edit', '-m', '1', merged); const undo = git(repo, 'rev-parse', 'HEAD').trim();
+    const taskId = ledger.add({ repo, title: 'again', why: 'w', brief: 'handoff/again.md' }).id;
+    ledger.setStatus(taskId, '走行中', null, { attempts: 1 }); ledger.setRunner(taskId, { workdir: copy });
+    ledger.setStatus(taskId, '判断待ち', `本体に入れたあとの確かめが落ちた。取り消しコミット: ${undo}（取り消した取り込み: ${merged}）`, { attempts: 0 }); ledger.releaseRunner(taskId);
+    ledger.setStatus(taskId, '待ち', '作り直して出す');
+    let started = false;
+    const { deps } = fake({ start: (_task, name) => { git(repo, 'worktree', 'add', '-qb', `herdr/${name}`, copy, 'HEAD'); started = true; return 4242; } });
+    runOnce(ledger, deps);
+    assert.equal(started, true, ledger.get(taskId)?.note ?? 'worker was not started');
+    const fresh = git(copy, 'rev-parse', 'HEAD').trim();
+    assert.equal(reapplyRevertedMerge(ledger, ledger.get(taskId)!, realAdvanceDeps), null, 'the earlier undo counts as dealt with');
+    assert.equal(git(copy, 'rev-parse', 'HEAD').trim(), fresh, 'the new branch is not touched');
+    assert.equal(existsSync(join(copy, 'old-work.js')), false, 'the discarded work stays discarded');
   } finally { ledger.close(); if (oldHerdrWork === undefined) delete process.env.HERDR_WORK; else process.env.HERDR_WORK = oldHerdrWork; rmSync(root, { recursive: true, force: true }); }
 });
 
