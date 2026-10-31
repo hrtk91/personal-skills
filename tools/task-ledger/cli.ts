@@ -16,13 +16,15 @@ import { metrics, normalizeReviewKinds, REVIEW_KINDS } from './metrics.ts';
 import { getClaudeUsage, renderClaudeUsage } from './claude-usage.ts';
 
 const USAGE = `使い方:
-  task add --title <題> --why <ユーザーの言葉と日付> [--brief <依頼文のパス>] [--check <確かめのコマンド>] [--worker pi|codex|claude] [--model <モデル>] [--effort <強さ>]
+  task add --title <題> --why <ユーザーの言葉と日付> [--goal <goal_id>] [--brief <依頼文のパス>] [--check <確かめのコマンド>] [--worker pi|codex|claude] [--model <モデル>] [--effort <強さ>]
            [--after <id,...>] [--files <パス,...>] [--files-broad] [--kind 処理|見た目|調べ] [--deploy] [--repo <パス>]
   task watch --repo <パス> [--name <宛先>] [--off] | task watchers
   task push-audit [--since <時刻>] [--repo <パス>]
   task brief <id> <依頼文のパス> [--check <コマンド>]   依頼文を付ける（依頼文待ち → 待ち）
   task list [--all] [--repo <パス>] [--status <状態>]
-  task goal add --title <題> [--why <きっかけ>] [--stages a,b,c] | goal list | goal move <id> up|down|first
+  task goal add --title <題> [--why <きっかけ>] [--stages a,b,c] | goal list | goal set <task_id> <goal_id|none> | goal move <id> up|down|first
+  task principle propose --target <共通|repo> --text <文> --quote <根拠> [--quote-at <時刻>] [--source <task_id|会話>] | list [--status 案] [--json] | mark <id> <status> [--final <文>]
+  task feedback list [--since <時刻>] [--json]
   task issue add (--title <題> [欄オプション...] | --from <md>) [--by あなた|Claude|作業役|レビュー] [--goal <id>] [--stage <工程>]
   task sweep --dry-run                                  herdr タブの片付け候補だけ表示
   task issue template | show <id> | brief <id>
@@ -35,7 +37,7 @@ const USAGE = `使い方:
   task hold <id> <理由といつ見直すか>
   task drop <id> <理由>
   task decision refresh [<id>]                         判断待ちカードを作り直す
-  task answer <id> <答え> [--to 待ち|やめ|保留|確かめ中|取り込み中] [--attempts <n>]  判断待ちに答える（既定は 待ち に戻す。--attempts は回数を設定し、0 は前の作業用コピーを片付けて出し直す。
+  task answer <id> <答え> --principle <参照> [--to 待ち|やめ|保留|確かめ中|取り込み中] [--attempts <n>]  判断待ちに答える（既定は 待ち に戻す。--attempts は回数を設定し、0 は前の作業用コピーを片付けて出し直す。
                                                         確かめ中 は Claude が作業役のコピーで直したとき、取り込み中 は Claude がレビューの「直す」を越えて取り込むと決めたとき。答えに理由を書く）
   task export [--repo <パス>]                           ROADMAP 用の一覧（読む用の写し）
   task run                                              1 回まわす（消えたプロセスを見つけ、終わった仕事を先へ進め、次の仕事を 1 つ出す）
@@ -133,7 +135,8 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
     repo: { type: 'string' }, name: { type: 'string' }, off: { type: 'boolean' }, all: { type: 'boolean' }, status: { type: 'string' }, to: { type: 'string' },
     agent: { type: 'string' }, runner: { type: 'string' }, commit: { type: 'string' }, log: { type: 'string' }, workdir: { type: 'string' }, attempts: { type: 'string' },
     since: { type: 'string' }, json: { type: 'boolean' }, days: { type: 'string' }, 'dry-run': { type: 'boolean' }, weeks: { type: 'string' }, out: { type: 'string' }, issue: { type: 'string' }, body: { type: 'string' }, by: { type: 'string' }, from: { type: 'string' }, goal: { type: 'string' }, stage: { type: 'string' }, stages: { type: 'string' }, loose: { type: 'boolean' }, open: { type: 'boolean' }, docKind: { type: 'string' }, path: { type: 'string' },
-    role: { type: 'string' }, provider: { type: 'string' }, fast: { type: 'boolean' },
+    role: { type: 'string' }, provider: { type: 'string' }, fast: { type: 'boolean' }, principle: { type: 'string' }, target: { type: 'string' }, quote: { type: 'string' }, 'quote-at': { type: 'string' }, source: { type: 'string' }, final: { type: 'string' }, text: { type: 'string' },
+
     'なぜ': { type: 'string' }, '今の状態': { type: 'string' }, '関係する所': { type: 'string' }, 'やること': { type: 'string' }, 'やってよいこと': { type: 'string' }, 'やらないこと': { type: 'string' }, '終わりの条件': { type: 'string' }, '確かめのコマンド': { type: 'string' }, '触るファイル': { type: 'string' }, '種類': { type: 'string' }, '本番に出すか': { type: 'string' }, 'task-specific': { type: 'boolean' },
   } });
   const ledger = new Ledger();
@@ -213,6 +216,7 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
           }
         }
         validateIssueFiles(root, files, values['files-broad'] === true, values.files !== undefined);
+        if (values.goal && !ledger.getGoal(values.goal)) throw new Error(`Goal が台帳にありません: ${values.goal}`);
         const task = ledger.add({
           repo: root, title, why,
           brief, check,
@@ -220,7 +224,8 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
           files,
           kind, deploy, issue_id: values.issue, worker: values.worker as Worker | undefined, model: values.model, effort: values.effort,
         });
-        out(line(task));
+        if (values.goal) ledger.setTaskGoal(task.id, values.goal);
+        out(line(ledger.get(task.id)!));
         return 0;
       }
       case 'brief': {
@@ -241,9 +246,18 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
         const [sub,...args]=positionals;
         if(sub==='add'){const g=ledger.addGoal({repo:repo??repoRoot(process.cwd()),title:values.title??'',why:values.why,stages:values.stages?.split(',').map(x=>x.trim()).filter(Boolean)});out(`${g.id}\t${g.status}\t${g.title}`);return 0;}
         if(sub==='list'){for(const g of ledger.listGoals(repo))out(`${g.id}\t${g.status}\t${g.title}\t${g.stages.join(',')}`);return 0;}
+        if(sub==='set'){if(args.length!==2)throw new Error('task goal set <task_id> <goal_id|none>');ledger.setTaskGoal(args[0]!,args[1]==='none'?null:args[1]!);return 0;}
         if(sub==='move'){const d=args[1];if(!['up','down','first'].includes(d??''))throw new Error('task goal move <id> up|down|first');ledger.moveGoal(args[0]!,d as 'up'|'down'|'first');return 0;}
-        throw new Error('task goal add|list|move');
+        throw new Error('task goal add|list|set|move');
       }
+      case 'principle': {
+        const [sub,...args]=positionals;
+        if(sub==='propose'){if(!values.target||!values.text||!values.quote)throw new Error('task principle propose --target <共通|repo> --text <文> --quote <根拠>');const id=ledger.addPrincipleCandidate({target:values.target,text:values.text,quote:values.quote,quote_at:values['quote-at'],source:values.source});out(String(id));return 0;}
+        if(sub==='list'){const rows=ledger.listPrincipleCandidates(values.status);if(values.json)out(JSON.stringify(rows,null,2));else for(const r of rows)out(`${r.id}\t${r.status}\t${r.target}\t${r.text}`);return 0;}
+        if(sub==='mark'){if(args.length!==2)throw new Error('task principle mark <id> <status> [--final <文>]');ledger.markPrinciple(Number(args[0]),args[1]!,values.final);return 0;}
+        throw new Error('task principle propose|list|mark');
+      }
+      case 'feedback': {const [sub]=positionals;if(sub!=='list')throw new Error('task feedback list [--since <時刻>] [--json]');const rows=ledger.listFeedback(values.since);if(values.json)out(JSON.stringify(rows,null,2));else for(const r of rows)out(`${r.task_id}\t${r.answer_at}\t${r.note}\t${r.at}`);return 0;}
       case 'issue': {
         const [sub,...args]=positionals;
         if(sub==='template'){out(issueTemplate().trimEnd());return 0;}
@@ -290,7 +304,7 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
         if (!id || words.length === 0) throw new Error('task answer <id> <答え>');
         const to = (values.to ?? '待ち') as Status;
         const attempts = values.attempts === undefined ? undefined : Number(values.attempts);
-        const task = answerTask(ledger, id, words.join(' '), to, attempts);
+        const task = answerTask(ledger, id, words.join(' '), to, attempts, 'Claude', values.principle ?? null);
         out(line(task));
         if (to !== '確かめ中' && to !== '取り込み中') return 0;
         // Fixed by hand (check, review, merge) or accepted over the review (merge; the check after merging still runs).

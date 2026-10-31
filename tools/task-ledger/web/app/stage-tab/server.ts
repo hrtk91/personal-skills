@@ -9,8 +9,8 @@ const stageFor = (status: Status): StageName | null => {
 };
 const today = (date: Date) => date.toLocaleDateString("sv-SE");
 
-export function loadStageData(ledger: Ledger, repo: string, now = new Date()): StageTabData {
-  const all = ledger.list({ repo, all: true });
+export function loadStageData(ledger: Ledger, repo: string, now = new Date(), goalId?: string): StageTabData {
+  const all = ledger.list({ repo, all: true }).filter(t => !goalId || goalId === 'all' || t.goal_id === goalId);
   const todayKey = today(now);
   const completedToday = (t: Task) => t.status === "済" && today(new Date(t.updated_at)) === todayKey;
   const ready = ledger.ready().filter(t => t.repo === repo);

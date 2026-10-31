@@ -1,0 +1,38 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { Ledger } from './ledger.ts';
+import { answerTask } from './answer.ts';
+import { parsePrinciples } from './principles.ts';
+import { answerDashboardData, dailyAnswerCounts, goalTaskCounts, processAnswerFeedback, valueDashboardData } from './answer-data.ts';
+
+test('principle parser supports numbered suffixes and value criteria',()=>{
+ const result=parsePrinciples('# x\n## Rules\n1. **Title** body\nline\n7a. **Other**\n## 大事な価値基準\n3. **Value** body','共通');
+ assert.deepEqual(result.map(x=>x.ref),['共通:1','共通:7a','共通:価値基準3']); assert.equal(result[0]?.body,'body\nline');
+});
+test('answer transaction stores Claude answer and validated principle; missing and unknown refs reject',()=>{
+ const home=mkdtempSync(join(tmpdir(),'answers-home-'));mkdirSync(join(home,'.claude/rules'),{recursive:true});writeFileSync(join(home,'.claude/rules/principles.md'),'## Rules\n1. **Keep records**\n');
+ const old=process.env.HOME;process.env.HOME=home;
+ const db=new Ledger(':memory:');try {
+  const task=db.add({repo:home,title:'decision',why:'because'});db.setStatus(task.id,'判断待ち','question');
+  assert.throws(()=>answerTask(db,task.id,'no principle'),/当てはまる原則が無いなら答えずに判断待ちのまま残す/);
+  assert.throws(()=>answerTask(db,task.id,'answer','待ち',undefined,'Claude','共通:99'),/原則の参照がありません/);
+  answerTask(db,task.id,'answer','待ち',undefined,'Claude','共通:1');
+  const rows=db.db.prepare('SELECT by,text,to_status,principle,at FROM answers').all() as any[];assert.equal(rows.length,1);assert.equal(rows[0].by,'Claude');assert.equal(rows[0].principle,'共通:1');assert.equal(db.events(task.id).at(-1)?.at,rows[0].at);
+ } finally {db.close();if(old===undefined)delete process.env.HOME;else process.env.HOME=old;rmSync(home,{recursive:true,force:true});}
+});
+test('feedback actions preserve user decision and final text',()=>{
+ const db=new Ledger(':memory:');try{const t=db.add({repo:'/repo',title:'x',why:'y'});db.setStatus(t.id,'判断待ち','q');const candidate=db.addPrincipleCandidate({target:'共通',text:'Rule',quote:'Evidence'});answerTask(db,t.id,'answer','待ち',undefined,'あなた',null);const at=(db.db.prepare('SELECT at FROM answers').get() as any).at;processAnswerFeedback(db,{taskId:t.id,answerAt:at,action:'違う',note:'not so'});assert.equal(db.listFeedback()[0]?.note,'not so');processAnswerFeedback(db,{taskId:t.id,answerAt:at,action:'直して入れる',candidateId:candidate,finalText:'Revised'});const decided=db.listPrincipleCandidates()[0]?.decided_at;processAnswerFeedback(db,{taskId:t.id,answerAt:at,action:'入れる',candidateId:candidate});assert.equal(db.listPrincipleCandidates()[0]?.status,'入れる');db.markPrinciple(candidate,'入れた');assert.equal(db.listPrincipleCandidates()[0]?.final_text,'Revised');assert.equal(db.listPrincipleCandidates()[0]?.decided_at,decided);const other=db.addPrincipleCandidate({target:'共通',text:'x',quote:'y'});processAnswerFeedback(db,{taskId:t.id,answerAt:at,action:'入れない',candidateId:other});assert.equal(db.listPrincipleCandidates()[1]?.status,'入れない');}finally{db.close();}
+});
+test('answering やめ blocks dependents and logs watcher notification',()=>{
+ const db=new Ledger(':memory:');try{const task=db.add({repo:'/repo',title:'first',why:'why'}),dependent=db.add({repo:'/repo',title:'after',why:'why',after:[task.id]});db.setStatus(task.id,'判断待ち','q');db.watch('/repo','watcher');answerTask(db,task.id,'stop','やめ',undefined,'あなた',null);assert.equal(db.get(dependent.id)?.status,'判断待ち');assert.ok(db.db.prepare('SELECT 1 FROM push_log WHERE task_id=?').get(task.id));}finally{db.close();}
+});
+test('dashboard data is repo-scoped and value data includes both principle sources',()=>{
+ const db=new Ledger(':memory:');try{const a=db.add({repo:'/repos/alpha',title:'a',why:'why'}),b=db.add({repo:'/repos/beta',title:'b',why:'why'});db.setStatus(a.id,'判断待ち','need');db.setStatus(b.id,'判断待ち','other');const candidate=db.addPrincipleCandidate({target:'/repos/beta',text:'private',quote:'q'});void candidate;const data=answerDashboardData(db,'/repos/alpha',[]);assert.equal(data.decisions.length,1);assert.equal(data.decisions[0]?.taskId,a.id);assert.equal(data.decisions[0]?.question,'need');assert.equal(data.candidates.length,0);assert.equal(data.goals.unassigned.length,1);const value=valueDashboardData('1. **Common** body','## 大事な価値基準\n3. **Value** body','alpha',[]);assert.deepEqual(value.principles.map(p=>p.ref),['共通:1','alpha:価値基準3']);}finally{db.close();}
+});
+test('daily answers use local date',()=>{const old=process.env.TZ;process.env.TZ='Asia/Tokyo';try{assert.deepEqual(dailyAnswerCounts([{at:'2026-10-30T23:30:00Z',by:'Claude'}]),[{day:'2026-10-31',by:'Claude',count:1}]);}finally{if(old===undefined)delete process.env.TZ;else process.env.TZ=old;}});
+test('goal counts and daily answer aggregation are stable',()=>{
+ const db=new Ledger(':memory:');try {const g=db.addGoal({repo:'/repo',title:'Epic'}),t=db.add({repo:'/repo',title:'x',why:'y'});db.setTaskGoal(t.id,g.id);assert.equal(goalTaskCounts(db).goals[0]?.total,1);assert.equal(goalTaskCounts(db).unassigned.length,0);assert.deepEqual(dailyAnswerCounts([{at:'2026-01-01T12:00:00+12:00',by:'Claude'},{at:'2026-01-01T13:00:00+12:00',by:'Claude'}]),[{day:'2026-01-01',by:'Claude',count:2}]);}finally{db.close();}
+});

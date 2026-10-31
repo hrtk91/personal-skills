@@ -223,7 +223,7 @@ for (const target of ['確かめ中', '取り込み中']) {
     const repo=join(dir,'repo'), workdir=join(dir,'worktree');mkdirSync(join(repo,'handoff'),{recursive:true});
     const git=(cwd:string,...args:string[])=>execFileSync('git',['-c','user.name=Test','-c','user.email=test@example.invalid',...args],{cwd,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
     try {
-      git(repo,'init','-q','-b','main');writeFileSync(join(repo,'base.txt'),'base\n');git(repo,'add','base.txt');git(repo,'commit','-qm','base');
+      git(repo,'init','-q','-b','main');writeFileSync(join(repo,'PRINCIPLES.md'),'## Principles\n1. **Test principle**\n');writeFileSync(join(repo,'base.txt'),'base\n');git(repo,'add','base.txt');git(repo,'commit','-qm','base');
       git(repo,'worktree','add','-q','-b','herdr/reapply',workdir,'HEAD');writeFileSync(join(workdir,'feature.txt'),'worker change\n');git(workdir,'add','feature.txt');git(workdir,'commit','-qm','worker change');
       git(repo,'merge','--no-ff','-m','task merge','herdr/reapply');const merged=git(repo,'rev-parse','HEAD');writeFileSync(join(repo,'other.txt'),'other commit\n');git(repo,'add','other.txt');git(repo,'commit','-qm','someone else');git(repo,'revert','--no-edit','-m','1',merged);const reverted=git(repo,'rev-parse','HEAD');
       writeFileSync(join(repo,'handoff/reapply.md'),'## 困りごと\n問題\n\n## やること\n再開\n\n## やってよいこと\n一時 repo\n\n## やらないこと\n本物の repo\n\n## 終わりの条件\n終わりの条件: 満たした\n');
@@ -232,7 +232,7 @@ for (const target of ['確かめ中', '取り込み中']) {
       const {Ledger}=await import('./ledger.ts');const ledger=new Ledger();ledger.setStatus('repo-1','走行中','started',{attempts:1});ledger.setRunner('repo-1',{workdir});ledger.setStatus('repo-1','判断待ち',`取り消しコミット: ${reverted}（取り消した取り込み: ${merged}）`);
       const stateBefore=git(workdir,'rev-parse','HEAD');ledger.close();
       mkdirSync(join(workdir,'handoff'),{recursive:true});writeFileSync(join(workdir,'handoff/reapply-report.md'),'終わりの条件: 満たした\n');
-      const answered=run('answer','repo-1','手で直したので進める','--to',target);assert.equal(answered.code,0,answered.err);
+      const answered=run('answer','repo-1','手で直したので進める','--to',target,'--principle','repo:1');assert.equal(answered.code,0,answered.err);
       assert.notEqual(git(workdir,'rev-parse','HEAD'),stateBefore,'the branch moved on');
       assert.match(git(workdir,'log','--format=%s'),/Revert/,'the revert-of-revert was committed on the worker branch');
       assert.equal(readFileSync(join(workdir,'feature.txt'),'utf8'),'worker change\n','the reverted feature is restored on the branch');
@@ -252,7 +252,7 @@ test('task answer --attempts sets the requested count and zero cleans the previo
   const git=(...args:string[])=>execFileSync('git',args,{cwd:repo,encoding:'utf8',stdio:['ignore','pipe','pipe']});
   const run=runner((argv,out)=>main(argv,out,{start:()=>4242,advance:()=>{},alive:()=>true,load:()=>0}));
   try {
-    git('init');git('config','user.email','test@example.invalid');git('config','user.name','Test');
+    git('init');git('config','user.email','test@example.invalid');git('config','user.name','Test');writeFileSync(join(repo,'PRINCIPLES.md'),'## Principles\n1. **Test principle**\n');
     mkdirSync(join(repo,'handoff'),{recursive:true});
     writeFileSync(join(repo,'handoff','resume.md'),'## 困りごと\n問題\n\n## やること\n実施\n\n## やってよいこと\nこの写し\n\n## やらないこと\nなし\n\n## 終わりの条件\n終わりの条件: 満たした\n');
     writeFileSync(join(repo,'base.txt'),'base');git('add','base.txt');git('commit','-m','base');
@@ -260,14 +260,14 @@ test('task answer --attempts sets the requested count and zero cleans the previo
     assert.equal(run('add','--repo',repo,'--title','Answer','--why','w','--brief','handoff/resume.md').code,0);
     const ledger=new (await import('./ledger.ts')).Ledger();
     ledger.setStatus('repo-1','走行中','started',{attempts:1});ledger.setRunner('repo-1',{workdir:copy});ledger.setStatus('repo-1','判断待ち','need answer');ledger.releaseRunner('repo-1');ledger.close();
-    const answered=run('answer','repo-1','main 比較をする','--to','待ち','--attempts','2');
+    const answered=run('answer','repo-1','main 比較をする','--to','待ち','--attempts','2','--principle','repo:1');
     assert.equal(answered.code,0,answered.err);
     assert.match(run('show','repo-1').text, /"attempts": 2/);
     assert.match(run('context','repo-1').text,/## 判断待ちへの答え[\s\S]*main 比較をする/);
 
     const ledger2=new (await import('./ledger.ts')).Ledger();
     ledger2.setStatus('repo-1','走行中','started',{attempts:2});ledger2.setRunner('repo-1',{workdir:copy});ledger2.setStatus('repo-1','判断待ち','again');ledger2.releaseRunner('repo-1');ledger2.close();
-    const reset=run('answer','repo-1','やり直す','--to','待ち','--attempts','0');
+    const reset=run('answer','repo-1','やり直す','--to','待ち','--attempts','0','--principle','repo:1');
     assert.equal(reset.code,0,reset.err);
     assert.equal(run('run').code,0);
     assert.equal(git('worktree','list','--porcelain').includes(`worktree ${copy}`),false);
@@ -316,4 +316,26 @@ test('model-run records the launch values of an attempt as a span, and refuses a
     assert.equal(run('model-run','nothing-1','--role','作業役').code,1);
     assert.equal(new Ledger(join(dir,'db.sqlite')).spans('repo-1').length,2); // 断られた分は残らない
   } finally {rmSync(dir,{recursive:true,force:true});delete process.env.TASK_LEDGER_DB;}
+});
+
+test('principle, goal and feedback CLI operations persist on a temporary ledger',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'task-ledger-answer-cli-'));process.env.TASK_LEDGER_DB=join(dir,'db.sqlite');const {main}=await import('./cli.ts');const run=runner(main),repo=join(dir,'repo');mkdirSync(repo,{recursive:true});writeFileSync(join(repo,'PRINCIPLES.md'),'## Principles\n1. **Use evidence**\n## 大事な価値基準\n3. **Value**\n');
+ try{
+  assert.equal(run('goal','add','--repo',repo,'--title','Epic').code,0);
+  assert.equal(run('add','--repo',repo,'--title','Answer','--why','test','--goal','repo-g1').code,0);
+  let ledger=new Ledger();ledger.setStatus('repo-1','判断待ち','question');ledger.close();
+  assert.equal(run('answer','repo-1','answer').code,1);
+  assert.equal(run('answer','repo-1','answer','--principle','repo:1').code,0);
+  ledger=new Ledger();ledger.setStatus('repo-1','判断待ち','again');ledger.close();
+  assert.equal(run('answer','repo-1','answer','--principle','repo:価値基準3').code,0);
+  ledger=new Ledger();ledger.setStatus('repo-1','判断待ち','again');ledger.close();
+  assert.equal(run('answer','repo-1','answer','--principle','other:1').code,1);
+  assert.equal(run('principle','propose','--target',repo,'--text','Use a rule','--quote','Because').code,0);
+  assert.equal(run('principle','list','--status','案').code,0);
+  assert.equal(run('principle','mark','1','直して入れる','--final','Revised rule').code,0);
+  assert.equal(run('principle','list','--json').code,0);
+  assert.equal(run('goal','set','repo-1','none').code,0);
+  assert.equal(run('feedback','list','--json').text,'[]');
+  const db=new Ledger();assert.equal(db.get('repo-1')?.goal_id,null);assert.equal((db.db.prepare('SELECT by,principle FROM answers').get() as any).by,'Claude');db.close();
+ }finally{rmSync(dir,{recursive:true,force:true});delete process.env.TASK_LEDGER_DB;}
 });

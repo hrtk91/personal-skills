@@ -25,7 +25,7 @@ export type Task = {
   worker: Worker | null; model: string | null; effort: string | null;
   check: string | null; after: string[]; files: string[]; kind: Kind; deploy: boolean;
   status: Status; note: string | null; attempts: number; agent: string | null; commit: string | null;
-  runner: number | null; workdir: string | null; issue_id: string | null; priority: number; created_at: string; updated_at: string;
+  runner: number | null; workdir: string | null; issue_id: string | null; goal_id: string | null; priority: number; created_at: string; updated_at: string;
 };
 export type Goal = { id: string; repo: string; title: string; why: string; status: '進行中' | '済' | 'やめ'; stages: string[]; position: number; created_at: string };
 export const ISSUE_FIELDS = ['なぜ','今の状態','関係する所','やること','やってよいこと','やらないこと','終わりの条件','確かめのコマンド','触るファイル','種類','本番に出すか'] as const;
@@ -81,7 +81,7 @@ export class Ledger {
         kind TEXT NOT NULL DEFAULT '処理', deploy INTEGER NOT NULL DEFAULT 0,
         status TEXT NOT NULL, note TEXT, attempts INTEGER NOT NULL DEFAULT 0, agent TEXT, "commit" TEXT, runner INTEGER, workdir TEXT,
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL, issue_id TEXT, priority REAL NOT NULL DEFAULT 0,
-        worker TEXT, model TEXT, effort TEXT) STRICT;
+        worker TEXT, model TEXT, effort TEXT, goal_id TEXT REFERENCES goals(id)) STRICT;
       CREATE TABLE IF NOT EXISTS events(
         task_id TEXT NOT NULL REFERENCES tasks(id), at TEXT NOT NULL,
         from_status TEXT, to_status TEXT NOT NULL, note TEXT, kind TEXT) STRICT;
@@ -96,13 +96,16 @@ export class Ledger {
       CREATE TABLE IF NOT EXISTS goals(id TEXT PRIMARY KEY, repo TEXT NOT NULL, title TEXT NOT NULL, why TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '進行中', stages_json TEXT NOT NULL DEFAULT '["下調べ","設計","モック","サーバー","画面","本番","様子見"]', position INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL) STRICT;
       CREATE TABLE IF NOT EXISTS issues(id TEXT PRIMARY KEY, repo TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL DEFAULT '', by TEXT NOT NULL DEFAULT 'あなた', source TEXT, goal_id TEXT, stage TEXT, position INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT '開いている', created_at TEXT NOT NULL, fields_json TEXT NOT NULL DEFAULT '{}', history_json TEXT NOT NULL DEFAULT '[]') STRICT;
       CREATE TABLE IF NOT EXISTS docs(id TEXT PRIMARY KEY, repo TEXT NOT NULL, kind TEXT NOT NULL, title TEXT NOT NULL, goal_id TEXT, path TEXT, body TEXT, version INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL) STRICT;
+      CREATE TABLE IF NOT EXISTS answers(task_id TEXT NOT NULL REFERENCES tasks(id), at TEXT NOT NULL, by TEXT NOT NULL CHECK(by IN ('あなた','Claude')), text TEXT NOT NULL, to_status TEXT NOT NULL, principle TEXT) STRICT;
+      CREATE TABLE IF NOT EXISTS principle_candidates(id INTEGER PRIMARY KEY, target TEXT NOT NULL, text TEXT NOT NULL, quote TEXT NOT NULL, quote_at TEXT, source TEXT, status TEXT NOT NULL DEFAULT '案', final_text TEXT, created_at TEXT NOT NULL, decided_at TEXT) STRICT;
+      CREATE TABLE IF NOT EXISTS answer_feedback(task_id TEXT NOT NULL REFERENCES tasks(id), answer_at TEXT NOT NULL, note TEXT NOT NULL, at TEXT NOT NULL) STRICT;
       CREATE TABLE IF NOT EXISTS task_sessions(task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, kind TEXT NOT NULL CHECK(kind IN ('review','worker')), session_id TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(task_id,kind)) STRICT;
       CREATE TABLE IF NOT EXISTS consult_sessions(task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, kind TEXT NOT NULL CHECK(kind IN ('review','worker')), session_id TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(task_id,kind)) STRICT;
       CREATE TABLE IF NOT EXISTS claude_sessions(task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, role TEXT NOT NULL CHECK(role IN ('review','worker')), session_id TEXT NOT NULL, cwd TEXT NOT NULL, head TEXT, created_at TEXT NOT NULL, last_used_at TEXT NOT NULL, uses INTEGER NOT NULL DEFAULT 1, PRIMARY KEY(task_id,role)) STRICT;`);
     const eventColumns = (this.db.prepare('PRAGMA table_info(events)').all() as { name: string }[]).map((column) => column.name);
     if (!eventColumns.includes('kind')) this.db.exec('ALTER TABLE events ADD COLUMN kind TEXT');
     const taskColumns = (this.db.prepare('PRAGMA table_info(tasks)').all() as { name: string }[]).map((column) => column.name);
-    for (const [name, type] of [['runner', 'INTEGER'], ['workdir', 'TEXT'], ['issue_id', 'TEXT'], ['priority', 'REAL NOT NULL DEFAULT 0'], ['worker', 'TEXT'], ['model', 'TEXT'], ['effort', 'TEXT']]) if (!taskColumns.includes(name)) this.db.exec(`ALTER TABLE tasks ADD COLUMN ${name} ${type}`);
+    for (const [name, type] of [['runner', 'INTEGER'], ['workdir', 'TEXT'], ['issue_id', 'TEXT'], ['priority', 'REAL NOT NULL DEFAULT 0'], ['worker', 'TEXT'], ['model', 'TEXT'], ['effort', 'TEXT'], ['goal_id', 'TEXT']]) if (!taskColumns.includes(name)) this.db.exec(`ALTER TABLE tasks ADD COLUMN ${name} ${type}`);
     // Ledgers made before the harness started tasks itself lack these columns.
     const issueColumns = (this.db.prepare('PRAGMA table_info(issues)').all() as { name: string }[]).map((column) => column.name);
     for (const [name, type] of [['fields_json', "TEXT NOT NULL DEFAULT '{}'"], ['history_json', "TEXT NOT NULL DEFAULT '[]'"]]) if (!issueColumns.includes(name)) this.db.exec(`ALTER TABLE issues ADD COLUMN ${name} ${type}`);
@@ -193,6 +196,35 @@ export class Ledger {
   listDocs(o:{repo?:string;goal?:string}={}):Doc[]{const w:string[]=[],a:string[]=[];if(o.repo){w.push('repo=?');a.push(o.repo)}if(o.goal){w.push('goal_id=?');a.push(o.goal)}return this.db.prepare(`SELECT * FROM docs${w.length?' WHERE '+w.join(' AND '):''} ORDER BY updated_at DESC`).all(...a) as Doc[];}
   setPriority(id:string,direction:'first'|'up'|'down'):void{const t=this.get(id);if(!t)throw new Error(`台帳にありません: ${id}`);if(t.status!=='待ち')throw new Error('待ちの仕事だけ priority を動かせます');const a=this.list({repo:t.repo,status:'待ち'}).sort((x,y)=>x.priority-y.priority||x.created_at.localeCompare(y.created_at)),i=a.findIndex(x=>x.id===id),j=direction==='first'?0:Math.max(0,Math.min(a.length-1,i+(direction==='up'?-1:1)));if(i===j)return;a.splice(j,0,...a.splice(i,1));a.forEach((x,n)=>this.db.prepare('UPDATE tasks SET priority=? WHERE id=?').run(n,x.id));}
   private nextEntityId(repo:string,kind:'g'|'i'|'d'):string{const base=repo.split('/').filter(Boolean).at(-1)?.toLowerCase().replace(/[^a-z0-9-]+/g,'-').replace(/^-|-$/g,'')||'task',table=kind==='g'?'goals':kind==='i'?'issues':'docs',rows=this.db.prepare(`SELECT id FROM ${table} WHERE repo=?`).all(repo) as {id:string}[],re=new RegExp(`^${base}-${kind}(\\d+)$`),n=rows.reduce((m,r)=>Math.max(m,Number(re.exec(r.id)?.[1]??0)),0)+1;return `${base}-${kind}${n}`;}
+
+  recordAnswer(id: string, text: string, to: Status, by: 'あなた'|'Claude', principle: string | null, attempts?: number): Task {
+    const task = this.get(id);
+    if (!task) throw new Error(`台帳にありません: ${id}`);
+    const at = this.now().toISOString();
+    const decisionIds: string[] = [];
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.db.prepare(`UPDATE tasks SET status=?,note=?,attempts=COALESCE(?,attempts),updated_at=? WHERE id=?`).run(to, `答え: ${text}`, attempts ?? null, at, id);
+      this.event(id, task.status, to, `答え: ${text}`, at);
+      this.db.prepare('INSERT INTO answers(task_id,at,by,text,to_status,principle) VALUES(?,?,?,?,?,?)').run(id,at,by,text,to,principle);
+      if (to === 'やめ') this.blockDependents(id, at, decisionIds);
+      if (to === '判断待ち' && task.status !== '判断待ち') decisionIds.unshift(id);
+      this.db.exec('COMMIT');
+    } catch (error) { this.db.exec('ROLLBACK'); throw error; }
+    if (this.path !== ':memory:') for (const decisionId of decisionIds) spawnDecisionRefresh(decisionId, this.path);
+    this.pushEvents(id, at);
+    for (const decisionId of decisionIds) if (decisionId !== id) this.pushEvents(decisionId, at);
+    return this.get(id)!;
+  }
+  addPrincipleCandidate(input:{target:string;text:string;quote:string;quote_at?:string|null;source?:string|null}):number {
+    const r=this.db.prepare("INSERT INTO principle_candidates(target,text,quote,quote_at,source,status,created_at) VALUES(?,?,?,?,?,'案',?)").run(input.target,input.text,input.quote,input.quote_at??null,input.source??null,this.now().toISOString()); return Number(r.lastInsertRowid);
+  }
+  listPrincipleCandidates(status?:string):Record<string,unknown>[] { return this.db.prepare(`SELECT * FROM principle_candidates${status?' WHERE status=?':''} ORDER BY id`).all(...(status?[status]:[])) as Record<string,unknown>[]; }
+  markPrinciple(id:number,status:string,finalText?:string):void { const allowed=['案','入れる','直して入れる','入れない','入れた']; if(!allowed.includes(status))throw new Error(`status が不正: ${status}`); if(status==='直して入れる'&&!finalText?.trim())throw new Error('直して入れるには --final が必要です'); const userDecision=['入れる','直して入れる','入れない'].includes(status); const r=this.db.prepare('UPDATE principle_candidates SET status=?,final_text=COALESCE(?,final_text),decided_at=CASE WHEN ? THEN ? ELSE decided_at END WHERE id=?').run(status,finalText??null,userDecision?1:0,userDecision?this.now().toISOString():null,id);if(!Number(r.changes))throw new Error(`原則案がありません: ${id}`); }
+  setTaskGoal(taskId:string,goalId:string|null):void {if(!this.get(taskId))throw new Error(`台帳にありません: ${taskId}`);if(goalId&&!this.getGoal(goalId))throw new Error(`Goal がありません: ${goalId}`);this.db.prepare('UPDATE tasks SET goal_id=?,updated_at=? WHERE id=?').run(goalId,this.now().toISOString(),taskId);}
+  addAnswerFeedback(taskId:string,answerAt:string,note:string):void { if(!this.get(taskId))throw new Error(`台帳にありません: ${taskId}`); if(!this.db.prepare('SELECT 1 FROM answers WHERE task_id=? AND at=?').get(taskId,answerAt))throw new Error('対象の答えがありません');this.db.prepare('INSERT INTO answer_feedback(task_id,answer_at,note,at) VALUES(?,?,?,?)').run(taskId,answerAt,note,this.now().toISOString()); }
+  listFeedback(since?:string):Record<string,unknown>[] {return this.db.prepare(`SELECT * FROM answer_feedback${since?' WHERE at>=?':''} ORDER BY at`).all(...(since?[since]:[])) as Record<string,unknown>[];}
+  answersSince(since:string):Record<string,unknown>[] {return this.db.prepare('SELECT a.* FROM answers a WHERE a.at>=? ORDER BY a.at').all(since) as Record<string,unknown>[];}
 
   events(id: string): Event[] {
     return this.db.prepare('SELECT task_id,at,from_status,to_status,note,kind FROM events WHERE task_id=? ORDER BY at, rowid').all(id) as Event[];
@@ -358,6 +390,6 @@ function toTask(row: Record<string, unknown>): Task {
     kind: String(row.kind) as Kind, deploy: row.deploy === 1, status: String(row.status) as Status,
     note: row.note === null ? null : String(row.note), attempts: Number(row.attempts),
     agent: row.agent === null ? null : String(row.agent), commit: row.commit === null ? null : String(row.commit),
-    runner: row.runner === null ? null : Number(row.runner), workdir: row.workdir === null ? null : String(row.workdir), issue_id: row.issue_id === null ? null : String(row.issue_id), priority: Number(row.priority), created_at: String(row.created_at), updated_at: String(row.updated_at),
+    runner: row.runner === null ? null : Number(row.runner), workdir: row.workdir === null ? null : String(row.workdir), issue_id: row.issue_id === null ? null : String(row.issue_id), goal_id: row.goal_id == null ? null : String(row.goal_id), priority: Number(row.priority), created_at: String(row.created_at), updated_at: String(row.updated_at),
   };
 }

@@ -6,8 +6,12 @@ set -euo pipefail
 cd "$(dirname "$0")"
 main=${TASK_DASHBOARD_MODULES:-$HOME/repos/personal-skills/tools/task-ledger/web/node_modules}
 if [ ! -e node_modules ]; then
-  [ -d "$main" ] || { echo "部品が本体にありません: $main（本体で npm ci を 1 回流す）" >&2; exit 1; }
-  ln -s "$main" node_modules
+  if [ -d "$main" ]; then
+    ln -s "$main" node_modules
+  else
+    echo "部品がコピーにも本体にもありません。web/package-lock.json に沿って npm ci します。" >&2
+    npm ci
+  fi
 fi
 npm run typecheck
 npm run build
