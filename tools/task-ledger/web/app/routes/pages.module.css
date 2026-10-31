@@ -1,0 +1,65 @@
+/* Epic list, Epic stage page, task page (mock: dash-mock 4 版). Colours come from theme.css. */
+.part { display: grid; gap: 8px; margin-bottom: 26px; min-width: 0; }
+.part > h2 { margin: 0; font-size: 15px; font-weight: 600; display: flex; gap: 8px; align-items: baseline; }
+.n { font-size: 13px; color: var(--sub); font-weight: 500; font-variant-numeric: tabular-nums; }
+.empty { font-size: 13px; color: var(--sub); background: var(--panel); border: 1px dashed var(--line); border-radius: 12px; padding: 12px 14px; margin: 0; }
+
+/* Epic rows: the whole row opens the Epic */
+.row { display: grid; gap: 6px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; color: inherit; text-decoration: none; }
+.row:hover { border-color: var(--sub); }
+.title { font-size: 14px; font-weight: 600; line-height: 1.5; }
+.meta { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--sub); font-variant-numeric: tabular-nums; }
+.prog { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; font-size: 12px; color: var(--sub); font-variant-numeric: tabular-nums; }
+.track { height: 6px; border-radius: 3px; background: var(--idle-bg); overflow: hidden; }
+.track i { display: block; height: 100%; background: var(--ok); }
+.stop { color: var(--bad); font-weight: 600; margin-left: 8px; }
+
+/* tasks outside any Epic */
+.list { display: grid; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.list a { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; padding: 10px 14px; border-top: 1px solid var(--line); color: inherit; text-decoration: none; font-size: 13px; line-height: 1.6; }
+.list a:first-child { border-top: 0; }
+.list a:hover { background: var(--bg); }
+.state { font-size: 12px; color: var(--sub); white-space: nowrap; }
+
+/* where you are, and the way back up */
+.crumb { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; font-size: 13px; color: var(--sub); margin: -8px 0 14px; }
+.crumb a { color: var(--run); text-decoration: none; }
+.crumb a:hover { text-decoration: underline; }
+.crumb > span::before { content: "›"; margin-right: 8px; color: var(--faint); }
+
+/* task page */
+.taskTitle { font-size: 18px !important; line-height: 1.5; text-wrap: balance; }
+.now { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.steps { display: inline-grid; grid-template-columns: repeat(6, 22px); gap: 3px; }
+.steps i { height: 5px; border-radius: 2px; background: var(--idle-bg); }
+.steps i.d { background: var(--ok); }
+.steps i.c { background: var(--run); }
+.metaText { font-size: 13px; color: var(--sub); }
+.two { display: grid; gap: 0 24px; }
+@media (min-width: 980px) { .two { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); align-items: start; } }
+.brief { display: grid; gap: 6px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; min-width: 0; }
+.brief h3 { margin: 6px 0 0; font-size: 12px; font-weight: 600; color: var(--sub); }
+.brief h3:first-child { margin-top: 0; }
+.brief p { margin: 0; font-size: 13px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
+.brief .path { font-size: 11px; color: var(--faint); font-family: ui-monospace, monospace; }
+
+/* one card per round: how it ended is the first thing you read */
+.rounds { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.round { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; display: grid; gap: 6px; min-width: 0; }
+.roundHead { display: flex; gap: 10px; align-items: center; }
+.roundHead b { font-size: 13px; }
+.chip { font-size: 11px; font-weight: 600; padding: 1px 9px; border-radius: 99px; background: var(--idle-bg); color: var(--idle); }
+.end差し戻し { background: var(--wait-bg); color: var(--wait); }
+.end判断待ち { background: var(--bad-bg); color: var(--bad); }
+.end取り込んだ { background: var(--ok-bg); color: var(--ok); }
+.end進行中 { background: var(--run-bg); color: var(--run); }
+.flow { margin: 0; font-size: 12px; color: var(--sub); }
+.reason { margin: 0; font-size: 13px; line-height: 1.65; overflow-wrap: anywhere; }
+details.reason > summary { cursor: pointer; }
+details.reason > p { margin: 6px 0 0; }
+.halt { display: grid; gap: 4px; border-left: 2px solid var(--line); padding-left: 10px; margin: 0; }
+.answer { margin: 0; font-size: 12px; color: var(--sub); line-height: 1.6; overflow-wrap: anywhere; }
+.more { font-size: 12px; color: var(--sub); }
+.more > summary { cursor: pointer; min-height: 28px; display: flex; align-items: center; }
+.more ul { margin: 4px 0 0; padding-left: 1.2em; display: grid; gap: 4px; line-height: 1.6; overflow-wrap: anywhere; }
+.who { margin: 0; font-size: 11px; color: var(--faint); }

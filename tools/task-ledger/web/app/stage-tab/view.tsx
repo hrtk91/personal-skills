@@ -2,6 +2,7 @@
 // one column per stage in pipeline order. Each card shows where it is on the six steps and, while it waits, what for.
 // Phones fold each stage from its heading; wide screens keep every column open.
 import { useEffect, useState } from "react";
+import { Link } from "react-router";
 import type { StageName, StageTabData, StageTask, WaitReason } from "./types.js";
 import s from "./view.module.css";
 
@@ -26,10 +27,10 @@ function waitText(wait: WaitReason) {
   return `「${short(wait.title)}」（${where}）が済んだら`;
 }
 
-function Card({ task }: { task: StageTask }) {
+function Card({ task, href, onFirst }: { task: StageTask; href?: string; onFirst?: () => void }) {
   const waiting = task.stage === "出す前";
   return <article className={s.item}>
-    <div className={s.title}>{task.title}</div>
+    <div className={s.title}>{href ? <Link to={href}>{task.title}</Link> : task.title}</div>
     {waiting
       ? task.status === "依頼文待ち" ? <p className={s.why}>依頼文を待っています。</p>
       : task.waitsFor.length > 0
@@ -42,13 +43,15 @@ function Card({ task }: { task: StageTask }) {
       {task.stage === "作業" && <span>{WORKER[task.worker] ?? task.worker}{task.model ? `・${task.model}` : ""}</span>}
       {task.attempts >= 2 && <span className={s.redo}>{task.attempts} 回目</span>}
       {task.deploy && <span>本番に出す</span>}
+      {onFirst && <button type="button" className={s.first} onClick={onFirst}>先にやらせる</button>}
     </div>
   </article>;
 }
 
 const time = (at: string) => new Date(at).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" });
 
-export function StageTabView({ data }: { data: StageTabData }) {
+/** The stage board. `hrefFor` links each card to its task page; `onFirst` lets a waiting card jump the queue. */
+export function StageTabView({ data, hrefFor, onFirst }: { data: StageTabData; hrefFor?: (taskId: string) => string; onFirst?: (taskId: string) => void }) {
   const by = (name: StageName) => data.stages.find(x => x.name === name)?.tasks ?? [];
   const before = by("出す前"), work = by("作業");
   const middle = [...by("確かめ"), ...by("レビュー"), ...by("取り込み")];
@@ -71,14 +74,14 @@ export function StageTabView({ data }: { data: StageTabData }) {
     <div className={s.stopline}><span>止まっている（判断待ち） <b>{data.outside.decisions}</b></span><span>保留 {data.outside.held}</span><span>やめ 今日 {data.outside.stoppedToday}</span></div>
     <div className={s.board}>
       {col("s-before", "出す前", before.length, "先の仕事が済むか、同じファイルを触る仕事が終わるのを待っています。",
-        before.length ? before.map(t => <Card key={t.id} task={t} />) : <div className={s.empty}>いまは無し。</div>)}
+        before.length ? before.map((t, i) => <Card key={t.id} task={t} href={hrefFor?.(t.id)} onFirst={onFirst && i > 0 && t.status === "待ち" ? () => onFirst(t.id) : undefined} />) : <div className={s.empty}>いまは無し。</div>)}
       {col("s-work", "作業", work.length, "作業役が直しています。",
-        work.length ? work.map(t => <Card key={t.id} task={t} />) : <div className={s.empty}>いまは無し。</div>)}
+        work.length ? work.map(t => <Card key={t.id} task={t} href={hrefFor?.(t.id)} />) : <div className={s.empty}>いまは無し。</div>)}
       {col("s-mid", "確かめ・レビュー・取り込み", middle.length, "検査を流す → Opus が差分を読む → 本体に入れて本番に出す。",
-        middle.length ? middle.map(t => <Card key={t.id} task={t} />) : <div className={s.empty}>いまは無し。作業が終わると、ここを数分で通ります。</div>)}
+        middle.length ? middle.map(t => <Card key={t.id} task={t} href={hrefFor?.(t.id)} />) : <div className={s.empty}>いまは無し。作業が終わると、ここを数分で通ります。</div>)}
       {col("s-done", "今日 本番に出した", data.production.length, "今日、本体に入れた仕事です。",
         data.production.length ? [...data.production].reverse().map(t => <article key={t.id} className={`${s.item} ${s.fin}`}>
-          <div className={s.title}>{t.title}</div>
+          <div className={s.title}>{hrefFor ? <Link to={hrefFor(t.id)}>{t.title}</Link> : t.title}</div>
           <Steps position={5} done />
           <div className={s.meta}><span>{time(t.at)} {t.deploy ? "本番" : "取り込んだ（本番には出さない仕事）"}</span></div>
         </article>) : <div className={s.empty}>今日はまだ無し。</div>)}

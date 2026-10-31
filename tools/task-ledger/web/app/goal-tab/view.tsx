@@ -70,15 +70,24 @@ function TaskStory({ title, why, status, meta, steps = true }: { title: string; 
   );
 }
 
+// The share of Claude's 7-day and 5-hour allowance used so far. Nothing while the first read runs or fails.
+function UsageLine({ usage }: { usage?: GoalTabData["claudeUsage"] }) {
+  const seven = usage?.now?.sevenDay.percent, five = usage?.now?.fiveHour.percent;
+  if (seven == null && five == null) return null;
+  return <span className={styles.pulse}>Claude の枠: 7 日で {seven ?? "—"}%・5 時間で {five ?? "—"}%</span>;
+}
+
 // ---- the frame around every tab ----
 
-export type DashboardTab = "goals" | "issues" | "stage" | "docs" | "retro";
+// What you do (あなたの番), how each Epic is going (Epic), and what has been learned from your answers (価値基準).
+// Design: personal-skills handoff/dashboard-values-design.md.
+export type DashboardTab = "turn" | "epic" | "values";
 const TABS: Array<{ id: DashboardTab; label: string }> = [
-  { id: "goals", label: "Goal" }, { id: "issues", label: "Issue" }, { id: "stage", label: "工程" }, { id: "docs", label: "資料" }, { id: "retro", label: "振り返り" },
+  { id: "turn", label: "あなたの番" }, { id: "epic", label: "Epic" }, { id: "values", label: "価値基準" },
 ];
 
 /** Projects down the side (across the top on a phone), the project's name and pulse, and the tab strip. */
-export function DashboardShell({ projects, current, tab, hrefFor, tabHref, foot, children }: {
+export function DashboardShell({ projects, current, tab, hrefFor, tabHref, foot, usage, children }: {
   projects: ProjectSummary[];
   current: ProjectSummary;
   tab: DashboardTab;
@@ -87,12 +96,11 @@ export function DashboardShell({ projects, current, tab, hrefFor, tabHref, foot,
   tabHref: (tab: DashboardTab) => string;
   /** One line under the projects: when the harness last ran, how busy the PC is. */
   foot?: ReactNode;
+  /** How much of Claude's allowance is used, one line beside the pulse. */
+  usage?: GoalTabData["claudeUsage"];
   children: ReactNode;
 }) {
-  const pulse = [
-    current.running ? `動いている ${current.running}` : "動いている仕事なし",
-    current.waiting ? `あなたの番 ${current.waiting}` : null,
-  ].filter(Boolean).join(" ・ ");
+  const pulse = current.running ? `動いている ${current.running}` : "動いている仕事なし";
   return (
     <div className={styles.app}>
       <nav className={styles.side} aria-label="プロジェクト">
@@ -123,12 +131,13 @@ export function DashboardShell({ projects, current, tab, hrefFor, tabHref, foot,
         <header className={styles.top}>
           <h1>{current.name}</h1>
           <span className={styles.pulse}>{pulse}</span>
+          <UsageLine usage={usage} />
         </header>
         <nav className={styles.tabs} aria-label="表示">
           {TABS.map((item) => (
             <a key={item.id} href={tabHref(item.id)} className={item.id === tab ? `${styles.tab} ${styles.on}` : styles.tab} aria-current={item.id === tab ? "page" : undefined}>
               {item.label}
-              {item.id === "goals" && current.waiting ? <span className={`${styles.dot} ${styles.dotWait}`}>{current.waiting}</span> : null}
+              {item.id === "turn" && current.waiting ? <span className={`${styles.dot} ${styles.dotWait}`}>{current.waiting}</span> : null}
             </a>
           ))}
         </nav>
@@ -170,7 +179,7 @@ export function SectionHead({ title, hint }: { title: string; hint?: string }) {
 }
 
 // What waits on you: each stop in the fixed shape, with its options.
-function Decisions({ items, submit, busy, now, consultHref }: { items: DecisionItem[]; submit: (intent: GoalTabIntent) => void; busy?: boolean; now: number; consultHref?: (taskId: string) => string }) {
+export function Decisions({ items, submit, busy, now, consultHref }: { items: DecisionItem[]; submit: (intent: GoalTabIntent) => void; busy?: boolean; now: number; consultHref?: (taskId: string) => string }) {
   return (
     <section className={styles.section}>
       <SectionHead title="あなたの番" />
