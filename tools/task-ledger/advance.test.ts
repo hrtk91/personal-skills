@@ -587,7 +587,7 @@ test('when the check fails after merging, the merge is undone and other uncommit
   } finally { f.done(); }
 });
 
-test('when someone commits while the check after merging runs, a failed check reverts the merge and keeps their commit', () => {
+test('when someone commits during a failed merged check, retry reapplies the revert and the task can merge again', () => {
   const f = fixture({ check: 'test -f only-in-worktree || { git -C "$(git rev-parse --path-format=absolute --git-common-dir)/.." -c user.name=t -c user.email=t@t commit -q --allow-empty -m "someone else"; exit 1; }' });
   try {
     writeFileSync(join(f.workdir, 'only-in-worktree'), '');
@@ -595,6 +595,29 @@ test('when someone commits while the check after merging runs, a failed check re
     assert.equal(f.ledger.get('repo-1')!.status, '判断待ち');
     assert.match(git(f.repo, 'log', '--format=%s').trim(), /someone else/);
     assert.ok(!existsSync(join(f.repo, 'mul.js')), 'the merged work is undone');
+    const undoEvent = f.ledger.events('repo-1').find((event) => event.note?.match(/取り消しコミット: ([0-9a-f]{40})/));
+    assert.ok(undoEvent, 'the revert commit id is in the task event');
+    f.ledger.db.prepare('UPDATE tasks SET "check"=? WHERE id=?').run('true', 'repo-1');
+    f.ledger.setStatus('repo-1', '確かめ中', 'retry'); f.ledger.releaseRunner('repo-1');
+    advance(f.ledger, 'repo-1', deps('{"verdict":"通す","reasons":[],"fixes":[]}'), 2);
+    assert.equal(f.ledger.get('repo-1')!.status, '済');
+    assert.ok(existsSync(join(f.repo, 'mul.js')), 'the worker change reaches the repository again');
+    assert.ok(f.ledger.events('repo-1').some((event) => event.note?.includes(`取り消しを再適用: ${undoEvent.note!.match(/取り消しコミット: ([0-9a-f]{40})/)![1]}`)));
+  } finally { f.done(); }
+});
+
+test('when failed merged check uses reset --keep, a retry still merges the work', () => {
+  const f = fixture({ check: 'test -f only-in-worktree' });
+  try {
+    writeFileSync(join(f.workdir, 'only-in-worktree'), '');
+    advance(f.ledger, 'repo-1', deps('{"verdict":"通す","reasons":[],"fixes":[]}'), 1);
+    assert.equal(f.ledger.get('repo-1')!.status, '判断待ち');
+    assert.ok(!f.ledger.events('repo-1').some((event) => event.note?.includes('取り消しコミット:')));
+    f.ledger.db.prepare('UPDATE tasks SET "check"=? WHERE id=?').run('true', 'repo-1');
+    f.ledger.setStatus('repo-1', '確かめ中', 'retry'); f.ledger.releaseRunner('repo-1');
+    advance(f.ledger, 'repo-1', deps('{"verdict":"通す","reasons":[],"fixes":[]}'), 2);
+    assert.equal(f.ledger.get('repo-1')!.status, '済');
+    assert.ok(existsSync(join(f.repo, 'mul.js')));
   } finally { f.done(); }
 });
 
