@@ -199,9 +199,34 @@ class HerdrContractTest(unittest.TestCase):
             path.write_text(source)
             path.chmod(0o755)
         claude = self.bin / "claude"
-        claude.write_text("#!/usr/bin/env python3\nimport json,os,sys,subprocess\nbody=sys.stdin.read()\nopen(os.environ['FAKE_CLAUDE_ARGS'],'w').write(json.dumps(sys.argv[1:]))\nwith open(os.environ['FAKE_CLAUDE_CALLS'],'a') as calls: calls.write(json.dumps({'args':sys.argv[1:],'input':body})+'\\n')\nif os.environ.get('FAKE_CLAUDE_RESUME_FAIL') == '1' and '--resume' in sys.argv: sys.exit(17)\nprint(json.dumps({'type':'system','subtype':'init','session_id':'session-smoke'}), flush=True)\nif os.environ.get('FAKE_CLAUDE_RETRY_DENIAL') == '1':\n counter=os.environ['FAKE_CLAUDE_ARGS']+'.count'; n=int(open(counter).read()) if os.path.exists(counter) else 0; open(counter,'w').write(str(n+1))\n if n == 0: print(json.dumps({'type':'system','subtype':'permission_denied','message':'sandbox blocked write'}), flush=True)\nif os.environ.get('FAKE_CLAUDE_BODY_BUBBLEWRAP') == '1': print(json.dumps({'type':'assistant','message':{'content':[{'type':'text','text':'The word bubblewrap is just in this explanation.'}]}}), flush=True)\nif os.environ.get('FAKE_CLAUDE_TOOL_DENIAL') == '1': print(json.dumps({'type':'user','message':{'content':[{'type':'tool_result','is_error':True,'content':'bwrap: Operation not permitted'}]}}), flush=True)\nif os.environ.get('FAKE_CLAUDE_BASH_JA') == '1': print(json.dumps({'type':'user','message':{'content':[{'type':'tool_result','is_error':False,'content':'mkdir: 作成できません: 読み込み専用ファイルシステムです\\nmkdir_exit=1'}]}}), flush=True)\nprint(json.dumps({'type':'assistant','message':{'content':[{'type':'tool_use','name':'Write','input':{'file':'handoff/report'}}]}}), flush=True)\nprint(json.dumps({'type':'result','subtype':'success','stop_reason':'end_turn','result':'finished'}), flush=True)\nif os.environ.get('FAKE_CLAUDE_HOLD_CHILD') == '1':\n child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)'])\n open(os.environ['FAKE_CLAUDE_CHILD_PID'],'w').write(str(child.pid))\n if os.environ.get('FAKE_CLAUDE_HOLD_PARENT') == '1':\n  import time; time.sleep(60)\nname=os.environ['FAKE_NAME']; os.makedirs('handoff',exist_ok=True)\nif os.environ.get('FAKE_CLAUDE_RETRY_DENIAL') != '1' or n != 0: open('handoff/'+name+'-report.md','w').write('done\\n')\n" )
+        claude.write_text("""#!/usr/bin/env python3\nimport json,os,sys,subprocess\nbody=sys.stdin.read()\n# Decision-card refresh runs detached with the caller's repository as cwd. A fake worker
+# must not write its worker bookkeeping/report into that repository.
+if os.path.realpath(os.getcwd()) == os.path.realpath(os.environ['FAKE_W']):\n open(os.environ['FAKE_CLAUDE_ARGS'],'w').write(json.dumps(sys.argv[1:]))\n with open(os.environ['FAKE_CLAUDE_CALLS'],'a') as calls: calls.write(json.dumps({'args':sys.argv[1:],'input':body})+'\\n')\nif os.environ.get('FAKE_CLAUDE_RESUME_FAIL') == '1' and '--resume' in sys.argv: sys.exit(17)\nprint(json.dumps({'type':'system','subtype':'init','session_id':'session-smoke'}), flush=True)\nif os.environ.get('FAKE_CLAUDE_RETRY_DENIAL') == '1':\n counter=os.environ['FAKE_CLAUDE_ARGS']+'.count'; n=int(open(counter).read()) if os.path.exists(counter) else 0; open(counter,'w').write(str(n+1))\n if n == 0: print(json.dumps({'type':'system','subtype':'permission_denied','message':'sandbox blocked write'}), flush=True)\nif os.environ.get('FAKE_CLAUDE_BODY_BUBBLEWRAP') == '1': print(json.dumps({'type':'assistant','message':{'content':[{'type':'text','text':'The word bubblewrap is just in this explanation.'}]}}), flush=True)\nif os.environ.get('FAKE_CLAUDE_TOOL_DENIAL') == '1': print(json.dumps({'type':'user','message':{'content':[{'type':'tool_result','is_error':True,'content':'bwrap: Operation not permitted'}]}}), flush=True)\nif os.environ.get('FAKE_CLAUDE_BASH_JA') == '1': print(json.dumps({'type':'user','message':{'content':[{'type':'tool_result','is_error':False,'content':'mkdir: 作成できません: 読み込み専用ファイルシステムです\\nmkdir_exit=1'}]}}), flush=True)\nprint(json.dumps({'type':'assistant','message':{'content':[{'type':'tool_use','name':'Write','input':{'file':'handoff/report'}}]}}), flush=True)\nprint(json.dumps({'type':'result','subtype':'success','stop_reason':'end_turn','result':'finished'}), flush=True)\nif os.environ.get('FAKE_CLAUDE_HOLD_CHILD') == '1':\n child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)'])\n open(os.environ['FAKE_CLAUDE_CHILD_PID'],'w').write(str(child.pid))\n if os.environ.get('FAKE_CLAUDE_HOLD_PARENT') == '1':\n  import time; time.sleep(60)\nif os.path.realpath(os.getcwd()) == os.path.realpath(os.environ['FAKE_W']):\n name=os.environ['FAKE_NAME']; os.makedirs('handoff',exist_ok=True)\n if os.environ.get('FAKE_CLAUDE_RETRY_DENIAL') != '1' or n != 0: open('handoff/'+name+'-report.md','w').write('done\\n')\n""")
         claude.chmod(0o755)
         self.claude_args = self.root / "claude-args.json"
+        task_wrapper = self.bin / "task"
+        task_wrapper.write_text(f"""#!/usr/bin/env python3
+import json, os, subprocess, sys
+from pathlib import Path
+real_task = {str(TASK_BIN)!r}
+result = subprocess.run([real_task, *sys.argv[1:]], env=os.environ.copy())
+if sys.argv[1:3] == ['decision', 'refresh']:
+    db = os.environ['TASK_LEDGER_DB']
+    remaining = []
+    for entry in Path('/proc').iterdir():
+        if not entry.name.isdigit() or int(entry.name) == os.getpid():
+            continue
+        try:
+            cmdline = (entry / 'cmdline').read_bytes().replace(b'\\0', b' ').decode(errors='replace')
+            environ = (entry / 'environ').read_bytes().split(b'\\0')
+        except OSError:
+            continue
+        if b'TASK_LEDGER_DB=' + db.encode() in environ and 'decision refresh' in cmdline:
+            remaining.append(int(entry.name))
+    Path(os.environ['FAKE_TASK_DONE']).write_text(json.dumps({{'remaining': remaining, 'exit': result.returncode}}))
+sys.exit(result.returncode)
+""")
+        task_wrapper.chmod(0o755)
         self.channel_bin = self.bin / "channel"
         self.channel_bin.write_text(FAKE_CHANNEL)
         self.channel_bin.chmod(0o755)
@@ -680,8 +705,20 @@ class HerdrContractTest(unittest.TestCase):
 
     def test_ledger_task_stopped_by_design_waits_for_a_decision(self):
         task_id = self.ledger_task()
-        result = self.run_script(mode="stop", TASK_ID=task_id, TASK_LEDGER_DB=str(self.root / "ledger.sqlite"), TASK_RUN_AFTER="0")
+        task_done = self.root / "task-refresh-done.json"
+        result = self.run_script(mode="stop", TASK_ID=task_id, TASK_LEDGER_DB=str(self.root / "ledger.sqlite"),
+            TASK_RUN_AFTER="0", TASK_BIN=str(self.bin / "task"), FAKE_TASK_DONE=str(task_done))
         self.assertEqual(result.returncode, 0)
+        # The wrapper marks completion only after the real refresh exits and confirms
+        # no process for this temporary ledger still runs `decision refresh`.
+        import time
+        deadline = time.monotonic() + 10
+        while not task_done.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertTrue(task_done.exists(), "detached decision refresh did not finish")
+        completion = json.loads(task_done.read_text())
+        self.assertEqual(completion["exit"], 0)
+        self.assertEqual(completion["remaining"], [], "decision refresh process remained at completion marker")
         task = self.ledger_show(task_id)
         self.assertEqual(task["status"], "判断待ち")
         self.assertIn("STOP", task["note"])
