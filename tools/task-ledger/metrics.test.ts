@@ -30,13 +30,13 @@ test('classifies recorded event wording and measures first pass despite ordinary
 
 test('review send-back stores reviewer kinds in the resulting event', async () => {
  const dir=mkdtempSync(join('/tmp','task-metrics-review-'));const repo=join(dir,'repo');const l=new Ledger(join(dir,'db.sqlite'));const task=l.add({repo,title:'reviewed',why:'reason',brief:'handoff/x.md'});l.setStatus(task.id,'走行中','start',{attempts:1});l.setStatus(task.id,'レビュー中','checked');l.setRunner(task.id,{workdir:dir});
- const deps:AdvanceDeps={sh:()=>({code:0,output:'HEAD'}),review:()=>'{"verdict":"通す","reasons":[],"fixes":[],"kinds":["実装の誤り"],"findings":[{"text":"修正","likelihood":"いつも","harm":"大","blocking":true}]}',resend:()=>44,pause:()=>{}};
+ const deps:AdvanceDeps={sh:()=>({code:0,output:'HEAD'}),review:()=>'{"verdict":"通す","reasons":[],"fixes":[],"kinds":["実装の誤り"],"findings":[{"text":"修正","likelihood":"いつも","harm":"大","blocking":true}]}',quota:()=>({claudeRemaining:50,codexRemaining:50}),resend:()=>44,pause:()=>{}};
  try{advance(l,task.id,deps);assert.equal(l.events(task.id).at(-1)?.kind,'実装の誤り');const result=metrics(l,{repo,weeks:4,now:Date.now()+1000});assert.equal(result.weeks[0]?.failures['レビューの差し戻し'],1);assert.equal(result.weeks[0]?.reviewKinds['実装の誤り'],1);}finally{l.close();rmSync(dir,{recursive:true,force:true});}
 });
 
 test('a review decision send-back also stores reviewer kinds in the resulting event', () => {
  const dir=mkdtempSync(join('/tmp','task-metrics-decision-'));const repo=join(dir,'repo');const l=new Ledger(join(dir,'db.sqlite'));const task=l.add({repo,title:'decision',why:'reason',brief:'handoff/x.md'});l.setStatus(task.id,'走行中','start',{attempts:1});l.setStatus(task.id,'レビュー中','checked');l.setRunner(task.id,{workdir:dir});
- const deps:AdvanceDeps={sh:()=>({code:0,output:'HEAD'}),review:()=>'{"verdict":"判断","reasons":["確認が必要"],"fixes":[],"kinds":["依頼文の食い違い"]}',resend:()=>44,pause:()=>{}};
+ const deps:AdvanceDeps={sh:()=>({code:0,output:'HEAD'}),review:()=>'{"verdict":"判断","reasons":["確認が必要"],"fixes":[],"kinds":["依頼文の食い違い"]}',quota:()=>({claudeRemaining:50,codexRemaining:50}),resend:()=>44,pause:()=>{}};
  try{advance(l,task.id,deps);assert.equal(l.get(task.id)?.status,'判断待ち');assert.equal(l.events(task.id).at(-1)?.kind,'依頼文の食い違い');}finally{l.close();rmSync(dir,{recursive:true,force:true});}
 });
 
