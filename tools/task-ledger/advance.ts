@@ -689,7 +689,7 @@ export const realAdvanceDeps: AdvanceDeps = {
   resend(task, name, briefRefreshed = false) {
     const out = openSync(logPath(task.id), 'a');
     try {
-      const child = spawn('bash', [HERDR_RUN, name], {
+      const child = spawn('bash', [process.env.TASK_HERDR_RUN ?? HERDR_RUN, name], {
         cwd: task.repo, detached: true, stdio: ['ignore', out, out],
         env: sendBackEnv(task, briefRefreshed),
       });
