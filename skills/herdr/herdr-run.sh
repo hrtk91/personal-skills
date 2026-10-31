@@ -416,6 +416,14 @@ run_agent() {
       goal=$(worker_prompt "$context" "$task" "全部終わったら、最後に touch $mark を実行する（この印で次の段に進む）。")
     fi
   fi
+  # この分岐は task-specific ブリーフを使わない依頼。完了判定方式を依頼文にも明示する。
+  if [ -z "${TASK_ID:-}" ]; then
+    if [ "$use_channel" = 1 ]; then
+      goal="$goal 全部終わったら、最後に channel_finish の道具を 1 回呼ぶ（これで次の段に進む）。"
+    else
+      goal="$goal 全部終わったら、最後に touch $mark を実行する（この印で次の段に進む）。"
+    fi
+  fi
   [ "${SEND_BACK_BRIEF_REFRESHED:-}" != 1 ] || goal=$'依頼文が変わった。読み直してから続ける\n'"$goal"
   channel_finished() {
     local rows
