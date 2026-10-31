@@ -31,9 +31,10 @@ function Card({ task }: { task: StageTask }) {
   return <article className={s.item}>
     <div className={s.title}>{task.title}</div>
     {waiting
-      ? task.waitsFor.length > 0
+      ? task.status === "依頼文待ち" ? <p className={s.why}>依頼文を待っています。</p>
+      : task.waitsFor.length > 0
         ? task.waitsFor.map((w, i) => <p key={`${w.taskId}-${i}`} className={`${s.wait} ${w.type === "files" ? s.files : ""}`}>{waitText(w)}</p>)
-        : <p className={s.why}>{task.status === "依頼文待ち" ? "依頼文を待っています。" : "次の 3 分の見回りで出ます。"}</p>
+        : <p className={s.why}>次の 3 分の見回りで出ます。</p>
       : task.why && <p className={s.why}>{task.why}</p>}
     <Steps position={task.position} />
     <div className={s.meta}>

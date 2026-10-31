@@ -67,7 +67,7 @@ for attempt in 1 2; do
     settings='{"disableAllHooks":true}'
     permission_mode=bypassPermissions
   else
-    settings='{"disableAllHooks":true,"sandbox":{"enabled":true,"autoAllowBashIfSandboxed":true,"allowUnsandboxedCommands":false},"permissions":{"defaultMode":"acceptEdits","allow":["Bash(*)"]}}'
+    settings='{"disableAllHooks":true,"sandbox":{"enabled":true,"autoAllowBashIfSandboxed":true,"allowUnsandboxedCommands":false,"network":{"allowAllUnixSockets":true,"allowLocalBinding":true}},"permissions":{"defaultMode":"acceptEdits","allow":["Bash(*)"]}}'
     permission_mode=acceptEdits
   fi
   args=(-p --model "$model" --effort "$effort" --permission-mode "$permission_mode" --output-format stream-json --verbose --settings "$settings" --strict-mcp-config)
