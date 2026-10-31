@@ -182,7 +182,7 @@ export function SectionHead({ title, hint }: { title: string; hint?: string }) {
 export function Decisions({ items, submit, busy, now, consultHref }: { items: DecisionItem[]; submit: (intent: GoalTabIntent) => void; busy?: boolean; now: number; consultHref?: (taskId: string) => string }) {
   return (
     <section className={styles.section}>
-      <SectionHead title="あなたの番" />
+      <SectionHead title="決められなかった問い" />
       {items.length
         ? items.map((item) => <Decision key={item.taskId} item={item} submit={submit} busy={busy} now={now} consultHref={consultHref} />)
         : <div className={`${styles.card} ${styles.calm}`}>決めることはありません。</div>}

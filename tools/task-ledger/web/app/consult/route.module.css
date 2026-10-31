@@ -1,9 +1,0 @@
-.desktop { display: block; }
-.mobile { display: none; }
-.columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(420px, 460px); min-height: calc(100vh - 120px); }
-.goal { min-width: 0; overflow: auto; }
-.sidebar { min-width: 0; min-height: 0; height: calc(100vh - 120px); position: sticky; top: 0; }
-@media (max-width: 760px) {
-  .desktop { display: none; }
-  .mobile { display: block; }
-}

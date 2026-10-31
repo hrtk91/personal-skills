@@ -5,7 +5,6 @@ import type { Route } from "./+types/epic-stage.js";
 import { submitIntent } from "../goal-tab/server.js";
 import { loadStageData } from "../stage-tab/server.js";
 import { StageTabView } from "../stage-tab/view.js";
-import { epicTaskIds, narrowStage } from "./epic.server.js";
 import { frameData } from "./frame.server.js";
 import { Frame, tabHref, taskHref } from "./frame.js";
 import s from "./pages.module.css";
@@ -14,7 +13,7 @@ export function loader({ params }: Route.LoaderArgs) {
   const { ledger, repo, frame } = frameData(params.name);
   const goal = params.goalId === "all" ? null : ledger.getGoal(params.goalId);
   if (params.goalId !== "all" && (!goal || goal.repo !== repo)) throw new Response("Epic not found", { status: 404 });
-  return { frame, goalId: params.goalId, title: goal?.title ?? "すべての仕事", stage: narrowStage(loadStageData(ledger, repo), epicTaskIds(ledger, repo, params.goalId)) };
+  return { frame, goalId: params.goalId, title: goal?.title ?? "すべての仕事", stage: loadStageData(ledger, repo, new Date(), params.goalId) };
 }
 export async function action({ params, request }: Route.ActionArgs) {
   const { ledger, repo } = frameData(params.name);

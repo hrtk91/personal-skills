@@ -10,12 +10,14 @@ const stageFor = (status: Status): StageName | null => {
 const today = (date: Date) => date.toLocaleDateString("sv-SE");
 
 export function loadStageData(ledger: Ledger, repo: string, now = new Date(), goalId?: string): StageTabData {
-  const all = ledger.list({ repo, all: true }).filter(t => !goalId || goalId === 'all' || t.goal_id === goalId);
+  // Locks come from every task in the repo: a task in another Epic can still hold the files this one waits for.
+  const everything = ledger.list({ repo, all: true });
+  const all = everything.filter(t => !goalId || goalId === 'all' || t.goal_id === goalId);
   const todayKey = today(now);
   const completedToday = (t: Task) => t.status === "済" && today(new Date(t.updated_at)) === todayKey;
   const ready = ledger.ready().filter(t => t.repo === repo);
   const readyIds = new Set(ready.map(t => t.id));
-  const active = all.filter(t => ACTIVE.includes(t.status));
+  const active = everything.filter(t => ACTIVE.includes(t.status));
   const taskRows = new Map<string, StageTask>();
   for (const task of all) {
     const stage = stageFor(task.status);

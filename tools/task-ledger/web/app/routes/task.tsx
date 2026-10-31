@@ -5,7 +5,6 @@ import { Link, useLoaderData } from "react-router";
 import type { Route } from "./+types/task.js";
 import { briefParts } from "../task-page/brief.js";
 import { roundsFor, type Round, type RunModel } from "../task-page/rounds.js";
-import { goalIdOf } from "./epic.server.js";
 import { frameData } from "./frame.server.js";
 import { Frame, epicHref, tabHref } from "./frame.js";
 import s from "./pages.module.css";
@@ -22,8 +21,7 @@ export function loader({ params }: Route.LoaderArgs) {
   const { ledger, repo, frame } = frameData(params.name);
   const task = ledger.get(params.taskId);
   if (!task || task.repo !== repo) throw new Response("Task not found", { status: 404 });
-  const goalId = goalIdOf(ledger, task);
-  const goal = goalId ? ledger.getGoal(goalId) : null;
+  const goal = task.goal_id ? ledger.getGoal(task.goal_id) : null;
   const text = briefText(repo, task.brief);
   return {
     frame, task: { id: task.id, title: task.title, why: task.why.split(/\r?\n/, 1)[0], status: task.status, deploy: task.deploy },
