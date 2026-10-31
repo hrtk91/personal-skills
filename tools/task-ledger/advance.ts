@@ -645,6 +645,12 @@ ${tail(read(checkPath), 60)}
 // Only the mark review() itself appends counts: a verdict that quotes 「終了コード 1」 in its reasons is still valid.
 export function reviewerExitedBadly(answer: string): boolean { return /\n（レビュー役が終了コード (?!0 )\S+ で終わった）/.test(answer); }
 
+export function sendBackEnv(task: Task, briefRefreshed: boolean): NodeJS.ProcessEnv {
+  return workerEnv({ REPO: task.repo, TASK_ID: task.id, RESUME: 'newtab',
+    HERDR_WORKSPACE_ID: process.env.HERDR_WORKSPACE_ID ?? process.env.TASK_HERDR_WORKSPACE ?? '',
+    SEND_BACK_BRIEF_REFRESHED: briefRefreshed ? '1' : '', SEND_BACK: '1' }, task);
+}
+
 export const realAdvanceDeps: AdvanceDeps = {
   sh(command, cwd, timeoutMs) {
     // The worker's settings must not reach the checks: herdr's own tests fail when they find a supervisor already set (10/28).
@@ -685,9 +691,7 @@ export const realAdvanceDeps: AdvanceDeps = {
     try {
       const child = spawn('bash', [HERDR_RUN, name], {
         cwd: task.repo, detached: true, stdio: ['ignore', out, out],
-        env: workerEnv({ REPO: task.repo, TASK_ID: task.id, RESUME: 'newtab',
-          HERDR_WORKSPACE_ID: process.env.HERDR_WORKSPACE_ID ?? process.env.TASK_HERDR_WORKSPACE ?? '',
-          SEND_BACK_BRIEF_REFRESHED: briefRefreshed ? '1' : '', SEND_BACK: '1' }),
+        env: sendBackEnv(task, briefRefreshed),
       });
       if (!child.pid) throw new Error('herdr-run.sh を起動できなかった');
       child.unref();
