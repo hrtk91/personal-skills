@@ -18,14 +18,14 @@ export function loadStageData(ledger: Ledger, repo: string, now = new Date()): S
   const taskRows = new Map<string, StageTask>();
   for (const task of all) {
     const stage = stageFor(task.status);
-    if (!stage || (stage === "本番" && !completedToday(task))) continue;
+    if (!stage || (stage === "本番" && (!completedToday(task) || !task.deploy))) continue;
     const position = STAGES.indexOf(stage) as 0|1|2|3|4|5;
     const waitsFor: WaitReason[] = [];
     if (stage === "出す前" && !readyIds.has(task.id)) {
       for (const id of task.after) {
         const predecessor = ledger.get(id);
         if (predecessor && predecessor.status !== "済") {
-          waitsFor.push({ type:"after", taskId:id, title:predecessor.title, stage:stageFor(predecessor.status) ?? "出す前" });
+          waitsFor.push({ type:"after", taskId:id, title:predecessor.title, stage:stageFor(predecessor.status), status:predecessor.status });
         }
       }
       // Ledger.ready() is authoritative for eligibility; describe active same-repo file locks only.
@@ -35,7 +35,7 @@ export function loadStageData(ledger: Ledger, repo: string, now = new Date()): S
       }
     }
     const entered = [...ledger.events(task.id)].reverse().find(e => e.to_status === task.status)?.at ?? task.created_at;
-    taskRows.set(task.id, { id:task.id,title:task.title,why:task.why.split(/[\r\n]/,1)[0],status:task.status,stage,position,attempts:task.attempts,enteredAt:entered,waitsFor,worker:task.worker??"pi",model:task.model });
+    taskRows.set(task.id, { id:task.id,title:task.title,why:task.why.split(/[\r\n]/,1)[0],status:task.status,stage,position,attempts:task.attempts,enteredAt:entered,waitsFor,worker:task.worker??"pi",model:task.model,deploy:task.deploy });
   }
   const lists = STAGES.map((name,index) => {
     let tasks = [...taskRows.values()].filter(t => t.stage === name);
@@ -48,6 +48,6 @@ export function loadStageData(ledger: Ledger, repo: string, now = new Date()): S
   return {
     stages:lists,
     outside:{ decisions:all.filter(t=>t.status==="判断待ち").length, held:all.filter(t=>t.status==="保留").length, stoppedToday:all.filter(t=>t.status==="やめ"&&today(new Date(t.updated_at))===todayKey).length },
-    production:all.filter(completedToday).sort((a,b)=>a.updated_at.localeCompare(b.updated_at)).map(t=>({id:t.id,title:t.title,at:t.updated_at})),
+    production:all.filter(completedToday).sort((a,b)=>a.updated_at.localeCompare(b.updated_at)).map(t=>({id:t.id,title:t.title,at:t.updated_at,deploy:t.deploy})),
   };
 }
