@@ -6,7 +6,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Ledger } from './ledger.ts';
-import { advance, herdrTabSweepCandidates, outsideTaskFiles, parseVerdict, realAdvanceDeps, reapplyRevertedMerge, sendBackEnv, sweepHerdrTabs, type AdvanceDeps } from './advance.ts';
+import { advance, herdrTabSweepCandidates, outsideTaskFiles, parseVerdict, realAdvanceDeps, reapplyRevertedMerge, sweepHerdrTabs, type AdvanceDeps } from './advance.ts';
 import { buildTrace, renderTrace } from './trace.ts';
 import { taskContext } from './context.ts';
 import { main } from './cli.ts';
@@ -49,15 +49,40 @@ function deps(answer: string, calls: string[] = [], deployCode = 0): AdvanceDeps
   };
 }
 
-test('a requeued task gets its ledger worker, model and effort in the second-run environment', () => {
-  const f = fixture({ worker: 'claude', model: 'sonnet', effort: 'high' });
+test('a requeued task passes its ledger worker, model and effort through the actual resend environment', async () => {
+  const f = fixture({ check: 'false', worker: 'claude', model: 'sonnet', effort: 'high' });
+  const script = join(f.dir, 'fake-herdr-run.sh');
+  const captured = join(f.dir, 'resend-env');
+  writeFileSync(script, '#!/bin/sh\nenv > "$CAPTURE_ENV_FILE"\n', { mode: 0o755 });
+  const priorRun = process.env.TASK_HERDR_RUN;
+  const priorCapture = process.env.CAPTURE_ENV_FILE;
+  const priorValues = Object.fromEntries(['IMPL_AGENT', 'CLAUDE_MODEL', 'CLAUDE_EFFORT', 'TASK_ID', 'SEND_BACK', 'RESUME'].map((key) => [key, process.env[key]]));
   try {
-    const task = f.ledger.get('repo-1')!;
-    const env = sendBackEnv(task, false);
+    delete process.env.IMPL_AGENT; delete process.env.CLAUDE_MODEL; delete process.env.CLAUDE_EFFORT;
+    process.env.TASK_HERDR_RUN = script;
+    process.env.CAPTURE_ENV_FILE = captured;
+    const d = { ...realAdvanceDeps, pause: () => {} };
+    advance(f.ledger, 'repo-1', d, 1);
+    let capturedText = '';
+    for (let attempt = 0; attempt < 100; attempt++) {
+      if (existsSync(captured)) capturedText = readFileSync(captured, 'utf8');
+      if (capturedText.includes('IMPL_AGENT=') && capturedText.includes('CLAUDE_MODEL=') && capturedText.includes('CLAUDE_EFFORT=')) break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.ok(capturedText.includes('IMPL_AGENT='), 'fake herdr-run should receive the resend environment');
+    const env = Object.fromEntries(capturedText.trim().split('\n').map((line) => {
+      const separator = line.indexOf('='); return [line.slice(0, separator), line.slice(separator + 1)];
+    }));
     assert.deepEqual([env.IMPL_AGENT, env.CLAUDE_MODEL, env.CLAUDE_EFFORT], ['claude', 'sonnet', 'high']);
     assert.equal(env.RESUME, 'newtab');
     assert.equal(env.SEND_BACK, '1');
-  } finally { f.done(); }
+    assert.equal(env.TASK_ID, 'repo-1');
+  } finally {
+    for (const [key, value] of Object.entries(priorValues)) { if (value === undefined) delete process.env[key]; else process.env[key] = value!; }
+    if (priorRun === undefined) delete process.env.TASK_HERDR_RUN; else process.env.TASK_HERDR_RUN = priorRun;
+    if (priorCapture === undefined) delete process.env.CAPTURE_ENV_FILE; else process.env.CAPTURE_ENV_FILE = priorCapture;
+    f.done();
+  }
 });
 
 test('an unmet report without the environment marker is still returned to the worker', () => {
