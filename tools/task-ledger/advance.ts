@@ -185,7 +185,6 @@ export function advance(ledger: Ledger, id: string, deps: AdvanceDeps, pid = pro
         const left = remaining.length ? `残りにした指摘: ${JSON.stringify(remaining.map((finding) => finding.text))}` : '';
         ledger.setStatus(id, '取り込み中', [`レビュー通過: ${verdict.reasons.join(' / ') || '通す'}`, left].filter(Boolean).join(' '));
       } else {
-        if (verdict.verdict === '判断') { stop(`レビュー: ${verdict.reasons.join(' / ')}`); ledger.setEventKind(task.id, ledger.events(task.id).at(-1)!.at, normalizeReviewKinds(verdict.kinds).join(',')); return said; }
         const legacyRemaining = verdict.verdict === '直す' ? [...verdict.reasons, ...verdict.fixes] : [];
         if (legacyRemaining.length) ledger.setStatus(id, 'レビュー中', `レビュー指摘: ${JSON.stringify({ stopped: [], remaining: legacyRemaining, findings: legacyRemaining })}`);
         ledger.setStatus(id, '取り込み中', [`レビュー通過: ${verdict.reasons.join(' / ') || '通す'}`, legacyRemaining.length ? `残りにした指摘: ${JSON.stringify(legacyRemaining)}` : ''].filter(Boolean).join(' '));
@@ -655,7 +654,7 @@ export const realAdvanceDeps: AdvanceDeps = {
     // Opus reads and judges only (10/27 「Opus」). It may read the work and the logs, never write.
     // Without the user's hooks and MCP servers: a Stop hook that waits for an hour kept `claude -p` from exiting (10/28).
     const bin = process.env.TASK_CLAUDE_BIN ?? 'claude';
-    const args = ['-p', '--model', 'opus', '--output-format', 'json',
+    const args = ['-p', '--model', process.env.CLAUDE_MODEL ?? 'opus', ...(process.env.CLAUDE_EFFORT ? ['--effort', process.env.CLAUDE_EFFORT] : []), '--output-format', 'json',
       '--settings', JSON.stringify({ disableAllHooks: true }), '--strict-mcp-config',
       '--allowedTools', 'Read', 'Grep', 'Glob', 'Bash(git diff:*)', 'Bash(git log:*)', 'Bash(git show:*)', 'Bash(git status:*)',
       '--disallowedTools', 'Edit', 'Write', 'NotebookEdit', ...readable.flatMap((dir) => ['--add-dir', dir])];
@@ -667,7 +666,7 @@ export const realAdvanceDeps: AdvanceDeps = {
     try {
       const json = JSON.parse(result.stdout ?? '') as { result?: string; session_id?: string; total_cost_usd?: number; duration_ms?: number; num_turns?: number; usage?: Record<string, number> };
       const usage = json.usage ?? {};
-      const attributes: SpanAttributes = {};
+      const attributes: SpanAttributes = { 'model.role': 'レビュー役', 'model.agent': 'Claude', 'model.model': process.env.CLAUDE_MODEL ?? 'opus', 'model.effort': process.env.CLAUDE_EFFORT ?? '記録なし', 'model.fast': false };
       if (typeof json.session_id === 'string' && json.session_id) attributes['review.session_id'] = json.session_id;
       for (const [key, value] of Object.entries({
         'review.cost_usd': json.total_cost_usd, 'review.turns': json.num_turns, 'review.input_tokens': usage.input_tokens,
