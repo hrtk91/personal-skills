@@ -17,6 +17,7 @@ codex_start() {  # <agent> <pane> <作業場所>
   local model tier effort trust_root
   model=$(codex_setting "$role" MODEL gpt-6.1-sol); tier=$(codex_setting "$role" TIER default); effort=$(codex_setting "$role" EFFORT max)
   log "$agent: Codex 設定 model=$model service_tier=$tier effort=$effort"
+  if [ -n "${TASK_ID:-}" ]; then "${TASK_BIN:-$SKILL_DIR/../../tools/task-ledger/bin/task}" model-run "$TASK_ID" --role 作業役 --agent Codex --provider openai-codex --model "$model" --effort "$effort" $([ "$tier" = priority ] && printf '%s' '--fast') >/dev/null || return 1; fi
   # CLI は worktree でも元の Git リポジトリのルートに信頼指定を求める
   trust_root=$(git -C "$w" rev-parse --path-format=absolute --git-common-dir) || return 1
   if [ "$(basename "$trust_root")" = .git ]; then trust_root=$(dirname "$trust_root"); else trust_root=$w; fi

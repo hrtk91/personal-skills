@@ -135,6 +135,7 @@ echo failed > "$state"; exit 1
 CLAUDE_HELPER
   chmod +x "$helper"
   local model=${CLAUDE_MODEL:-opus} effort=${CLAUDE_EFFORT:-high} timeout=${CLAUDE_TIMEOUT_SECONDS:-1800}
+  if [[ "$agent" == impl-* ]] && [ -n "${TASK_ID:-}" ]; then "${TASK_BIN:-$SKILL_DIR/../../tools/task-ledger/bin/task}" model-run "$TASK_ID" --role 作業役 --agent Claude --provider anthropic --model "$model" --effort "$effort" >/dev/null || return 1; fi
   cmd=$(printf 'SEND_BACK=%q bash %q %q %q %q %q %q %q %q %q %q %q %q' "${SEND_BACK:-}" "$helper" "$prompt" "$full" "$raw" "$session" "$state" "$W/$REPORT" "$model" "$effort" "$L" "$agent" "$timeout")
   herdr pane send-text "$4" "$cmd" >/dev/null || return 1
   herdr pane send-keys "$4" Enter >/dev/null || return 1

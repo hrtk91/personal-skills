@@ -37,8 +37,8 @@ export function loadStageData(ledger: Ledger, repo: string, now = new Date()): S
     const entered = [...ledger.events(task.id)].reverse().find(e => e.to_status === task.status)?.at ?? task.created_at;
     const modelRuns = ledger.spans(task.id).flatMap(span => {
       const a = span.attributes;
-      if (span.name !== "レビュー" || a["model.role"] !== "レビュー役") return [];
-      return [{ role:"レビュー役" as const, agent:String(a["model.agent"] ?? "記録なし"), provider:typeof a["model.provider"] === "string" ? a["model.provider"] : null, model:typeof a["model.model"] === "string" ? a["model.model"] : null, effort:typeof a["model.effort"] === "string" ? a["model.effort"] : null, fast:typeof a["model.fast"] === "boolean" ? a["model.fast"] : null, attempt:span.attempt }];
+      if (a["model.role"] !== "レビュー役" && a["model.role"] !== "作業役") return [];
+      return [{ role:a["model.role"] as "作業役"|"レビュー役", agent:String(a["model.agent"] ?? "記録なし"), provider:typeof a["model.provider"] === "string" ? a["model.provider"] : null, model:typeof a["model.model"] === "string" ? a["model.model"] : null, effort:typeof a["model.effort"] === "string" ? a["model.effort"] : null, fast:typeof a["model.fast"] === "boolean" ? a["model.fast"] : null, attempt:span.attempt }];
     });
     taskRows.set(task.id, { id:task.id,title:task.title,why:task.why.split(/[\r\n]/,1)[0],status:task.status,stage,position,attempts:task.attempts,enteredAt:entered,waitsFor,worker:task.worker??"pi",model:task.model,deploy:task.deploy,modelRuns });
   }

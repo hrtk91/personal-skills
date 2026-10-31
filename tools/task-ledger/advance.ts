@@ -663,10 +663,10 @@ export const realAdvanceDeps: AdvanceDeps = {
     { cwd, input: prompt, encoding: 'utf8', timeout: REVIEW_TIMEOUT, maxBuffer: 64 * 1024 * 1024 });
     const failed = result.status === 0 ? '' : `\n（レビュー役が終了コード ${result.status} で終わった）${result.stderr ?? ''}`;
     // The JSON result carries the answer and what the call cost; anything else is passed on as it came.
+    const attributes: SpanAttributes = { 'model.role': 'レビュー役', 'model.agent': 'Claude', 'model.provider': 'anthropic', 'model.model': process.env.CLAUDE_MODEL ?? 'opus', 'model.effort': process.env.CLAUDE_EFFORT ?? '記録なし', 'model.fast': false };
     try {
       const json = JSON.parse(result.stdout ?? '') as { result?: string; session_id?: string; total_cost_usd?: number; duration_ms?: number; num_turns?: number; usage?: Record<string, number> };
       const usage = json.usage ?? {};
-      const attributes: SpanAttributes = { 'model.role': 'レビュー役', 'model.agent': 'Claude', 'model.model': process.env.CLAUDE_MODEL ?? 'opus', 'model.effort': process.env.CLAUDE_EFFORT ?? '記録なし', 'model.fast': false };
       if (typeof json.session_id === 'string' && json.session_id) attributes['review.session_id'] = json.session_id;
       for (const [key, value] of Object.entries({
         'review.cost_usd': json.total_cost_usd, 'review.turns': json.num_turns, 'review.input_tokens': usage.input_tokens,
@@ -674,7 +674,7 @@ export const realAdvanceDeps: AdvanceDeps = {
       })) if (typeof value === 'number') attributes[key] = value;
       return { answer: `${json.result ?? ''}${failed}`, attributes };
     } catch {
-      return `${result.stdout ?? ''}${failed}`;
+      return { answer: `${result.stdout ?? ''}${failed}`, attributes };
     }
   },
   resend(task, name, briefRefreshed = false) {
