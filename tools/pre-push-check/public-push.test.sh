@@ -94,7 +94,7 @@ secret_before=$(git --git-dir "$secret_remote" rev-parse refs/heads/main)
 token_prefix='ghp_'
 token_part_one='123456789012'
 token_part_two='345678901234'
-token_part_three='567890123456'
+token_part_three='567890123457'
 printf 'token=%s%s%s%s\n' "$token_prefix" "$token_part_one" "$token_part_two" "$token_part_three" >>"$secret_source/public-push-fixture.txt"
 git -C "$secret_source" add public-push-fixture.txt
 git -C "$secret_source" commit -qm 'test fixture: add runtime-built fake secret'
