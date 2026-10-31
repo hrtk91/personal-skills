@@ -890,3 +890,17 @@ test('the verdict is the last valid JSON object in the answer', () => {
   assert.equal(parseVerdict('答えなし'), null);
   assert.deepEqual(parseVerdict('```json\n{"verdict":"判断","reasons":["a {b}"]}\n```'), { verdict: '判断', reasons: ['a {b}'], fixes: [] });
 });
+
+test('real review returns the launch values it passed to claude, also when the answer is not JSON', () => {
+  const dir=mkdtempSync(join(tmpdir(),'review-model-')),oldBin=process.env.TASK_CLAUDE_BIN,bin=join(dir,'claude'),argsFile=join(dir,'args');
+  const expected={'model.role':'レビュー役','model.agent':'Claude','model.provider':'anthropic','model.model':'opus','model.effort':'指定なし（claude の既定）','model.fast':false};
+  try {process.env.TASK_CLAUDE_BIN=bin;
+    writeFileSync(bin,`#!/bin/sh\nprintf '%s\\n' "$*" > '${argsFile}'\ncat > /dev/null\nprintf '%s' '{"result":"ok","session_id":"s1","total_cost_usd":0.5}'\n`);chmodSync(bin,0o755);
+    const good=realAdvanceDeps.review('p','/tmp',[dir],{sessionId:'new-id'});assert.equal(typeof good,'object');
+    const args=readFileSync(argsFile,'utf8');assert.match(args,/--model opus /);assert.doesNotMatch(args,/--effort/); // 渡した引数どおりの値を記録する
+    assert.deepEqual({...(good as {attributes:Record<string,unknown>}).attributes},{...expected,'review.session_id':'s1','review.cost_usd':0.5});
+    writeFileSync(bin,'#!/bin/sh\ncat > /dev/null\necho "not json"\nexit 3\n');
+    const bad=realAdvanceDeps.review('p','/tmp',[dir],{sessionId:'new-id'});assert.equal(typeof bad,'object');
+    assert.deepEqual((bad as {attributes:Record<string,unknown>}).attributes,expected);assert.match((bad as {answer:string}).answer,/not json/);
+  } finally {if(oldBin===undefined)delete process.env.TASK_CLAUDE_BIN;else process.env.TASK_CLAUDE_BIN=oldBin;rmSync(dir,{recursive:true,force:true});}
+});

@@ -5,6 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { realAdvanceDeps, type AdvanceDeps } from './advance.ts';
+import { Ledger } from './ledger.ts';
 
 test('Goal, Issue, docs, priorities and task context through CLI', async () => {
   const dir=mkdtempSync(join(tmpdir(),'task-ledger-context-'));process.env.TASK_LEDGER_DB=join(dir,'db.sqlite');const {main}=await import('./cli.ts');
@@ -296,5 +297,23 @@ test('task add and task brief enforce brief format; task add bounds top-level --
     assert.match(setBrief.text,/待ち/);
     const actualBrief=run('add','--repo',repo,'--title','Real intake brief','--why','regression','--brief',handoff('intake-check.md'));
     assert.equal(actualBrief.code,0,actualBrief.err);assert.match(actualBrief.text,/Real intake brief/);
+  } finally {rmSync(dir,{recursive:true,force:true});delete process.env.TASK_LEDGER_DB;}
+});
+
+test('model-run records the launch values of an attempt as a span, and refuses a wrong role or task', async () => {
+  const dir=mkdtempSync(join(tmpdir(),'task-ledger-model-run-'));process.env.TASK_LEDGER_DB=join(dir,'db.sqlite');const {main}=await import('./cli.ts');
+  const run=(...args:string[])=>{const lines:string[]=[];const code=main(args,t=>lines.push(t));return{code,text:lines.join('\n')}};
+  try {
+    assert.match(run('add','--repo',join(dir,'repo'),'--title','t','--why','w').text,/repo-1/);
+    assert.equal(run('model-run','repo-1','--role','作業役','--agent','Pi','--provider','openai-codex','--model','gpt-6-luna','--effort','high').code,0);
+    assert.equal(run('model-run','repo-1','--role','作業役','--agent','Pi','--provider','openai-codex','--model','gpt-6-luna','--effort','low','--fast').code,0);
+    const ledger=new Ledger(join(dir,'db.sqlite'));
+    try {const spans=ledger.spans('repo-1');assert.equal(spans.length,2);
+      assert.deepEqual(spans[0]!.attributes,{'model.role':'作業役','model.agent':'Pi','model.provider':'openai-codex','model.model':'gpt-6-luna','model.effort':'high','model.fast':false});
+      assert.deepEqual([spans[1]!.attributes['model.effort'],spans[1]!.attributes['model.fast']],['low',true]);
+    } finally {ledger.close();}
+    assert.equal(run('model-run','repo-1','--role','誰か','--agent','Pi').code,1);
+    assert.equal(run('model-run','nothing-1','--role','作業役').code,1);
+    assert.equal(new Ledger(join(dir,'db.sqlite')).spans('repo-1').length,2); // 断られた分は残らない
   } finally {rmSync(dir,{recursive:true,force:true});delete process.env.TASK_LEDGER_DB;}
 });

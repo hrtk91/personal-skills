@@ -15,6 +15,9 @@ export const AFTER_WORK: readonly Status[] = ['確かめ中', 'レビュー中',
 // Sending work back to the worker, by a failed check or a review, counts toward this many runs in all.
 export const MAX_ATTEMPTS = Number(process.env.TASK_MAX_ATTEMPTS ?? 3);
 const CHECK_TIMEOUT = Number(process.env.TASK_CHECK_TIMEOUT_MS ?? 45 * 60_000);
+// レビュー役の起動値。`claude -p` に --effort は渡さないので、考える強さは claude の既定に任せる（値は分からないため、そう書く）。
+const REVIEW_MODEL = 'opus';
+const REVIEW_EFFORT_NOTE = '指定なし（claude の既定）';
 const REVIEW_TIMEOUT = Number(process.env.TASK_REVIEW_TIMEOUT_MS ?? 30 * 60_000);
 const DEPLOY_TIMEOUT = Number(process.env.TASK_DEPLOY_TIMEOUT_MS ?? 60 * 60_000);
 
@@ -654,7 +657,7 @@ export const realAdvanceDeps: AdvanceDeps = {
     // Opus reads and judges only (10/27 「Opus」). It may read the work and the logs, never write.
     // Without the user's hooks and MCP servers: a Stop hook that waits for an hour kept `claude -p` from exiting (10/28).
     const bin = process.env.TASK_CLAUDE_BIN ?? 'claude';
-    const args = ['-p', '--model', process.env.CLAUDE_MODEL ?? 'opus', ...(process.env.CLAUDE_EFFORT ? ['--effort', process.env.CLAUDE_EFFORT] : []), '--output-format', 'json',
+    const args = ['-p', '--model', REVIEW_MODEL, '--output-format', 'json',
       '--settings', JSON.stringify({ disableAllHooks: true }), '--strict-mcp-config',
       '--allowedTools', 'Read', 'Grep', 'Glob', 'Bash(git diff:*)', 'Bash(git log:*)', 'Bash(git show:*)', 'Bash(git status:*)',
       '--disallowedTools', 'Edit', 'Write', 'NotebookEdit', ...readable.flatMap((dir) => ['--add-dir', dir])];
@@ -663,7 +666,7 @@ export const realAdvanceDeps: AdvanceDeps = {
     { cwd, input: prompt, encoding: 'utf8', timeout: REVIEW_TIMEOUT, maxBuffer: 64 * 1024 * 1024 });
     const failed = result.status === 0 ? '' : `\n（レビュー役が終了コード ${result.status} で終わった）${result.stderr ?? ''}`;
     // The JSON result carries the answer and what the call cost; anything else is passed on as it came.
-    const attributes: SpanAttributes = { 'model.role': 'レビュー役', 'model.agent': 'Claude', 'model.provider': 'anthropic', 'model.model': process.env.CLAUDE_MODEL ?? 'opus', 'model.effort': process.env.CLAUDE_EFFORT ?? '記録なし', 'model.fast': false };
+    const attributes: SpanAttributes = { 'model.role': 'レビュー役', 'model.agent': 'Claude', 'model.provider': 'anthropic', 'model.model': REVIEW_MODEL, 'model.effort': REVIEW_EFFORT_NOTE, 'model.fast': false };
     try {
       const json = JSON.parse(result.stdout ?? '') as { result?: string; session_id?: string; total_cost_usd?: number; duration_ms?: number; num_turns?: number; usage?: Record<string, number> };
       const usage = json.usage ?? {};

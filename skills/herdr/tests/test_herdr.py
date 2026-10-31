@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import shlex
 import shutil
+import sqlite3
 import subprocess
 import tempfile
 import unittest
@@ -649,6 +650,57 @@ sys.exit(result.returncode)
         self.assertNotEqual(task["commit"], self.initial_head)
         self.assertEqual((self.root / "systemctl-calls.txt").read_text().splitlines(),
             ["--user start --no-block task-ledger.service"])
+
+    def recorded_model_runs(self):
+        db = sqlite3.connect(f"file:{self.root / 'ledger.sqlite'}?mode=ro", uri=True)
+        try:
+            rows = db.execute("SELECT attempt, name, attributes_json FROM spans WHERE name='作業役' ORDER BY rowid").fetchall()
+        finally:
+            db.close()
+        return [(attempt, name, json.loads(attrs)) for attempt, name, attrs in rows]
+
+    def run_recording(self, **extra):
+        task_id = self.ledger_task()
+        result = self.run_script(TASK_ID=task_id, TASK_LEDGER_DB=str(self.root / "ledger.sqlite"), **extra)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr + (self.work / "herdr-contract.log").read_text())
+        return self.recorded_model_runs()
+
+    def test_pi_default_launch_values_are_recorded_in_the_ledger(self):
+        runs = self.run_recording(IMPL_AGENT="pi", REV_AGENT="codex", FAKE_SUPERVISOR="claude-271")
+        self.assertEqual(len(runs), 1, runs)
+        attempt, _, attrs = runs[0]
+        self.assertEqual(attempt, 1)
+        self.assertEqual(attrs, {"model.role": "作業役", "model.agent": "Pi", "model.provider": "openai-codex",
+            "model.model": "gpt-6-luna", "model.effort": "high", "model.fast": False})
+        start = self.starts()[0]  # 記録は、Pi に実際に渡した引数と同じ値
+        self.assertEqual(start[start.index("--model") + 1], "gpt-6-luna")
+        self.assertEqual(start[start.index("--thinking") + 1], "high")
+
+    def test_pi_overridden_launch_values_are_recorded_in_the_ledger(self):
+        runs = self.run_recording(IMPL_AGENT="pi", REV_AGENT="codex", PI_PROVIDER="llamacpp-igpu", PI_MODEL="gemma", PI_THINKING="low", PI_SERVICE_TIER="priority", FAKE_SUPERVISOR="claude-271")
+        attrs = runs[0][2]
+        self.assertEqual((attrs["model.provider"], attrs["model.model"], attrs["model.effort"], attrs["model.fast"]), ("llamacpp-igpu", "gemma", "low", True))
+        start = self.starts()[0]
+        self.assertEqual((start[start.index("--model") + 1], start[start.index("--thinking") + 1]), ("gemma", "low"))
+
+    def test_codex_launch_values_are_recorded_in_the_ledger(self):
+        runs = self.run_recording(IMPL_AGENT="codex", REV_AGENT="codex", CODEX_MODEL="gpt-6-astra", CODEX_EFFORT="high", CODEX_TIER="priority")
+        self.assertEqual(runs[0][2], {"model.role": "作業役", "model.agent": "Codex", "model.provider": "openai-codex",
+            "model.model": "gpt-6-astra", "model.effort": "high", "model.fast": True})
+
+    def test_claude_launch_values_are_recorded_in_the_ledger(self):
+        runs = self.run_recording(IMPL_AGENT="claude", REV_AGENT="codex", CLAUDE_MODEL="haiku", CLAUDE_EFFORT="medium")
+        self.assertEqual(runs[0][2], {"model.role": "作業役", "model.agent": "Claude", "model.provider": "anthropic",
+            "model.model": "haiku", "model.effort": "medium", "model.fast": False})
+
+    def test_a_ledger_that_cannot_record_does_not_stop_the_worker(self):
+        task_id = self.ledger_task()
+        broken = self.root / "task-broken"
+        broken.write_text(f"#!/bin/sh\n[ \"$1\" = model-run ] && exit 1\nexec {TASK_BIN} \"$@\"\n")
+        broken.chmod(0o755)
+        result = self.run_script(IMPL_AGENT="pi", REV_AGENT="codex", TASK_ID=task_id, TASK_LEDGER_DB=str(self.root / "ledger.sqlite"), TASK_BIN=str(broken), FAKE_SUPERVISOR="claude-271")
+        self.assertEqual(len(self.starts()), 1, result.stdout + result.stderr)
+        self.assertIn("台帳に起動値を記録できなかった", (self.work / "herdr-contract.log").read_text())
 
     def test_ledger_kick_failure_does_not_change_script_exit_status(self):
         task_id = self.ledger_task()

@@ -60,9 +60,9 @@ pi_goal_extension() {  # <agent> <作業場所> → 拡張のパス（使わな�
 
 # ハーネスの Pi の会話は、ふだん使いの ~/.pi/agent/sessions（pi-web が一覧にする）と分けて置く（10/30「セッション履歴汚してて普段使いに悪影響」）。
 pi_start() {  # <agent> <pane> <作業場所>（作業場所はペインの cwd で決まる）
-  local ext goal channel provider model effort fast=0; ext=$(pi_tier_extension "$1"); goal=$(pi_goal_extension "$1" "$3"); channel=$(pi_channel_extension "$1" "$3")
-  provider=${PI_PROVIDER:-openai-codex}; model=${PI_MODEL:-gpt-6-luna}; effort=${PI_THINKING:-high}; [ -z "${PI_SERVICE_TIER:-}" ] || fast=1
-  if [ -n "${TASK_ID:-}" ]; then "${TASK_BIN:-$SKILL_DIR/../../tools/task-ledger/bin/task}" model-run "$TASK_ID" --role 作業役 --agent Pi --provider "$provider" --model "$model" --effort "$effort" $([ "$fast" = 1 ] && printf '%s' '--fast') >/dev/null || return 1; fi
+  local ext goal channel provider model effort; ext=$(pi_tier_extension "$1"); goal=$(pi_goal_extension "$1" "$3"); channel=$(pi_channel_extension "$1" "$3")
+  provider=${PI_PROVIDER:-openai-codex}; model=${PI_MODEL:-gpt-6-luna}; effort=${PI_THINKING:-high}
+  record_model_run "$1" Pi "$provider" "$model" "$effort" "${PI_SERVICE_TIER:-}"
   herdr agent start "$1" --kind pi --pane "$2" --timeout 90000 -- \
     ${ext:+-e "$ext"} ${goal:+-e "$goal"} ${channel:+-e "$channel"} \
     --provider "$provider" --model "$model" --thinking "$effort" \
