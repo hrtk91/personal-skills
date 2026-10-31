@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -202,6 +203,37 @@ test('task add / brief / ready / answer / export through the command', async () 
     assert.match(run('list', '--all').text, /やめ/);
     assert.match(run('export', '--repo', repo).text, /^# ROADMAP/);
   } finally { rmSync(dir, { recursive: true, force: true }); delete process.env.TASK_LEDGER_DB; }
+});
+
+test('task answer --attempts sets the requested count and zero cleans the previous worktree', async () => {
+  const dir=mkdtempSync(join(tmpdir(),'task-ledger-answer-attempts-'));
+  process.env.TASK_LEDGER_DB=join(dir,'db.sqlite');
+  const {main}=await import('./cli.ts');
+  const repo=join(dir,'repo'), copy=join(dir,'work','wt','resume');
+  mkdirSync(repo,{recursive:true});
+  const git=(...args:string[])=>execFileSync('git',args,{cwd:repo,encoding:'utf8',stdio:['ignore','pipe','pipe']});
+  const run=runner((argv,out)=>main(argv,out,{start:()=>4242,advance:()=>{},alive:()=>true,load:()=>0}));
+  try {
+    git('init');git('config','user.email','test@example.invalid');git('config','user.name','Test');
+    mkdirSync(join(repo,'handoff'),{recursive:true});
+    writeFileSync(join(repo,'handoff','resume.md'),'## 困りごと\n問題\n\n## やること\n実施\n\n## やってよいこと\nこの写し\n\n## やらないこと\nなし\n\n## 終わりの条件\n終わりの条件: 満たした\n');
+    writeFileSync(join(repo,'base.txt'),'base');git('add','base.txt');git('commit','-m','base');
+    mkdirSync(join(dir,'work','wt'),{recursive:true});git('worktree','add','-b','herdr/resume',copy,'HEAD');
+    assert.equal(run('add','--repo',repo,'--title','Answer','--why','w','--brief','handoff/resume.md').code,0);
+    const ledger=new (await import('./ledger.ts')).Ledger();
+    ledger.setStatus('repo-1','走行中','started',{attempts:1});ledger.setRunner('repo-1',{workdir:copy});ledger.setStatus('repo-1','判断待ち','need answer');ledger.releaseRunner('repo-1');ledger.close();
+    const answered=run('answer','repo-1','main 比較をする','--to','待ち','--attempts','2');
+    assert.equal(answered.code,0,answered.err);
+    assert.match(run('show','repo-1').text, /"attempts": 2/);
+    assert.match(run('context','repo-1').text,/## 判断待ちへの答え[\s\S]*main 比較をする/);
+
+    const ledger2=new (await import('./ledger.ts')).Ledger();
+    ledger2.setStatus('repo-1','走行中','started',{attempts:2});ledger2.setRunner('repo-1',{workdir:copy});ledger2.setStatus('repo-1','判断待ち','again');ledger2.releaseRunner('repo-1');ledger2.close();
+    const reset=run('answer','repo-1','やり直す','--to','待ち','--attempts','0');
+    assert.equal(reset.code,0,reset.err);
+    assert.equal(run('run').code,0);
+    assert.equal(git('worktree','list','--porcelain').includes(`worktree ${copy}`),false);
+  } finally {rmSync(dir,{recursive:true,force:true});delete process.env.TASK_LEDGER_DB;}
 });
 
 test('task add and task brief enforce brief format; task add bounds top-level --files unless explicitly broad', async () => {
