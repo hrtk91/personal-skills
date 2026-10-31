@@ -448,8 +448,10 @@ export function collectRemainingFindings(events: Array<{ note: string | null }>)
 export function reapplyRevertedMerge(ledger: Ledger, task: Task, deps: AdvanceDeps): string | null {
   const events = ledger.events(task.id);
   const recovered = new Set(events.flatMap((event) => {
-    const match = event.note?.match(/取り消し(?:を再適用|を処理済み): ([0-9a-f]{40})/);
-    return match ? [match[1]!] : [];
+    const note = event.note ?? '';
+    const processed = note.match(/取り消しを処理済み: ([0-9a-f]{40}(?:,[0-9a-f]{40})*)/);
+    const reapplied = [...note.matchAll(/取り消しを再適用: ([0-9a-f]{40})/g)].map((match) => match[1]!);
+    return [...(processed?.[1]?.split(',') ?? []), ...reapplied];
   }));
   const pendingEvent = [...events].reverse().find((event) => {
     const match = event.note?.match(/取り消しコミット: ([0-9a-f]{40})（取り消した取り込み: ([0-9a-f]{40})）/);
@@ -464,13 +466,8 @@ export function reapplyRevertedMerge(ledger: Ledger, task: Task, deps: AdvanceDe
     const handoffConflicts = conflicts.filter((path) => path.startsWith('handoff/'));
     const recoveryConflicts = conflicts.filter((path) => !path.startsWith('handoff/'));
     if (recoveryConflicts.length) {
-      // Reverted task additions commonly appear as modify/delete; retain the worker's branch copy.
-      for (const path of recoveryConflicts) {
-        if (deps.sh(`git checkout --ours -- ${quote(path)} && git add -- ${quote(path)}`, task.workdir!, 60_000).code !== 0) {
-          deps.sh('git merge --abort', task.workdir!, 60_000);
-          return `取り消しの再適用前に作業枝の衝突を解けなかった: ${path}`;
-        }
-      }
+      deps.sh('git merge --abort', task.workdir!, 60_000);
+      return `取り消しの再適用前に handoff/ 以外の衝突があり、取り込みを中止した。判断が必要: ${recoveryConflicts.join('、')}`;
     }
     for (const path of handoffConflicts) {
       const kept = deps.sh(`git checkout --ours -- ${quote(path)} && git add -- ${quote(path)}`, task.workdir!, 60_000);

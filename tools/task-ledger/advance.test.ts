@@ -6,7 +6,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Ledger } from './ledger.ts';
-import { advance, herdrTabSweepCandidates, outsideTaskFiles, parseVerdict, realAdvanceDeps, sweepHerdrTabs, type AdvanceDeps } from './advance.ts';
+import { advance, herdrTabSweepCandidates, outsideTaskFiles, parseVerdict, realAdvanceDeps, reapplyRevertedMerge, sweepHerdrTabs, type AdvanceDeps } from './advance.ts';
 import { buildTrace, renderTrace } from './trace.ts';
 import { taskContext } from './context.ts';
 import { main } from './cli.ts';
@@ -621,6 +621,37 @@ test('when someone commits during a failed merged check, retry reapplies the rev
     assert.equal(readFileSync(join(f.repo, 'mul.js'), 'utf8'), 'export const mul = (a, b) => a * b + 1;\n', 'the worker fix reaches the repository');
     assert.equal(readFileSync(join(f.repo, 'handoff/t-report.md'), 'utf8'), '出し直しの新しい報告\n終わりの条件: 満たした\n', 'the rewritten report reaches the repository');
     assert.match(git(f.workdir, 'log', '--format=%s'), /Revert/);
+  } finally { f.done(); }
+});
+
+test('reapply treats every comma-separated processed revert id as recovered', () => {
+  const f = fixture();
+  try {
+    const first = '1'.repeat(40); const second = '2'.repeat(40);
+    f.ledger.setStatus('repo-1', '判断待ち', `取り消しコミット: ${first}（取り消した取り込み: ${'3'.repeat(40)}）`);
+    f.ledger.setStatus('repo-1', '判断待ち', `取り消しコミット: ${second}（取り消した取り込み: ${'4'.repeat(40)}）`);
+    f.ledger.setStatus('repo-1', '判断待ち', `再出しで枝を作り直した。過去の取り消しを処理済み: ${first},${second}`);
+    const originalHead = git(f.workdir, 'rev-parse', 'HEAD').trim();
+    assert.equal(reapplyRevertedMerge(f.ledger, f.ledger.get('repo-1')!, realAdvanceDeps), null);
+    assert.equal(git(f.workdir, 'rev-parse', 'HEAD').trim(), originalHead, 'no processed revert is replayed');
+  } finally { f.done(); }
+});
+
+test('reapply refuses non-handoff conflicts instead of choosing the worker branch', () => {
+  const f = fixture({ files: ['math.js'] });
+  try {
+    // Repo and worker make incompatible changes after their shared base.
+    writeFileSync(join(f.repo, 'math.js'), 'export const sub = (a, b) => a - b - 1;\n');
+    git(f.repo, 'add', 'math.js'); git(f.repo, 'commit', '-qm', 'repo change');
+    writeFileSync(join(f.workdir, 'math.js'), 'export const sub = (a, b) => a - b + 1;\n');
+    git(f.workdir, 'add', 'math.js'); git(f.workdir, 'commit', '-qm', 'worker change');
+    // Record a pending revert while leaving the independently changed repository and worker branches intact.
+    const undo = '5'.repeat(40);
+    f.ledger.setStatus('repo-1', '判断待ち', `取り消しコミット: ${undo}（取り消した取り込み: ${'6'.repeat(40)}）`);
+    const result = reapplyRevertedMerge(f.ledger, f.ledger.get('repo-1')!, realAdvanceDeps);
+    assert.ok((result ?? '').includes('handoff/ 以外の衝突'));
+    assert.equal(git(f.workdir, 'rev-parse', 'HEAD').trim(), git(f.workdir, 'rev-parse', 'herdr/t').trim());
+    assert.ok(!git(f.workdir, 'status', '--porcelain').includes('UU'));
   } finally { f.done(); }
 });
 
