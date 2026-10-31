@@ -8,7 +8,7 @@ import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defaultPath, type Ledger, type SpanAttributes, type Status, type Task } from './ledger.ts';
 import { normalizeReviewKinds } from './metrics.ts';
-import { HERDR_RUN, logPath, runName, workerEnv } from './run.ts';
+import { herdrRunPath, logPath, runName, workerEnv } from './run.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const AFTER_WORK: readonly Status[] = ['確かめ中', 'レビュー中', '取り込み中'];
@@ -374,7 +374,7 @@ git worktree remove --force "$T" >/dev/null 2>&1; rm -rf "$T"; exit $rc`, repo, 
     }
     said.push(`${task.id}: 本番に出した`);
   }
-  const cleaned = timed(ledger, task, '片付け', () => deps.sh(`bash ${quote(HERDR_RUN)} --cleanup ${quote(runName(task))}`, repo, 120_000), exitCode);
+  const cleaned = timed(ledger, task, '片付け', () => deps.sh(`bash ${quote(herdrRunPath())} --cleanup ${quote(runName(task))}`, repo, 120_000), exitCode);
   const remainingFindings = collectRemainingFindings(ledger.events(task.id));
   const reviewNote = remainingFindings.length ? `残りにした指摘: ${JSON.stringify(remainingFindings)}` : '';
   ledger.setStatus(task.id, '済', [cleaned.code === 0 ? '取り込んだ' : `取り込んだが片付けに失敗: ${tail(cleaned.output, 3)}`, task.deploy ? '本番に出した' : '', reviewNote].filter(Boolean).join('。'), { commit });
@@ -689,7 +689,7 @@ export const realAdvanceDeps: AdvanceDeps = {
   resend(task, name, briefRefreshed = false) {
     const out = openSync(logPath(task.id), 'a');
     try {
-      const child = spawn('bash', [process.env.TASK_HERDR_RUN ?? HERDR_RUN, name], {
+      const child = spawn('bash', [herdrRunPath(), name], {
         cwd: task.repo, detached: true, stdio: ['ignore', out, out],
         env: sendBackEnv(task, briefRefreshed),
       });

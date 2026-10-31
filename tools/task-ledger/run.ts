@@ -10,7 +10,10 @@ import { ACTIVE, defaultPath, type Ledger, type Task, type Worker } from './ledg
 import { reapplyRevertedMerge, realAdvanceDeps, sweepHerdrTabs } from './advance.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-export const HERDR_RUN = process.env.TASK_HERDR_RUN ?? join(HERE, '../../skills/herdr/herdr-run.sh');
+/** Resolve the herdr-run entry point at call time so both harness paths honor current configuration. */
+export function herdrRunPath(): string {
+  return process.env.TASK_HERDR_RUN ?? join(HERE, '../../skills/herdr/herdr-run.sh');
+}
 // Above this share of CPU or memory nothing new starts (the user's rule: use 6〜8 割 of the PC).
 export const BUSY = Number(process.env.TASK_BUSY ?? 0.8);
 
@@ -133,7 +136,7 @@ export const realDeps: RunDeps = {
     mkdirSync(dirname(logPath(task.id)), { recursive: true });
     const out = openSync(logPath(task.id), 'a');
     try {
-      const child = spawn('bash', [HERDR_RUN, name], {
+      const child = spawn('bash', [herdrRunPath(), name], {
         cwd: task.repo, detached: true, stdio: ['ignore', out, out],
         env: workerEnv({ HERDR_WORKSPACE_ID: workspace, REPO: task.repo, TASK_ID: task.id, ...(task.check ? { TASK_CHECK: task.check } : {}), ...(task.issue_id && task.brief === `handoff/${task.issue_id}.md` ? { TASK_ISSUE_ID: task.issue_id } : {}), ...extraEnv }, task),
       });
