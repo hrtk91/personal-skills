@@ -28,8 +28,8 @@ export function loadStageData(ledger: Ledger, repo: string, now = new Date()): S
           waitsFor.push({ type:"after", taskId:id, title:predecessor.title, stage:stageFor(predecessor.status), status:predecessor.status });
         }
       }
-      // Ledger.ready() is authoritative for eligibility; describe active same-repo file locks only.
-      for (const other of active) {
+      // Explain both active locks and earlier tasks Ledger.ready() selected for this pass.
+      for (const other of [...active, ...ready]) {
         if (other.repo !== repo || other.id === task.id || !filesOverlap(task.files, other.files)) continue;
         waitsFor.push({ type:"files", taskId:other.id, title:other.title, files: task.files.length === 0 || other.files.length === 0 ? [...new Set([...task.files,...other.files])] : task.files.filter(f => other.files.some(g => filesOverlap([f],[g]))) });
       }
