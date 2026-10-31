@@ -61,6 +61,13 @@ session=
 [ "${SEND_BACK:-}" = 1 ] && [ -f "$session_file" ] && session=$(cat "$session_file")
 resuming=0; [ -n "$session" ] && resuming=1
 : >> "$raw"
+# The sandbox lets the worker write only inside its worktree, so /tmp is read-only there and tests that make temp
+# dirs fail with EROFS (10/31, two tasks). Point TMPDIR at a folder in the worktree that git ignores locally.
+worktree=$(git -C "$(dirname "$report")" rev-parse --show-toplevel 2>/dev/null) && {
+  export TMPDIR="$worktree/.worker-tmp"; mkdir -p "$TMPDIR"
+  exclude=$(git -C "$worktree" rev-parse --git-path info/exclude)
+  grep -qx '.worker-tmp/' "$exclude" 2>/dev/null || printf '.worker-tmp/\n' >> "$exclude"
+}
 for attempt in 1 2; do
   raw_start=$(wc -c < "$raw")
   if [ "${CLAUDE_SANDBOX:-1}" = 0 ]; then
