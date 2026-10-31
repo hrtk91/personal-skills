@@ -18,10 +18,10 @@ configure_repo() {
   git -C "$1" config user.email "public-push-test@example.invalid"
 }
 clone_case() {
-  local source=$1 dest=$2 remote=$3
-  git clone -q --no-hardlinks "$source" "$dest"
-  configure_repo "$dest"
-  git clone -q --bare --no-hardlinks "$dest" "$remote"
+  local source=$1 checkout=$2 remote=$3
+  git clone -q --no-hardlinks "$source" "$checkout"
+  configure_repo "$checkout"
+  git clone -q --bare --no-hardlinks "$source" "$remote"
 }
 assert_temp_cleaned() {
   local source=$1 parent name
@@ -94,7 +94,7 @@ secret_before=$(git --git-dir "$secret_remote" rev-parse refs/heads/main)
 token_prefix='ghp_'
 token_part_one='123456789012'
 token_part_two='345678901234'
-token_part_three='567890123456'
+token_part_three='567890123457'
 printf 'token=%s%s%s%s\n' "$token_prefix" "$token_part_one" "$token_part_two" "$token_part_three" >>"$secret_source/public-push-fixture.txt"
 git -C "$secret_source" add public-push-fixture.txt
 git -C "$secret_source" commit -qm 'test fixture: add runtime-built fake secret'

@@ -65,15 +65,26 @@ grep -F 'file.txt:' "$tmp/double-plus.out" >/dev/null || fail '++-prefixed findi
 ! grep -F "$HOME" "$tmp/double-plus.out" >/dev/null || fail 'HOME path leaked in ++-prefixed diagnostic'
 echo "PASS: ++-prefixed HOME path is rejected with file and line only"
 
-# A well-known GitHub token-shaped fake secret is rejected by real gitleaks.
+# The exact well-known fake token is allowlisted, but a runtime-built one-character
+# variant remains detectable by real gitleaks.
 new_repo "$tmp/secret"
-printf 'token=ghp_123456789012345678901234567890123456\n' >>"$tmp/secret/file.txt"
-git -C "$tmp/secret" commit -qam secret
+token_prefix='ghp_'
+token_part_one='123456789012'
+token_part_two='345678901234'
+token_part_three='567890123456'
+fake_token="${token_prefix}${token_part_one}${token_part_two}${token_part_three}"
+printf 'token=%s\n' "$fake_token" >>"$tmp/secret/file.txt"
+git -C "$tmp/secret" commit -qam exact-fake-token
+(cd "$tmp/secret" && "$repo_root/tools/pre-push-check/check.sh" HEAD~1..HEAD)
+echo "PASS: exact fake token is allowed"
+near_miss="${fake_token%?}7"
+printf 'token=%s\n' "$near_miss" >>"$tmp/secret/file.txt"
+git -C "$tmp/secret" commit -qam near-miss-token
 if (cd "$tmp/secret" && "$repo_root/tools/pre-push-check/check.sh" HEAD~1..HEAD) >"$tmp/secret.out" 2>&1; then
-  fail 'gitleaks-detectable fake key was accepted'
+  fail 'one-character fake-token variant was accepted'
 fi
-! grep -F 'ghp_123456789012345678901234567890123456' "$tmp/secret.out" >/dev/null || fail 'secret value leaked in diagnostic'
-echo "PASS: gitleaks-detectable fake key is rejected without printing the value"
+! grep -F "$near_miss" "$tmp/secret.out" >/dev/null || fail 'secret value leaked in diagnostic'
+echo "PASS: one-character fake-token variant is rejected without printing the value"
 
 # Keep git available but hide the installed gitleaks binary.
 mkdir "$tmp/no-gitleaks"
@@ -90,6 +101,7 @@ echo "PASS: missing gitleaks fails closed with a reason"
 new_repo "$tmp/hook"
 mkdir -p "$tmp/hook/tools/pre-push-check" "$tmp/hook/.githooks"
 cp "$repo_root/tools/pre-push-check/check.sh" "$tmp/hook/tools/pre-push-check/check.sh"
+cp "$repo_root/tools/pre-push-check/gitleaks.toml" "$tmp/hook/tools/pre-push-check/gitleaks.toml"
 cp "$repo_root/.githooks/pre-push" "$tmp/hook/.githooks/pre-push"
 chmod +x "$tmp/hook/tools/pre-push-check/check.sh" "$tmp/hook/.githooks/pre-push"
 printf 'token=ghp_123456789012345678901234567890123456\n' >>"$tmp/hook/file.txt"
