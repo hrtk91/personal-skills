@@ -18,10 +18,10 @@ configure_repo() {
   git -C "$1" config user.email "public-push-test@example.invalid"
 }
 clone_case() {
-  local source=$1 dest=$2 remote=$3
-  git clone -q --no-hardlinks "$source" "$dest"
-  configure_repo "$dest"
-  git clone -q --bare --no-hardlinks "$dest" "$remote"
+  local source=$1 checkout=$2 remote=$3
+  git clone -q --no-hardlinks "$source" "$checkout"
+  configure_repo "$checkout"
+  git clone -q --bare --no-hardlinks "$source" "$remote"
 }
 assert_temp_cleaned() {
   local source=$1 parent name
