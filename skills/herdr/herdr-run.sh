@@ -199,12 +199,12 @@ PY
     echo environment-failed > "$WORK/reviewed-$name"
     return 2
   fi
-  # 1. 依頼文が指す handoff の文書が写しに無ければ、本体からコピーする。どこにも無ければ止める（自分の出力の報告・下見・レビューは除く）
+  # 1. 依頼文が指す handoff の文書が写しに無ければ、本体からコピーする。どこにも無ければ止める（自分の出力の報告・下見・レビューと、仕事の名前で始まる出力は除く）
   for f in $(named_files "$W/$REQ" | grep "^$HANDOFF/"); do
     case $f in "$DESIGN"|"$REPORT"|"$REVIEW") continue ;; esac
     [ -e "$W/$f" ] && continue
     if [ -e "$REPO/$f" ]; then mkdir -p "$W/$(dirname "$f")" && cp -r "$REPO/$f" "$W/$f" && log "依頼文が指す $f を本体から写しにコピーした（本体で未コミット）"
-    else case $f in *-report.md|*-design.md|*-review.md|*-shots*) continue ;; esac
+    else case $f in *-report.md|*-design.md|*-review.md|*-shots*|"$HANDOFF/$TASK_PREFIX$name-"*) continue ;; esac
       log "依頼文が指す $f が本体にも写しにも無い。依頼文を直してから出す"; return 1; fi
   done
   # 2. STATE に「待ち」と書いた仕事は出さない（WAIT_OK=1 で出す）

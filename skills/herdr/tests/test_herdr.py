@@ -1034,6 +1034,11 @@ sys.exit(result.returncode)
         self.assertIn("handoff/missing-brief.md が本体にも写しにも無い", self.log_text())
         self.assertEqual(len(self.state()["prompts"]), 0)
 
+    def test_preflight_allows_an_output_file_named_after_the_task(self):
+        (self.repo / "handoff" / "contract.md").write_text("Write the list to handoff/contract-candidates.tsv\n")
+        self.assert_success(self.run_script())
+        self.assertNotIn("本体にも写しにも無い", self.log_text())
+
     def test_preflight_ignores_paths_quoted_in_code_blocks(self):
         (self.repo / "handoff" / "contract.md").write_text("Fix the flaky test.\n\n```\nAssertionError: 'handoff/missing-brief.md が無い'\n```\n")
         self.assert_success(self.run_script())
