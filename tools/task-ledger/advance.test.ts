@@ -6,7 +6,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Ledger } from './ledger.ts';
-import { advance, herdrTabSweepCandidates, outsideTaskFiles, parseVerdict, realAdvanceDeps, reapplyRevertedMerge, sweepHerdrTabs, type AdvanceDeps } from './advance.ts';
+import { advance, herdrTabSweepCandidates, outsideTaskFiles, parseVerdict, realAdvanceDeps, reapplyRevertedMerge, sendBackEnv, sweepHerdrTabs, type AdvanceDeps } from './advance.ts';
 import { buildTrace, renderTrace } from './trace.ts';
 import { taskContext } from './context.ts';
 import { main } from './cli.ts';
@@ -16,7 +16,7 @@ function git(cwd: string, ...args: string[]): string {
 }
 
 /** A repository, a worker's worktree with one finished commit, and a task waiting at 確かめ中. */
-function fixture(options: { check?: string; attempts?: number; files?: string[]; deploy?: boolean } = {}) {
+function fixture(options: { check?: string; attempts?: number; files?: string[]; deploy?: boolean; worker?: 'pi' | 'codex' | 'claude'; model?: string; effort?: string } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'task-advance-'));
   process.env.TASK_LEDGER_DB = join(dir, 'ledger.sqlite');
   const repo = join(dir, 'repo'); mkdirSync(join(repo, 'handoff'), { recursive: true });
@@ -29,7 +29,7 @@ function fixture(options: { check?: string; attempts?: number; files?: string[];
   writeFileSync(join(workdir, 'mul.js'), 'export const mul = (a, b) => a * b;\n');
   git(workdir, 'add', '-A'); git(workdir, 'commit', '-qm', 'worker');
   const ledger = new Ledger(':memory:');
-  ledger.add({ repo, title: '掛け算を足す', why: 'w', brief: 'handoff/t.md', check: options.check ?? 'test -f mul.js', files: options.files ?? [], deploy: options.deploy });
+  ledger.add({ repo, title: '掛け算を足す', why: 'w', brief: 'handoff/t.md', check: options.check ?? 'test -f mul.js', files: options.files ?? [], deploy: options.deploy, worker: options.worker, model: options.model, effort: options.effort });
   ledger.setStatus('repo-1', '走行中', null, { attempts: options.attempts ?? 1 });
   ledger.setRunner('repo-1', { workdir });
   ledger.setStatus('repo-1', '確かめ中', '作業役が終わった');
@@ -48,6 +48,17 @@ function deps(answer: string, calls: string[] = [], deployCode = 0): AdvanceDeps
     pause: () => {},
   };
 }
+
+test('a requeued task gets its ledger worker, model and effort in the second-run environment', () => {
+  const f = fixture({ worker: 'claude', model: 'sonnet', effort: 'high' });
+  try {
+    const task = f.ledger.get('repo-1')!;
+    const env = sendBackEnv(task, false);
+    assert.deepEqual([env.IMPL_AGENT, env.CLAUDE_MODEL, env.CLAUDE_EFFORT], ['claude', 'sonnet', 'high']);
+    assert.equal(env.RESUME, 'newtab');
+    assert.equal(env.SEND_BACK, '1');
+  } finally { f.done(); }
+});
 
 test('an unmet report without the environment marker is still returned to the worker', () => {
   const f = fixture();
