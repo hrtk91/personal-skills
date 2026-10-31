@@ -170,7 +170,7 @@ test('an existing brief: fields are read, other sections survive into the brief,
   } finally {rmSync(dir,{recursive:true,force:true});delete process.env.TASK_LEDGER_DB;}
 });
 
-test('task add accepts worker settings and show/list/context expose them', async () => {
+test('task add accepts worker settings and show/list expose them but context omits them', async () => {
   const dir=mkdtempSync(join(tmpdir(),'task-ledger-worker-'));process.env.TASK_LEDGER_DB=join(dir,'db.sqlite');const {main}=await import('./cli.ts');
   const run=runner(main),repo=join(dir,'repo');
   try {
@@ -179,7 +179,7 @@ test('task add accepts worker settings and show/list/context expose them', async
     assert.match(added.text,/\[claude\/haiku\/high\]/);
     assert.match(run('show','repo-1').text, /"worker": "claude"[\s\S]*"model": "haiku"[\s\S]*"effort": "high"/);
     assert.match(run('list').text,/claude\/haiku\/high/);
-    assert.match(run('context','repo-1').text,/worker: claude[\s\S]*model: haiku[\s\S]*effort: high/);
+    assert.doesNotMatch(run('context','repo-1').text,/作業役とモデル|worker:|model:|effort:/);
     const bad=run('add','--repo',repo,'--title','bad','--why','w','--worker','agent');
     assert.equal(bad.code,1);assert.match(bad.err,/--worker/);
   } finally {rmSync(dir,{recursive:true,force:true});delete process.env.TASK_LEDGER_DB;}
