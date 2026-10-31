@@ -54,6 +54,26 @@ test('the latest send-back context includes the reason and only the first 80 det
   ledger.close();
 });
 
+test('requeued decision notes reach the worker for both Claude note forms and disappear after worker completion', () => {
+  const ledger = new Ledger(':memory:');
+  const task = ledger.add({ repo: '/r/app', title: 'requeue', why: 'why', brief: 'brief' });
+  ledger.setStatus(task.id, '走行中', 'start', { attempts: 1 });
+  ledger.setStatus(task.id, '判断待ち', 'question');
+  ledger.setStatus(task.id, '待ち', '差し戻し: Claude: X');
+  let context = taskContext(ledger, ledger.get(task.id)!);
+  assert.match(context, /## 今回の差し戻し[\s\S]*- X/);
+
+  ledger.setStatus(task.id, '走行中', 'start again', { attempts: 2 });
+  ledger.setStatus(task.id, '判断待ち', 'question again');
+  ledger.setStatus(task.id, '待ち', 'Claude: Y');
+  context = taskContext(ledger, ledger.get(task.id)!);
+  assert.match(context, /## 今回の差し戻し[\s\S]*- Y/);
+  ledger.setStatus(task.id, '走行中', 'worker resumed', { attempts: 3 });
+  ledger.setStatus(task.id, '確かめ中', 'worker finished');
+  assert.doesNotMatch(taskContext(ledger, ledger.get(task.id)!), /## 今回の差し戻し/);
+  ledger.close();
+});
+
 test('answer survives runOnce overwriting note and is hidden after the worker finishes', () => {
   const ledger = new Ledger(':memory:');
   const repo = '/r/app';

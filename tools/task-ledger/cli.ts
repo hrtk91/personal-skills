@@ -35,8 +35,8 @@ const USAGE = `使い方:
   task hold <id> <理由といつ見直すか>
   task drop <id> <理由>
   task decision refresh [<id>]                         判断待ちカードを作り直す
-  task answer <id> <答え> [--to 待ち|やめ|保留|確かめ中|取り込み中]  判断待ちに答える（既定は 待ち に戻す。確かめ中 は Claude が作業役のコピーで直したとき、
-                                                        取り込み中 は Claude がレビューの「直す」を越えて取り込むと決めたとき。答えに理由を書く）
+  task answer <id> <答え> [--to 待ち|やめ|保留|確かめ中|取り込み中] [--attempts <n>]  判断待ちに答える（既定は 待ち に戻す。--attempts は回数を設定し、0 は前の作業用コピーを片付けて出し直す。
+                                                        確かめ中 は Claude が作業役のコピーで直したとき、取り込み中 は Claude がレビューの「直す」を越えて取り込むと決めたとき。答えに理由を書く）
   task export [--repo <パス>]                           ROADMAP 用の一覧（読む用の写し）
   task run                                              1 回まわす（消えたプロセスを見つけ、終わった仕事を先へ進め、次の仕事を 1 つ出す）
   task trace <id>                                       1 件の時間の流れ（状態ごと・ハーネスの段ごと）
@@ -131,7 +131,7 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
     after: { type: 'string' }, files: { type: 'string' }, 'files-broad': { type: 'boolean' }, kind: { type: 'string' }, deploy: { type: 'boolean' },
     worker: { type: 'string' }, model: { type: 'string' }, effort: { type: 'string' },
     repo: { type: 'string' }, name: { type: 'string' }, off: { type: 'boolean' }, all: { type: 'boolean' }, status: { type: 'string' }, to: { type: 'string' },
-    agent: { type: 'string' }, runner: { type: 'string' }, commit: { type: 'string' }, log: { type: 'string' }, workdir: { type: 'string' },
+    agent: { type: 'string' }, runner: { type: 'string' }, commit: { type: 'string' }, log: { type: 'string' }, workdir: { type: 'string' }, attempts: { type: 'string' },
     since: { type: 'string' }, json: { type: 'boolean' }, days: { type: 'string' }, 'dry-run': { type: 'boolean' }, weeks: { type: 'string' }, out: { type: 'string' }, issue: { type: 'string' }, body: { type: 'string' }, by: { type: 'string' }, from: { type: 'string' }, goal: { type: 'string' }, stage: { type: 'string' }, stages: { type: 'string' }, loose: { type: 'boolean' }, open: { type: 'boolean' }, docKind: { type: 'string' }, path: { type: 'string' },
     'なぜ': { type: 'string' }, '今の状態': { type: 'string' }, '関係する所': { type: 'string' }, 'やること': { type: 'string' }, 'やってよいこと': { type: 'string' }, 'やらないこと': { type: 'string' }, '終わりの条件': { type: 'string' }, '確かめのコマンド': { type: 'string' }, '触るファイル': { type: 'string' }, '種類': { type: 'string' }, '本番に出すか': { type: 'string' }, 'task-specific': { type: 'boolean' },
   } });
@@ -288,7 +288,8 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
         const [id, ...words] = positionals;
         if (!id || words.length === 0) throw new Error('task answer <id> <答え>');
         const to = (values.to ?? '待ち') as Status;
-        const task = answerTask(ledger, id, words.join(' '), to);
+        const attempts = values.attempts === undefined ? undefined : Number(values.attempts);
+        const task = answerTask(ledger, id, words.join(' '), to, attempts);
         out(line(task));
         if (to !== '確かめ中' && to !== '取り込み中') return 0;
         // Fixed by hand (check, review, merge) or accepted over the review (merge; the check after merging still runs).

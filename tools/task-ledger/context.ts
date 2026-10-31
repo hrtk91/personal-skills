@@ -19,13 +19,20 @@ export function taskContext(ledger: Ledger, task: Task, now = new Date(), option
       && event.note?.startsWith('答え: ')) answerIndex = i;
   }
   const answer = answerIndex >= 0 ? taskEvents[answerIndex]!.note!.slice('答え: '.length) : null;
-  const sendBackIndex = taskEvents.findLastIndex((event) => event.to_status === '走行中' && event.note?.startsWith('差し戻し: '));
+  const sendBackIndex = taskEvents.findLastIndex((event) =>
+    (event.to_status === '走行中' && event.note?.startsWith('差し戻し: '))
+    || ((event.from_status === '判断待ち' || event.from_status === '保留') && event.to_status === '待ち'
+      && (event.note?.startsWith('差し戻し: ') || event.note?.startsWith('Claude: '))));
   const sendBack = sendBackIndex >= 0 ? taskEvents[sendBackIndex]! : null;
   const workerFinished = (index: number) => taskEvents.slice(index + 1).some((event) =>
     event.from_status === '走行中' && event.to_status === '確かめ中');
   if (answer !== null && !workerFinished(answerIndex)) lines.push('## 判断待ちへの答え', answer);
   if (sendBack?.note && !workerFinished(sendBackIndex)) {
-    const [reasonLine, ...rest] = sendBack.note.slice('差し戻し: '.length).split('\n');
+    const note = sendBack.note.startsWith('差し戻し: ')
+      ? sendBack.note.slice('差し戻し: '.length)
+      : sendBack.note.slice('Claude: '.length);
+    const [rawReasonLine, ...rest] = note.split('\n');
+    const reasonLine = rawReasonLine?.replace(/^Claude: /, '');
     const reason = reasonLine?.replace(/\s*（詳しく: .*）$/, '') ?? '';
     const logPath = reasonLine?.match(/（詳しく: (.+)）$/)?.[1] ?? rest.join('\n').match(/^詳しく: (.+)$/m)?.[1];
     let detail: string[] = [];
