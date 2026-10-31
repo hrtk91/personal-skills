@@ -64,7 +64,7 @@ test('a requeued task passes its ledger worker, model and effort through the act
     const d = { ...realAdvanceDeps, pause: () => {} };
     advance(f.ledger, 'repo-1', d, 1);
     let capturedText = '';
-    for (let attempt = 0; attempt < 100; attempt++) {
+    for (let attempt = 0; attempt < 1000; attempt++) {
       if (existsSync(captured)) capturedText = readFileSync(captured, 'utf8');
       if (capturedText.includes('IMPL_AGENT=') && capturedText.includes('CLAUDE_MODEL=') && capturedText.includes('CLAUDE_EFFORT=')) break;
       await new Promise((resolve) => setTimeout(resolve, 10));

@@ -2,7 +2,7 @@ if (process.env.TASK_BIN === undefined) process.env.TASK_BIN = "/bin/true";
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Ledger } from './ledger.ts';
-import { runOnce, workerEnv, type RunDeps } from './run.ts';
+import { herdrRunPath, runOnce, workerEnv, type RunDeps } from './run.ts';
 import { reapplyRevertedMerge, realAdvanceDeps } from './advance.ts';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
@@ -14,6 +14,20 @@ function fake(overrides: Partial<RunDeps> = {}) {
   const deps: RunDeps = { start: (task, name) => { started.push(`${task.id}:${name}`); return 4242; }, advance: (task) => { started.push(`advance:${task.id}`); }, alive: () => true, load: () => 0.3, ...overrides };
   return { deps, started };
 }
+
+test('herdr-run path resolves TASK_HERDR_RUN at call time and falls back when unset', () => {
+  const prior = process.env.TASK_HERDR_RUN;
+  try {
+    process.env.TASK_HERDR_RUN = '/tmp/first-herdr-run.sh';
+    assert.equal(herdrRunPath(), '/tmp/first-herdr-run.sh');
+    process.env.TASK_HERDR_RUN = '/tmp/second-herdr-run.sh';
+    assert.equal(herdrRunPath(), '/tmp/second-herdr-run.sh');
+    delete process.env.TASK_HERDR_RUN;
+    assert.match(herdrRunPath(), /skills\/herdr\/herdr-run\.sh$/);
+  } finally {
+    if (prior === undefined) delete process.env.TASK_HERDR_RUN; else process.env.TASK_HERDR_RUN = prior;
+  }
+});
 
 test('sweeps once even when no tasks are waiting or advancing', () => {
   const ledger = new Ledger(':memory:');
