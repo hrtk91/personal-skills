@@ -588,21 +588,33 @@ test('when the check fails after merging, the merge is undone and other uncommit
 });
 
 test('when someone commits during a failed merged check, retry reapplies the revert and the task can merge again', () => {
-  const f = fixture({ check: 'test -f only-in-worktree || { git -C "$(git rev-parse --path-format=absolute --git-common-dir)/.." -c user.name=t -c user.email=t@t commit -q --allow-empty -m "someone else"; exit 1; }' });
+  const f = fixture({ files: ['mul.js'], check: 'test -f only-in-worktree || { git -C "$(git rev-parse --path-format=absolute --git-common-dir)/.." -c user.name=t -c user.email=t@t commit -q --allow-empty -m "someone else"; exit 1; }' });
   try {
     writeFileSync(join(f.workdir, 'only-in-worktree'), '');
+    writeFileSync(join(f.workdir, 'handoff/t-report.md'), '初回の報告\n');
+    git(f.workdir, 'add', 'handoff/t-report.md'); git(f.workdir, 'commit', '-qm', 'initial report');
     advance(f.ledger, 'repo-1', deps('{"verdict":"通す","reasons":[],"fixes":[]}'), 1);
     assert.equal(f.ledger.get('repo-1')!.status, '判断待ち');
     assert.match(git(f.repo, 'log', '--format=%s').trim(), /someone else/);
     assert.ok(!existsSync(join(f.repo, 'mul.js')), 'the merged work is undone');
     const undoEvent = f.ledger.events('repo-1').find((event) => event.note?.match(/取り消しコミット: ([0-9a-f]{40})/));
     assert.ok(undoEvent, 'the revert commit id is in the task event');
+    f.ledger.db.prepare('UPDATE tasks SET "check"=? WHERE id=?').run('false', 'repo-1');
+    f.ledger.setStatus('repo-1', '確かめ中', 'retry send-back'); f.ledger.releaseRunner('repo-1');
+    const retryDeps = deps('');
+    advance(f.ledger, 'repo-1', retryDeps, 2);
+    assert.equal(f.ledger.get('repo-1')!.status, '走行中');
+    // The worker rewrites its existing report and edits the same file only after the revert is replayed.
+    writeFileSync(join(f.workdir, 'handoff/t-report.md'), '出し直しの新しい報告\n終わりの条件: 満たした\n');
+    writeFileSync(join(f.workdir, 'mul.js'), 'export const mul = (a, b) => a * b + 1;\n');
+    git(f.workdir, 'add', 'mul.js', 'handoff/t-report.md'); git(f.workdir, 'commit', '-qm', 'worker fixes mul and report');
     f.ledger.db.prepare('UPDATE tasks SET "check"=? WHERE id=?').run('true', 'repo-1');
-    f.ledger.setStatus('repo-1', '確かめ中', 'retry'); f.ledger.releaseRunner('repo-1');
-    advance(f.ledger, 'repo-1', deps('{"verdict":"通す","reasons":[],"fixes":[]}'), 2);
-    assert.equal(f.ledger.get('repo-1')!.status, '済');
-    assert.ok(existsSync(join(f.repo, 'mul.js')), 'the worker change reaches the repository again');
-    assert.ok(f.ledger.events('repo-1').some((event) => event.note?.includes(`取り消しを再適用: ${undoEvent.note!.match(/取り消しコミット: ([0-9a-f]{40})/)![1]}`)));
+    f.ledger.setStatus('repo-1', '確かめ中', 'worker finished again'); f.ledger.releaseRunner('repo-1');
+    advance(f.ledger, 'repo-1', deps('{"verdict":"通す","reasons":[],"fixes":[]}'), 3);
+    assert.equal(f.ledger.get('repo-1')!.status, '済', f.ledger.get('repo-1')!.note ?? '');
+    assert.equal(readFileSync(join(f.repo, 'mul.js'), 'utf8'), 'export const mul = (a, b) => a * b + 1;\n', 'the worker fix reaches the repository');
+    assert.equal(readFileSync(join(f.repo, 'handoff/t-report.md'), 'utf8'), '出し直しの新しい報告\n終わりの条件: 満たした\n', 'the rewritten report reaches the repository');
+    assert.match(git(f.workdir, 'log', '--format=%s'), /Revert/);
   } finally { f.done(); }
 });
 

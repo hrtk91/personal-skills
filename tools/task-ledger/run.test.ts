@@ -158,6 +158,7 @@ test('reissuing a waiting task removes its old worktree and markers while preser
     ledger.setStatus(taskId, '走行中', null, { attempts: 1 });
     ledger.setRunner(taskId, { workdir: copy });
     ledger.setStatus(taskId, '判断待ち', 'stopped', { attempts: 0 }); ledger.releaseRunner(taskId);
+    ledger.setStatus(taskId, '判断待ち', `本体に入れたあとの確かめが落ちた。取り消しコミット: ${'a'.repeat(40)}（取り消した取り込み: ${'b'.repeat(40)}）`);
     ledger.setStatus(taskId, '待ち', '再出し');
     let recreated = false;
     const deps = fake({ start: (task, name, env) => {
@@ -176,6 +177,8 @@ test('reissuing a waiting task removes its old worktree and markers while preser
     } }).deps;
     runOnce(ledger, deps);
     assert.equal(recreated, true, ledger.get(taskId)?.note ?? 'start was not called'); assert.equal(existsSync(copy), true);
+    assert.ok(ledger.events(taskId).some((event) => event.note?.includes(`過去の取り消しを処理済み: ${'a'.repeat(40)}`)));
+    assert.equal(readFileSync(join(copy, 'tracked.txt'), 'utf8'), 'original\n', 'the discarded old work is not restored in the recreated branch');
   } finally { ledger.close(); if (oldHerdrWork === undefined) delete process.env.HERDR_WORK; else process.env.HERDR_WORK = oldHerdrWork; rmSync(root, { recursive: true, force: true }); }
 });
 

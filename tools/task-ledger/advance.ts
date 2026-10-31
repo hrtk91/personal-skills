@@ -76,8 +76,6 @@ export function advance(ledger: Ledger, id: string, deps: AdvanceDeps, pid = pro
     const task = ledger.get(id)!;
     if (task.status === '確かめ中') {
       if (!task.workdir || !existsSync(task.workdir)) return stop(`作業用のコピーが見つからない（${task.workdir ?? '記録なし'}）`);
-      const recovery = reapplyRevertedMerge(ledger, task, deps, stop);
-      if (recovery !== null) return recovery;
       const check = checkTwice(ledger, task, said, () => deps.sh(task.check ?? 'true', task.workdir!, CHECK_TIMEOUT), `check-${task.attempts}`, '確かめ');
       const path = writeLog(id, `check-${task.attempts}`, check.output);
       if (isMissingCommand(check.code, task.workdir!, task.check ?? 'true')) return stop(`環境の失敗: 確かめのコマンド \`${task.check}\` に必要なコマンドが無い（終了コード 127）。作業役へ差し戻さず、環境を直してから判断する。`);
@@ -344,10 +342,21 @@ function merge(ledger: Ledger, task: Task, deps: AdvanceDeps, said: string[], st
   // The repository's own name for commits, or the harness's when it has none.
   const merged = timed(ledger, task, '本体に入れる', () => deps.sh(`git -c user.name="$(git config user.name || echo task-ledger)" -c user.email="$(git config user.email || echo task-ledger@noreply.invalid)" merge --no-ff --no-edit -m ${quote(`${task.title}\n\nTask: ${task.id}`)} ${quote(branch)}`, repo, 120_000), exitCode);
   if (merged.code !== 0) {
-    const conflicted = deps.sh('git diff --name-only --diff-filter=U', repo, 60_000).output.trim();
-    deps.sh('git merge --abort', repo, 60_000);
-    if (!conflicted) return stop(`本体に入れられなかった: ${tail(merged.output, 5)}`);
-    return catchUp(ledger, task, deps, before, said, stop);
+    const conflicted = deps.sh('git diff --name-only --diff-filter=U', repo, 60_000).output.split('\n').filter(Boolean);
+    const allowed = new Set([...task.files, ...(task.brief ? [task.brief.replace(/\.md$/, '-report.md')] : [])]);
+    if (conflicted.length && conflicted.every((path) => allowed.has(path) || path.startsWith('handoff/'))) {
+      let resolved = true;
+      for (const path of conflicted) resolved = deps.sh(`git checkout --theirs -- ${quote(path)} && git add -- ${quote(path)}`, repo, 60_000).code === 0 && resolved;
+      if (resolved) {
+        const completed = deps.sh(`git -c user.name="$(git config user.name || echo task-ledger)" -c user.email="$(git config user.email || echo task-ledger@noreply.invalid)" commit --no-edit`, repo, 60_000);
+        if (completed.code === 0) { /* merge is complete with the worker's task/report versions */ }
+        else { deps.sh('git merge --abort', repo, 60_000); return stop(`作業枝側の衝突を選んだ後に取り込めなかった: ${tail(completed.output, 5)}`); }
+      } else { deps.sh('git merge --abort', repo, 60_000); return stop('本体で作業枝側の衝突を解けなかった'); }
+    } else {
+      deps.sh('git merge --abort', repo, 60_000);
+      if (!conflicted.length) return stop(`本体に入れられなかった: ${tail(merged.output, 5)}`);
+      return catchUp(ledger, task, deps, before, said, stop);
+    }
   }
   const mergeCommit = gitHead(repo, deps);
   if (task.check) {
@@ -363,7 +372,7 @@ git worktree remove --force "$T" >/dev/null 2>&1; rm -rf "$T"; exit $rc`, repo, 
       // check ran (Claude's brief did, 10/28, and the reset took it away), undo the merge with a revert instead.
       const undo = deps.sh(`if [ "$(git rev-parse HEAD)" = ${quote(mergeCommit)} ]; then git reset --keep ${quote(before)}; else git -c user.name="$(git config user.name || echo task-ledger)" -c user.email="$(git config user.email || echo task-ledger@noreply.invalid)" revert --no-edit -m 1 ${quote(mergeCommit)}; fi`, repo, 60_000);
       const revertId = undo.code === 0 ? deps.sh('git rev-parse HEAD', repo, 60_000).output.trim() : '';
-      return stop(`本体に入れたあとの確かめが落ちたので戻した。${revertId && revertId !== before ? `取り消しコミット: ${revertId}。` : ''}出力: ${writeLog(task.id, 'merged-check', check.output)}`);
+      return stop(`本体に入れたあとの確かめが落ちたので戻した。${revertId && revertId !== before ? `取り消しコミット: ${revertId}（取り消した取り込み: ${mergeCommit}）。` : ''}出力: ${writeLog(task.id, 'merged-check', check.output)}`);
     }
   }
   const commit = gitHead(repo, deps);
@@ -436,34 +445,58 @@ export function collectRemainingFindings(events: Array<{ note: string | null }>)
 
 // If a failed post-merge check had to be undone with a revert, repeat that revert on the worker's branch
 // after incorporating the repository (which now contains the undo). This makes the original task commit new again.
-function reapplyRevertedMerge(ledger: Ledger, task: Task, deps: AdvanceDeps, stop: (note: string) => string[]): string[] | null {
+export function reapplyRevertedMerge(ledger: Ledger, task: Task, deps: AdvanceDeps): string | null {
   const events = ledger.events(task.id);
   const recovered = new Set(events.flatMap((event) => {
-    const match = event.note?.match(/取り消しを再適用: ([0-9a-f]{40})/);
+    const match = event.note?.match(/取り消し(?:を再適用|を処理済み): ([0-9a-f]{40})/);
     return match ? [match[1]!] : [];
   }));
-  const pending = [...events].reverse().map((event) => event.note?.match(/取り消しコミット: ([0-9a-f]{40})/)?.[1]).find((id) => id && !recovered.has(id));
+  const pendingEvent = [...events].reverse().find((event) => {
+    const match = event.note?.match(/取り消しコミット: ([0-9a-f]{40})（取り消した取り込み: ([0-9a-f]{40})）/);
+    return !!match && !recovered.has(match[1]!);
+  });
+  const pending = pendingEvent?.note?.match(/取り消しコミット: ([0-9a-f]{40})/)?.[1];
   if (!pending) return null;
   const head = gitHead(task.repo, deps);
   const merged = deps.sh(`git -c user.name="$(git config user.name || echo task-ledger)" -c user.email="$(git config user.email || echo task-ledger@noreply.invalid)" merge --no-edit -m ${quote(`本体の ${head.slice(0, 7)} を取り込む（${task.id}）`)} ${quote(head)}`, task.workdir!, 120_000);
   if (merged.code !== 0) {
     const conflicts = deps.sh('git diff --name-only --diff-filter=U', task.workdir!, 60_000).output.split('\n').filter(Boolean);
     const handoffConflicts = conflicts.filter((path) => path.startsWith('handoff/'));
-    const otherConflicts = conflicts.filter((path) => !path.startsWith('handoff/'));
-    if (otherConflicts.length || !handoffConflicts.length) {
-      deps.sh('git merge --abort', task.workdir!, 60_000);
-      return stop(`取り消しの再適用前に本体を作業用コピーへ入れられなかった: ${tail(merged.output, 5)}`);
+    const recoveryConflicts = conflicts.filter((path) => !path.startsWith('handoff/'));
+    if (recoveryConflicts.length) {
+      // Reverted task additions commonly appear as modify/delete; retain the worker's branch copy.
+      for (const path of recoveryConflicts) {
+        if (deps.sh(`git checkout --ours -- ${quote(path)} && git add -- ${quote(path)}`, task.workdir!, 60_000).code !== 0) {
+          deps.sh('git merge --abort', task.workdir!, 60_000);
+          return `取り消しの再適用前に作業枝の衝突を解けなかった: ${path}`;
+        }
+      }
     }
     for (const path of handoffConflicts) {
       const kept = deps.sh(`git checkout --ours -- ${quote(path)} && git add -- ${quote(path)}`, task.workdir!, 60_000);
-      if (kept.code !== 0) { deps.sh('git merge --abort', task.workdir!, 60_000); return stop(`handoff の枝側を残せなかった: ${path}`); }
+      if (kept.code !== 0) { deps.sh('git merge --abort', task.workdir!, 60_000); return `handoff の枝側を残せなかった: ${path}`; }
     }
     const completed = deps.sh(`git -c user.name="$(git config user.name || echo task-ledger)" -c user.email="$(git config user.email || echo task-ledger@noreply.invalid)" commit --no-edit -m ${quote(`本体の ${head.slice(0, 7)} を取り込む（${task.id}）`)}`, task.workdir!, 60_000);
-    if (completed.code !== 0) return stop(`handoff の衝突を解いた後に本体を取り込めなかった: ${tail(completed.output, 5)}`);
+    if (completed.code !== 0) return `handoff の衝突を解いた後に本体を取り込めなかった: ${tail(completed.output, 5)}`;
   }
-  const reapplied = deps.sh(`git -c user.name="$(git config user.name || echo task-ledger)" -c user.email="$(git config user.email || echo task-ledger@noreply.invalid)" revert --no-edit ${quote(pending)}`, task.workdir!, 60_000);
-  if (reapplied.code !== 0) return stop(`取り消しの取り消しを作業用コピーに作れなかった: ${tail(reapplied.output, 5)}`);
-  ledger.setStatus(task.id, '確かめ中', `取り消しを再適用: ${pending}`);
+  let reapplied = deps.sh(`git -c user.name="$(git config user.name || echo task-ledger)" -c user.email="$(git config user.email || echo task-ledger@noreply.invalid)" revert --no-edit ${quote(pending)}`, task.workdir!, 60_000);
+  if (reapplied.code !== 0) {
+    const conflicts = deps.sh('git diff --name-only --diff-filter=U', task.workdir!, 60_000).output.split('\n').filter(Boolean);
+    const handoffConflicts = conflicts.filter((path) => path.startsWith('handoff/'));
+    const otherConflicts = conflicts.filter((path) => !path.startsWith('handoff/'));
+    if (!handoffConflicts.length || otherConflicts.length) {
+      deps.sh('git revert --abort', task.workdir!, 60_000);
+      return `取り消しの取り消しを作業用コピーに作れなかった: ${tail(reapplied.output, 5)}`;
+    }
+    for (const path of handoffConflicts) {
+      if (deps.sh(`git checkout --ours -- ${quote(path)} && git add -- ${quote(path)}`, task.workdir!, 60_000).code !== 0) {
+        deps.sh('git revert --abort', task.workdir!, 60_000); return `revert 中に handoff の枝側を残せなかった: ${path}`;
+      }
+    }
+    reapplied = deps.sh(`git -c user.name="$(git config user.name || echo task-ledger)" -c user.email="$(git config user.email || echo task-ledger@noreply.invalid)" revert --continue`, task.workdir!, 60_000);
+    if (reapplied.code !== 0) return `handoff 衝突を解いた後に revert --continue できなかった: ${tail(reapplied.output, 5)}`;
+  }
+  ledger.setStatus(task.id, task.status, `取り消しを再適用: ${pending}`);
   return null;
 }
 
@@ -554,6 +587,8 @@ function sendBack(ledger: Ledger, task: Task, deps: AdvanceDeps, reason: string,
     appendFileSync(logPath(task.id), `${message}\n`);
     said.push(`${task.id}: ${message}`);
   }
+  const recovery = task.workdir ? reapplyRevertedMerge(ledger, task, deps) : null;
+  if (recovery) { stop(recovery); return; }
   const detailPath = detail ? writeLog(task.id, `sendback-${task.attempts}`, detail) : null;
   const note = `差し戻し: ${reason}${detailPath ? `（詳しく: ${detailPath}）` : ''}`;
   ledger.setStatus(task.id, '走行中', note, { attempts: task.attempts + 1 });
