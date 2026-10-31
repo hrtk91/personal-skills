@@ -844,7 +844,7 @@ test('review sessions resume only through use four, then start over; cwd changes
   try {
     writeFileSync(join(f.workdir,'handoff/t-report.md'),'report current');mkdirSync(join(f.dir,'logs'),{recursive:true});writeFileSync(join(f.dir,'logs/repo-1-check-1.log'),'checks passed');
     const calls:{prompt:string;session?:{sessionId?:string;resumePrompt?:string}}[]=[];
-    const d=deps('');d.review=(prompt,_cwd,_dirs,session)=>{calls.push({prompt,session});return {answer:'{"verdict":"判断","reasons":["hold"],"fixes":[]}',attributes:{'review.session_id':`sid-${calls.length}`}};};
+    const d=deps('');d.quota=()=>({claudeRemaining:90,codexRemaining:10});d.review=(prompt,_cwd,_dirs,session)=>{calls.push({prompt,session});return {answer:'{"verdict":"判断","reasons":["hold"],"fixes":[]}',attributes:{'review.session_id':`sid-${calls.length}`}};};
     for(let i=0;i<5;i++){f.ledger.setStatus('repo-1','レビュー中',`差し戻し: reason-${i}`);advance(f.ledger,'repo-1',d,100+i);}
     assert.equal(calls.length,5);assert.match(calls[0]!.prompt,/## 依頼文/);assert.equal(calls[0]!.session?.sessionId!==undefined,true);assert.equal(calls[0]!.session?.resumePrompt,undefined);
     for(let i=1;i<4;i++){assert.equal(calls[i]!.session?.sessionId,`sid-${i}`);assert.ok(calls[i]!.session?.resumePrompt);assert.match(calls[i]!.prompt,/前回のレビュー以後の変化だけ/);assert.doesNotMatch(calls[i]!.prompt,/## この仕事/);assert.match(calls[i]!.prompt,/\{"verdict"/);assert.ok(calls[i]!.prompt.length<calls[0]!.prompt.length,`resumed prompt ${calls[i]!.prompt.length} >= full ${calls[0]!.prompt.length}`);}
@@ -895,21 +895,112 @@ test('catch-up conflicts after a passing review do not trigger another review, i
 });
 
 test('failed resume retries once with a fresh session and the full review prompt',()=>{
-  const f=fixture();try{writeFileSync(join(f.workdir,'handoff/t-report.md'),'report');mkdirSync(join(f.dir,'logs'),{recursive:true});writeFileSync(join(f.dir,'logs/repo-1-check-1.log'),'checks passed');let count=0;const d=deps('');d.review=(prompt,_cwd,_dirs,session)=>{count++;if(count===1)return{answer:'unparseable',attributes:{}};assert.equal(session?.resumePrompt,undefined);assert.notEqual(session?.sessionId,'saved');assert.match(prompt,/## 依頼文/);return{answer:'{"verdict":"判断","reasons":["hold"],"fixes":[]}',attributes:{'review.session_id':'fresh'}};};
+  const f=fixture();try{writeFileSync(join(f.workdir,'handoff/t-report.md'),'report');mkdirSync(join(f.dir,'logs'),{recursive:true});writeFileSync(join(f.dir,'logs/repo-1-check-1.log'),'checks passed');let count=0;const d=deps('');d.quota=()=>({claudeRemaining:90,codexRemaining:10});d.review=(prompt,_cwd,_dirs,session)=>{count++;if(count===1)return{answer:'unparseable',attributes:{}};assert.equal(session?.resumePrompt,undefined);assert.notEqual(session?.sessionId,'saved');assert.match(prompt,/## 依頼文/);return{answer:'{"verdict":"判断","reasons":["hold"],"fixes":[]}',attributes:{'review.session_id':'fresh'}};};
     f.ledger.saveClaudeSession('repo-1','review','saved',f.workdir,'HEAD');f.ledger.setStatus('repo-1','レビュー中','retry');advance(f.ledger,'repo-1',d,300);assert.equal(count,2);assert.equal(f.ledger.claudeSession('repo-1','review')?.session_id,'fresh');
   }finally{f.done();}
 });
 
 test('a valid resumed verdict that quotes 終了コード 1 is kept without a full re-review',()=>{
-  const f=fixture();try{writeFileSync(join(f.workdir,'handoff/t-report.md'),'report');mkdirSync(join(f.dir,'logs'),{recursive:true});writeFileSync(join(f.dir,'logs/repo-1-check-1.log'),'checks passed');let count=0;const d=deps('');d.review=(_prompt,_cwd,_dirs,session)=>{count++;assert.ok(session?.resumePrompt);return{answer:'{"verdict":"判断","reasons":["確かめが終了コード 1 で落ちたが原因は環境"],"fixes":[]}',attributes:{'review.session_id':'kept'}};};
+  const f=fixture();try{writeFileSync(join(f.workdir,'handoff/t-report.md'),'report');mkdirSync(join(f.dir,'logs'),{recursive:true});writeFileSync(join(f.dir,'logs/repo-1-check-1.log'),'checks passed');let count=0;const d=deps('');d.quota=()=>({claudeRemaining:90,codexRemaining:10});d.review=(_prompt,_cwd,_dirs,session)=>{count++;assert.ok(session?.resumePrompt);return{answer:'{"verdict":"判断","reasons":["確かめが終了コード 1 で落ちたが原因は環境"],"fixes":[]}',attributes:{'review.session_id':'kept'}};};
     f.ledger.saveClaudeSession('repo-1','review','saved',f.workdir,'HEAD');f.ledger.setStatus('repo-1','レビュー中','retry');advance(f.ledger,'repo-1',d,300);assert.equal(count,1);assert.equal(f.ledger.claudeSession('repo-1','review')?.session_id,'kept');
   }finally{f.done();}
 });
 
 test('a resumed review that really exited non-zero (review() mark) is redone in full',()=>{
-  const f=fixture();try{writeFileSync(join(f.workdir,'handoff/t-report.md'),'report');mkdirSync(join(f.dir,'logs'),{recursive:true});writeFileSync(join(f.dir,'logs/repo-1-check-1.log'),'checks passed');let count=0;const d=deps('');d.review=(_prompt,_cwd,_dirs,session)=>{count++;if(count===1)return{answer:'{"verdict":"通す","reasons":[],"fixes":[]}\n（レビュー役が終了コード 1 で終わった）boom',attributes:{}};assert.equal(session?.resumePrompt,undefined);return{answer:'{"verdict":"判断","reasons":["hold"],"fixes":[]}',attributes:{'review.session_id':'fresh'}};};
+  const f=fixture();try{writeFileSync(join(f.workdir,'handoff/t-report.md'),'report');mkdirSync(join(f.dir,'logs'),{recursive:true});writeFileSync(join(f.dir,'logs/repo-1-check-1.log'),'checks passed');let count=0;const d=deps('');d.quota=()=>({claudeRemaining:90,codexRemaining:10});d.review=(_prompt,_cwd,_dirs,session)=>{count++;if(count===1)return{answer:'{"verdict":"通す","reasons":[],"fixes":[]}\n（レビュー役が終了コード 1 で終わった）boom',attributes:{}};assert.equal(session?.resumePrompt,undefined);return{answer:'{"verdict":"判断","reasons":["hold"],"fixes":[]}',attributes:{'review.session_id':'fresh'}};};
     f.ledger.saveClaudeSession('repo-1','review','saved',f.workdir,'HEAD');f.ledger.setStatus('repo-1','レビュー中','retry');advance(f.ledger,'repo-1',d,300);assert.equal(count,2);
   }finally{f.done();}
+});
+
+test('design-session review forks first, and a failed design gate sends back without third-party review', () => {
+  for (const designAnswer of ['{"verdict":"通す","reasons":[],"fixes":[]}', '{"verdict":"直す","reasons":["設計との差"],"fixes":["直す"]}', '{"verdict":"直す","reasons":["設計との差"],"fixes":["fallback"],"findings":[{"text":"finding detail","likelihood":"いつも","harm":"大","blocking":true}]}']) {
+    const f = fixture();
+    try {
+      f.ledger.db.prepare('UPDATE tasks SET design_session=? WHERE id=?').run('design-session-id', 'repo-1');
+      writeFileSync(join(f.workdir, 'handoff/t-report.md'), '終わりの条件: 満たした\\n');
+      const calls: string[] = [];
+      const d = deps('');
+      d.quota = () => ({ claudeRemaining: 20, codexRemaining: 80 });
+      d.review = (_prompt, _cwd, _dirs, session) => {
+        calls.push(`${session?.forkSession ? 'design' : 'third'}:${session?.model}:${session?.sessionId}`);
+        return session?.forkSession ? { answer: designAnswer, attributes: { 'review.session_id': 'forked-id' } } : { answer: '{"verdict":"判断","reasons":["hold"],"fixes":[]}', attributes: { 'review.session_id': 'third-id' } };
+      };
+      advance(f.ledger, 'repo-1', d, 1);
+      assert.match(calls[0]!, /^design:opus:design-session-id$/);
+      if (designAnswer.includes('通す')) {
+        assert.match(calls[1]!, /^third:gpt-6.1-terra:/);
+        assert.equal(calls.length, 2);
+        const selected = f.ledger.spans('repo-1').find((span) => span.name === '第三者モデル選択')!;
+        assert.equal(selected.attributes['model.claude_remaining'], 20);
+        assert.equal(selected.attributes['model.codex_remaining'], 80);
+      } else {
+        assert.equal(calls.length, 1);
+        assert.equal(f.ledger.get('repo-1')!.status, '走行中');
+        if (designAnswer.includes('finding detail')) {
+          const detail = readFileSync(join(f.dir, 'logs/repo-1-sendback-1.log'), 'utf8');
+          assert.match(detail, /finding detail/);
+          assert.doesNotMatch(detail, /fallback/);
+        }
+      }
+    } finally { f.done(); }
+  }
+});
+
+test('design verdict judgment waits with kinds and does not call third-party review', () => {
+  const f = fixture();
+  try {
+    f.ledger.db.prepare('UPDATE tasks SET design_session=? WHERE id=?').run('design-session-id', 'repo-1');
+    writeFileSync(join(f.workdir, 'handoff/t-report.md'), '終わりの条件: 満たした\\n');
+    const calls: string[] = [];
+    const d = deps('');
+    d.review = (prompt, _cwd, _dirs, session) => {
+      calls.push(prompt);
+      if (session?.forkSession) return '{"verdict":"判断","reasons":["情報不足"],"fixes":[],"kinds":["実装の誤り"]}';
+      return '{"verdict":"通す","reasons":[],"fixes":[]}';
+    };
+    advance(f.ledger, 'repo-1', d, 1);
+    assert.equal(f.ledger.get('repo-1')!.status, '判断待ち');
+    assert.match(f.ledger.get('repo-1')!.note!, /設計どおりか確認: 情報不足/);
+    assert.equal(calls.length, 1);
+    assert.match(calls[0]!, /{"verdict"/);
+    assert.equal(f.ledger.events('repo-1').at(-1)?.kind, '実装の誤り');
+  } finally { f.done(); }
+});
+
+test('unreadable design verdict waits without resending worker and prompt contains verdict schema', () => {
+  const f = fixture();
+  try {
+    f.ledger.db.prepare('UPDATE tasks SET design_session=? WHERE id=?').run('design-session-id', 'repo-1');
+    writeFileSync(join(f.workdir, 'handoff/t-report.md'), '終わりの条件: 満たした\\n');
+    const calls: string[] = [];
+    const d = deps('');
+    d.review = (prompt, _cwd, _dirs, session) => { calls.push(prompt); return session?.forkSession ? 'not JSON' : '{"verdict":"通す","reasons":[],"fixes":[]}'; };
+    advance(f.ledger, 'repo-1', d, 1);
+    assert.equal(f.ledger.get('repo-1')!.status, '判断待ち');
+    assert.equal(f.ledger.get('repo-1')!.attempts, 1);
+    assert.match(f.ledger.get('repo-1')!.note!, /設計どおりか確認の答えから決まった形の JSON を読めなかった/);
+    assert.equal(calls.length, 1);
+    assert.match(calls[0]!, /{"verdict":"通す\|直す\|判断"/);
+    assert.ok(!calls.includes('resend'));
+  } finally { f.done(); }
+});
+
+test('a prior review session is not resumed when quota selects terra', () => {
+  const f = fixture();
+  try {
+    writeFileSync(join(f.workdir, 'handoff/t-report.md'), '終わりの条件: 満たした\\n');
+    f.ledger.saveClaudeSession('repo-1', 'review', 'old-claude-session', f.workdir, 'old-head', 1);
+    f.ledger.setStatus('repo-1', 'レビュー中', 'retry');
+    const calls: Array<{ prompt: string; session?: { resumePrompt?: string; model?: string } }> = [];
+    const d = deps('');
+    d.quota = () => ({ claudeRemaining: 10, codexRemaining: 90 });
+    d.review = (prompt, _cwd, _dirs, session) => { calls.push({ prompt, session }); return '{"verdict":"判断","reasons":["hold"],"fixes":[]}'; };
+    advance(f.ledger, 'repo-1', d, 1);
+    assert.equal(calls.length, 1);
+    assert.match(calls[0]!.prompt, /## 依頼文/);
+    assert.equal(calls[0]!.session?.resumePrompt, undefined);
+    assert.equal(calls[0]!.session?.model, 'gpt-6.1-terra');
+  } finally { f.done(); }
 });
 
 test('real review uses explicit session-id for a new call and resume with a short delta prompt', () => {
@@ -918,6 +1009,20 @@ test('real review uses explicit session-id for a new call and resume with a shor
   try {process.env.TASK_CLAUDE_BIN=bin;const first=realAdvanceDeps.review('whole prompt','/tmp',[dir],{sessionId:'new-id'});assert.match(readFileSync(argsFile,'utf8'),/--session-id new-id/);assert.equal(typeof first,'object');
     const second=realAdvanceDeps.review('only changed prompt','/tmp',[dir],{sessionId:'fake-session',resumePrompt:'only changed prompt'});assert.match(readFileSync(argsFile,'utf8'),/--resume fake-session/);assert.match(readFileSync(inputFile,'utf8'),/^only changed prompt$/);
   } finally {if(oldBin===undefined)delete process.env.TASK_CLAUDE_BIN;else process.env.TASK_CLAUDE_BIN=oldBin;rmSync(dir,{recursive:true,force:true});}
+});
+
+test('real terra review uses the read-only Pi invocation and returns its raw harness-readable answer', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'review-terra-cli-'));
+  const old = process.env.TASK_PI_BIN, bin = join(dir, 'pi'), argsFile = join(dir, 'args');
+  try {
+    process.env.TASK_PI_BIN = bin;
+    writeFileSync(bin, `#!/bin/sh\nprintf '%s\\n' "$*" > '${argsFile}'\ncat <<'JSON'\n{"verdict":"通す","reasons":[],"fixes":[]}\nJSON\n`); chmodSync(bin, 0o755);
+    const result = realAdvanceDeps.review('review prompt', dir, [dir], { model: 'gpt-6.1-terra', sessionId: 'unused' }) as { answer: string; attributes: Record<string, unknown> };
+    assert.deepEqual(parseVerdict(result.answer), { verdict: '通す', reasons: [], fixes: [] });
+    assert.match(readFileSync(argsFile, 'utf8'), /--provider openai-codex --model gpt-6.1-terra --thinking high --tools read,grep,find,ls --no-mcp --no-extensions --no-skills --no-context-files/);
+    assert.equal(result.attributes['model.agent'], 'Pi');
+    assert.equal(result.attributes['model.model'], 'gpt-6.1-terra');
+  } finally { if (old === undefined) delete process.env.TASK_PI_BIN; else process.env.TASK_PI_BIN = old; rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('the verdict is the last valid JSON object in the answer', () => {

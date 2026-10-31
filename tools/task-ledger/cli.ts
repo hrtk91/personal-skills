@@ -16,7 +16,7 @@ import { metrics, normalizeReviewKinds, REVIEW_KINDS } from './metrics.ts';
 import { getClaudeUsage, renderClaudeUsage } from './claude-usage.ts';
 
 const USAGE = `使い方:
-  task add --title <題> --why <ユーザーの言葉と日付> [--goal <goal_id>] [--brief <依頼文のパス>] [--check <確かめのコマンド>] [--worker pi|codex|claude] [--model <モデル>] [--effort <強さ>]
+  task add --title <題> --why <ユーザーの言葉と日付> [--goal <goal_id>] [--brief <依頼文のパス>] [--check <確かめのコマンド>] [--worker pi|codex|claude] [--model <モデル>] [--effort <強さ>] [--design-session <会話ID>]
            [--after <id,...>] [--files <パス,...>] [--files-broad] [--kind 処理|見た目|調べ] [--deploy] [--repo <パス>]
   task watch --repo <パス> [--name <宛先>] [--off] | task watchers
   task push-audit [--since <時刻>] [--repo <パス>]
@@ -131,7 +131,7 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
   const { values, positionals } = parseArgs({ args: rest, allowPositionals: true, options: {
     title: { type: 'string' }, why: { type: 'string' }, brief: { type: 'string' }, check: { type: 'string' },
     after: { type: 'string' }, files: { type: 'string' }, 'files-broad': { type: 'boolean' }, kind: { type: 'string' }, deploy: { type: 'boolean' },
-    worker: { type: 'string' }, model: { type: 'string' }, effort: { type: 'string' },
+    worker: { type: 'string' }, model: { type: 'string' }, effort: { type: 'string' }, 'design-session': { type: 'string' },
     repo: { type: 'string' }, name: { type: 'string' }, off: { type: 'boolean' }, all: { type: 'boolean' }, status: { type: 'string' }, to: { type: 'string' },
     agent: { type: 'string' }, runner: { type: 'string' }, commit: { type: 'string' }, log: { type: 'string' }, workdir: { type: 'string' }, attempts: { type: 'string' },
     since: { type: 'string' }, json: { type: 'boolean' }, days: { type: 'string' }, 'dry-run': { type: 'boolean' }, weeks: { type: 'string' }, out: { type: 'string' }, issue: { type: 'string' }, body: { type: 'string' }, by: { type: 'string' }, from: { type: 'string' }, goal: { type: 'string' }, stage: { type: 'string' }, stages: { type: 'string' }, loose: { type: 'boolean' }, open: { type: 'boolean' }, docKind: { type: 'string' }, path: { type: 'string' },
@@ -222,7 +222,7 @@ export function main(argv: string[], out: (text: string) => void = console.log, 
           brief, check,
           after: values.after?.split(',').map((s) => s.trim()).filter(Boolean),
           files,
-          kind, deploy, issue_id: values.issue, worker: values.worker as Worker | undefined, model: values.model, effort: values.effort,
+          kind, deploy, issue_id: values.issue, worker: values.worker as Worker | undefined, model: values.model, effort: values.effort, design_session: values['design-session'],
         });
         if (values.goal) ledger.setTaskGoal(task.id, values.goal);
         out(line(ledger.get(task.id)!));
