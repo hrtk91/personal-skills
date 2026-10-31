@@ -1,0 +1,40 @@
+COMMAND=bash tools/pre-push-check/public-push.test.sh
+PASS: --no-ff merged main passes without pushing; remote main is unchanged
+PASS: clean filtered history is pushed fast-forward; new handoff content is absent
+PASS: runtime-built fake secret is rejected without pushing; temporary clone is removed
+PASS: HOME-path history is rejected without leaking the path or pushing
+All public-push tests passed.
+
+COMMAND=bash tools/pre-push-check/public-push.sh
+EXIT=1
+LOCAL_REFS_SAME=yes
+HEAD_SAME=yes
+PUBLIC_MAIN_SAME=yes
+PUBLIC_MAIN_BEFORE=0ca95975f4cb
+PUBLIC_MAIN_AFTER=0ca95975f4cb
+--- KEY OUTPUT ---
+File:        tools/pre-push-check/check.test.sh
+Line:        45
+File:        tools/pre-push-check/check.test.sh
+Line:        50
+File:        tools/pre-push-check/check.test.sh
+Line:        70
+[90m7:52PM[0m [33mWRN[0m [1mleaks found: 3[0m
+pre-push-check: gitleaks found a secret or failed (exit 1)
+
+COMMAND=stat -c %n\ %y handoff/public-push-script-design.md tools/pre-push-check/public-push.sh tools/pre-push-check/public-push.test.sh handoff/public-push-script-report.md
+handoff/public-push-script-design.md 2026-10-31 19:30:37.335385477 +0900
+tools/pre-push-check/public-push.sh 2026-10-31 19:43:45.016492952 +0900
+tools/pre-push-check/public-push.test.sh 2026-10-31 19:40:39.525674564 +0900
+handoff/public-push-script-report.md 2026-10-31 19:52:53.243957959 +0900
+
+COMMAND=git status --short --branch
+## herdr/public-push-script
+?? handoff/public-push-script-design.md
+?? handoff/public-push-script-report.md
+?? tools/pre-push-check/public-push.sh
+?? tools/pre-push-check/public-push.test.sh
+?? tools/pre-push-check/public-push.verification.log
+
+COMMAND=git rev-parse HEAD
+ed9e791f5ce84e0fa76c4947d7ecdd068fc2ab91
