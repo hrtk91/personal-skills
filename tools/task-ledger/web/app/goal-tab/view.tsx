@@ -72,9 +72,9 @@ function TaskStory({ title, why, status, meta, steps = true }: { title: string; 
 
 // ---- the frame around every tab ----
 
-export type DashboardTab = "goals" | "issues" | "docs" | "retro";
+export type DashboardTab = "goals" | "issues" | "stage" | "docs" | "retro";
 const TABS: Array<{ id: DashboardTab; label: string }> = [
-  { id: "goals", label: "Goal" }, { id: "issues", label: "Issue" }, { id: "docs", label: "資料" }, { id: "retro", label: "振り返り" },
+  { id: "goals", label: "Goal" }, { id: "issues", label: "Issue" }, { id: "stage", label: "工程" }, { id: "docs", label: "資料" }, { id: "retro", label: "振り返り" },
 ];
 
 /** Projects down the side (across the top on a phone), the project's name and pulse, and the tab strip. */
