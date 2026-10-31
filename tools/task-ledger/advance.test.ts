@@ -602,6 +602,12 @@ test('when someone commits during a failed merged check, retry reapplies the rev
     f.ledger.db.prepare('UPDATE tasks SET "check"=? WHERE id=?').run('false', 'repo-1');
     f.ledger.setStatus('repo-1', '確かめ中', 'retry send-back'); f.ledger.releaseRunner('repo-1');
     const retryDeps = deps('');
+    retryDeps.resend = (_task, _name) => {
+      assert.equal(readFileSync(join(f.workdir, 'mul.js'), 'utf8'), 'export const mul = (a, b) => a * b;\n', 'the restored branch change exists before the worker starts');
+      assert.match(git(f.workdir, 'log', '--format=%s'), /Revert/);
+      assert.match(git(f.workdir, 'log', '--format=%s'), /someone else/);
+      return 777;
+    };
     advance(f.ledger, 'repo-1', retryDeps, 2);
     assert.equal(f.ledger.get('repo-1')!.status, '走行中');
     // The worker rewrites its existing report and edits the same file only after the revert is replayed.
