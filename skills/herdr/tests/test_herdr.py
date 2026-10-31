@@ -223,7 +223,9 @@ if sys.argv[1:3] == ['decision', 'refresh']:
             continue
         if b'TASK_LEDGER_DB=' + db.encode() in environ and 'decision refresh' in cmdline:
             remaining.append(int(entry.name))
-    Path(os.environ['FAKE_TASK_DONE']).write_text(json.dumps({{'remaining': remaining, 'exit': result.returncode}}))
+    done = Path(os.environ['FAKE_TASK_DONE'])
+    done.with_name(done.name + '.tmp').write_text(json.dumps({{'remaining': remaining, 'exit': result.returncode}}))
+    os.replace(done.with_name(done.name + '.tmp'), done)
 sys.exit(result.returncode)
 """)
         task_wrapper.chmod(0o755)
