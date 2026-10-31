@@ -588,6 +588,9 @@ class HerdrContractTest(unittest.TestCase):
         return subprocess.run([str(TASK_BIN), *args], env=env, text=True, capture_output=True, timeout=30)
 
     def ledger_task(self):
+        (self.repo / "handoff" / f"{self.name}.md").write_text("## 困りごと\n問題\n\n## やること\n実施\n\n## やってよいこと\nこの写し\n\n## やらないこと\nなし\n\n## 終わりの条件\n確かめる。報告の1行目に「終わりの条件: 満たした」か「終わりの条件: 満たしていない — 何が」。\n")
+        self.git("add", "handoff/" + self.name + ".md")
+        self.git("-c", "user.name=Fixture", "-c", "user.email=fixture@noreply.invalid", "commit", "-q", "-m", "brief", cwd=self.repo)
         added = self.ledger("add", "--repo", str(self.repo), "--title", "契約", "--why", "test", "--brief", f"handoff/{self.name}.md")
         self.assertEqual(added.returncode, 0, added.stderr)
         return added.stdout.split("\t")[0]
@@ -600,6 +603,16 @@ class HerdrContractTest(unittest.TestCase):
         result = self.run_script(TASK_ID=task_id, TASK_LEDGER_DB=str(self.root / "ledger.sqlite"))
         self.assertEqual(result.returncode, 0, (self.work / "herdr-contract.log").read_text())
         self.assertEqual(self.marker(), "implemented")
+        prompt = self.state()["prompts"][0][1]
+        headings = ["# この仕事", "## 進め方", "## 報告の書き方", "## 終わりの条件の確かめ方"]
+        positions = [prompt.index(heading) for heading in headings]
+        self.assertEqual(positions, sorted(positions))
+        self.assertNotIn("作業役とモデル", prompt)
+        self.assertNotIn("worker: pi", prompt)
+        self.assertNotIn("## 今回の差し戻し", prompt)
+        self.assertNotIn("## 判断待ちへの答え", prompt)
+        self.assertIn("## 進め方\n1. 設計の下見", prompt)
+        self.assertIn("4. 全部終わったら、最後に touch ", prompt)
         self.assertEqual(len(self.starts()), 1)
         self.assertFalse(any(self.state()["tabs"].values()))
         task = self.ledger_show(task_id)

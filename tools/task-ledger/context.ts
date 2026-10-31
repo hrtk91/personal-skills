@@ -5,10 +5,6 @@ import type { Ledger, Task } from './ledger.ts';
 // `issueBody: false` when the Issue's body is already in the brief this context is appended to.
 export function taskContext(ledger: Ledger, task: Task, now = new Date(), options: { issueBody?: boolean; taskSpecificOnly?: boolean } = {}): string {
   const lines: string[] = [];
-  lines.push('## 作業役とモデル');
-  lines.push(`- worker: ${task.worker ?? 'pi（既定）'}`);
-  lines.push(`- model: ${task.model ?? '既定'}`);
-  lines.push(`- effort: ${task.effort ?? '既定'}`);
   // Issue briefs without a concrete task have no task event history to consult.
   const taskEvents = task.id ? ledger.events(task.id) : [];
   let answerIndex = -1;

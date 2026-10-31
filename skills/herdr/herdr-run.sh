@@ -335,6 +335,36 @@ resolve_pi_supervisor() {
   AGENT_CHANNEL_SUPERVISOR=$supervisor
 }
 
+# 台帳の作業役には、作業上の指示と実行記録を区別した見出し付きブリーフを渡す。
+worker_prompt() {
+  local context=$1 task=$2 finish=$3 optional=
+  # task-specific context は差し戻し・判断回答だけ。空なら補足段そのものを省く。
+  if [ -n "$context" ]; then optional="$context"$'\n'; fi
+  cat <<EOF
+# この仕事
+- 依頼文: $REQ${rules_read:+（あわせて$rules_read の各ファイルを読む）}
+- 作業場所: この写し（$W）だけ。本体（$REPO）には書き込まない。自分ではコミットしない。
+$optional
+## 進め方
+1. 設計の下見を $DESIGN に書く（$design_instruction）。
+2. 依頼文どおりに作業する。途中で質問せず、最後までやり切る。
+3. 報告を $REPORT に書く（下の「報告の書き方」）。
+4. $finish
+
+## 報告の書き方
+- 見出しは、結論 3 行／変えたファイル／流したテストと出力／確かめたことと推測／残った問題。
+- 1 行目は次のどれか 1 つ（機械が読む）。
+  - 「終わりの条件: 満たした」
+  - 「終わりの条件: 満たしていない — <満たしていない条件を依頼文の書き方で、；で区切る>」
+  - 「終わりの条件: 満たしていない（環境） — <何が>」: GPU・起動・書き込みの許可・ダウンロード・外のサービスなど、あなたの手で直せない理由のときだけ。コードや検査の直しで済むことには付けない。
+  - 「終わりの条件: 満たしていない — 決められない: <理由>」
+
+## 終わりの条件の確かめ方
+- 使う人が実際に通る入口（依頼文に書かれたスクリプト・コマンド・起動の台本）で流し、そのコマンドと出力の要所を報告に貼る。
+- 手で組んだ代わりの命令で流したもの、手で作った成果物は「代わりの道」と書き、満たしたとは書かない。
+EOF
+}
+
 # エージェント（種類 $kind）を立ち上げ、依頼を送り、印またはチャンネルの完了を見届ける。
 # 依頼は 1 行にする。長い指示はファイルに書いて「読んで従う」と頼む。
 # herdr の状態（idle・done）は仕事の終わりを意味しない（途中で質問して止まっても done になる）ので、終わりは印またはチャンネルで判定する。
@@ -347,7 +377,7 @@ run_agent() {
     goal="$task"
     if [ -n "${TASK_ID:-}" ]; then
       context=$("$TASK_BIN" context "$TASK_ID" --task-specific 2>/dev/null) || context=
-      [ -z "$context" ] || goal=$(printf '%s\n\n%s' "$context" "$goal")
+      goal=$(worker_prompt "$context" "$task" "全部終わったら、最後に touch $mark を実行する（この印で次の段に進む）。")
     fi
     goal="$goal 途中で質問せず最後までやり切り、報告ファイルを書き終えてください。"
     [ "${SEND_BACK_BRIEF_REFRESHED:-}" != 1 ] || goal=$'依頼文が変わった。読み直してから続ける\n'"$goal"
@@ -377,16 +407,22 @@ run_agent() {
     goal="$task"
     if [ -n "${TASK_ID:-}" ]; then
       context=$("$TASK_BIN" context "$TASK_ID" --task-specific 2>/dev/null) || context=
-      [ -z "$context" ] || goal=$(printf '%s\n\n%s' "$context" "$goal")
+      goal=$(worker_prompt "$context" "$task" '全部終わったら、最後に channel_finish の道具を 1 回呼ぶ（これで次の段に進む）。')
     fi
-    goal="$goal 途中で質問せず最後までやり切り、全部終わったら最後に channel_finish の道具を 1 回呼ぶ（これで次の段に進む）。"
   else
     goal="$task"
     if [ -n "${TASK_ID:-}" ]; then
       context=$("$TASK_BIN" context "$TASK_ID" --task-specific 2>/dev/null) || context=
-      [ -z "$context" ] || goal=$(printf '%s\n\n%s' "$context" "$goal")
+      goal=$(worker_prompt "$context" "$task" "全部終わったら、最後に touch $mark を実行する（この印で次の段に進む）。")
     fi
-    goal="$goal 途中で質問せず最後までやり切り、全部終わったら最後に touch $mark を実行する（この印で次の段に進む）。"
+  fi
+  # この分岐は task-specific ブリーフを使わない依頼。完了判定方式を依頼文にも明示する。
+  if [ -z "${TASK_ID:-}" ]; then
+    if [ "$use_channel" = 1 ]; then
+      goal="$goal 全部終わったら、最後に channel_finish の道具を 1 回呼ぶ（これで次の段に進む）。"
+    else
+      goal="$goal 全部終わったら、最後に touch $mark を実行する（この印で次の段に進む）。"
+    fi
   fi
   [ "${SEND_BACK_BRIEF_REFRESHED:-}" != 1 ] || goal=$'依頼文が変わった。読み直してから続ける\n'"$goal"
   channel_finished() {
