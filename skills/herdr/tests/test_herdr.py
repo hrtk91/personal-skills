@@ -609,6 +609,8 @@ class HerdrContractTest(unittest.TestCase):
         self.assertEqual(positions, sorted(positions))
         self.assertNotIn("作業役とモデル", prompt)
         self.assertNotIn("worker: pi", prompt)
+        self.assertNotIn("## 今回の差し戻し", prompt)
+        self.assertNotIn("## 判断待ちへの答え", prompt)
         self.assertIn("## 進め方\n1. 設計の下見", prompt)
         self.assertIn("4. 全部終わったら、最後に touch ", prompt)
         self.assertEqual(len(self.starts()), 1)
