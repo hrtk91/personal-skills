@@ -25,7 +25,7 @@ export type Task = {
   worker: Worker | null; model: string | null; effort: string | null;
   check: string | null; after: string[]; files: string[]; kind: Kind; deploy: boolean;
   status: Status; note: string | null; attempts: number; agent: string | null; commit: string | null;
-  runner: number | null; workdir: string | null; issue_id: string | null; goal_id: string | null; priority: number; created_at: string; updated_at: string;
+  runner: number | null; workdir: string | null; issue_id: string | null; goal_id: string | null; design_session: string | null; priority: number; created_at: string; updated_at: string;
 };
 export type Goal = { id: string; repo: string; title: string; why: string; status: '進行中' | '済' | 'やめ'; stages: string[]; position: number; created_at: string };
 export const ISSUE_FIELDS = ['なぜ','今の状態','関係する所','やること','やってよいこと','やらないこと','終わりの条件','確かめのコマンド','触るファイル','種類','本番に出すか'] as const;
@@ -35,7 +35,7 @@ export type Issue = { id: string; repo: string; title: string; body: string; fie
 export type Doc = { id: string; repo: string; kind: '仕様' | '設計' | 'モック' | '決まり' | '説明' | '報告'; title: string; goal_id: string | null; path: string | null; body: string | null; version: number; updated_at: string };
 export type NewTask = {
   repo: string; title: string; why: string; brief?: string | null; check?: string | null;
-  worker?: Worker | null; model?: string | null; effort?: string | null;
+  worker?: Worker | null; model?: string | null; effort?: string | null; design_session?: string | null;
   after?: string[]; files?: string[]; kind?: Kind; deploy?: boolean; issue_id?: string | null;
 };
 export type Event = { task_id: string; at: string; from_status: Status | null; to_status: Status; note: string | null; kind: string | null };
@@ -81,7 +81,7 @@ export class Ledger {
         kind TEXT NOT NULL DEFAULT '処理', deploy INTEGER NOT NULL DEFAULT 0,
         status TEXT NOT NULL, note TEXT, attempts INTEGER NOT NULL DEFAULT 0, agent TEXT, "commit" TEXT, runner INTEGER, workdir TEXT,
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL, issue_id TEXT, priority REAL NOT NULL DEFAULT 0,
-        worker TEXT, model TEXT, effort TEXT, goal_id TEXT REFERENCES goals(id)) STRICT;
+        worker TEXT, model TEXT, effort TEXT, goal_id TEXT REFERENCES goals(id), design_session TEXT) STRICT;
       CREATE TABLE IF NOT EXISTS events(
         task_id TEXT NOT NULL REFERENCES tasks(id), at TEXT NOT NULL,
         from_status TEXT, to_status TEXT NOT NULL, note TEXT, kind TEXT) STRICT;
@@ -105,7 +105,7 @@ export class Ledger {
     const eventColumns = (this.db.prepare('PRAGMA table_info(events)').all() as { name: string }[]).map((column) => column.name);
     if (!eventColumns.includes('kind')) this.db.exec('ALTER TABLE events ADD COLUMN kind TEXT');
     const taskColumns = (this.db.prepare('PRAGMA table_info(tasks)').all() as { name: string }[]).map((column) => column.name);
-    for (const [name, type] of [['runner', 'INTEGER'], ['workdir', 'TEXT'], ['issue_id', 'TEXT'], ['priority', 'REAL NOT NULL DEFAULT 0'], ['worker', 'TEXT'], ['model', 'TEXT'], ['effort', 'TEXT'], ['goal_id', 'TEXT']]) if (!taskColumns.includes(name)) this.db.exec(`ALTER TABLE tasks ADD COLUMN ${name} ${type}`);
+    for (const [name, type] of [['runner', 'INTEGER'], ['workdir', 'TEXT'], ['issue_id', 'TEXT'], ['priority', 'REAL NOT NULL DEFAULT 0'], ['worker', 'TEXT'], ['model', 'TEXT'], ['effort', 'TEXT'], ['goal_id', 'TEXT'], ['design_session', 'TEXT']]) if (!taskColumns.includes(name)) this.db.exec(`ALTER TABLE tasks ADD COLUMN ${name} ${type}`);
     // Ledgers made before the harness started tasks itself lack these columns.
     const issueColumns = (this.db.prepare('PRAGMA table_info(issues)').all() as { name: string }[]).map((column) => column.name);
     for (const [name, type] of [['fields_json', "TEXT NOT NULL DEFAULT '{}'"], ['history_json', "TEXT NOT NULL DEFAULT '[]'"]]) if (!issueColumns.includes(name)) this.db.exec(`ALTER TABLE issues ADD COLUMN ${name} ${type}`);
@@ -157,9 +157,9 @@ export class Ledger {
     const status: Status = input.brief?.trim() ? '待ち' : '依頼文待ち';
     const priority = Number((this.db.prepare('SELECT COALESCE(MAX(priority),-1)+1 AS n FROM tasks').get() as { n: number }).n);
     if (input.issue_id && !this.getIssue(input.issue_id)) throw new Error(`Issue が台帳にありません: ${input.issue_id}`);
-    this.db.prepare(`INSERT INTO tasks(id,repo,title,why,brief,"check",after_json,files_json,kind,deploy,status,created_at,updated_at,issue_id,priority,worker,model,effort)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(id, input.repo, title, input.why.trim(), input.brief?.trim() || null,
-      input.check?.trim() || null, JSON.stringify(after), JSON.stringify(input.files ?? []), kind, input.deploy ? 1 : 0, status, at, at, input.issue_id ?? null, priority, input.worker ?? null, input.model?.trim() || null, input.effort?.trim() || null);
+    this.db.prepare(`INSERT INTO tasks(id,repo,title,why,brief,"check",after_json,files_json,kind,deploy,status,created_at,updated_at,issue_id,priority,worker,model,effort,design_session)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(id, input.repo, title, input.why.trim(), input.brief?.trim() || null,
+      input.check?.trim() || null, JSON.stringify(after), JSON.stringify(input.files ?? []), kind, input.deploy ? 1 : 0, status, at, at, input.issue_id ?? null, priority, input.worker ?? null, input.model?.trim() || null, input.effort?.trim() || null, input.design_session?.trim() || null);
     if (input.issue_id) this.db.prepare("UPDATE issues SET status='仕事にした' WHERE id=?").run(input.issue_id);
     this.event(id, null, status, null, at);
     return this.get(id)!;
@@ -390,6 +390,6 @@ function toTask(row: Record<string, unknown>): Task {
     kind: String(row.kind) as Kind, deploy: row.deploy === 1, status: String(row.status) as Status,
     note: row.note === null ? null : String(row.note), attempts: Number(row.attempts),
     agent: row.agent === null ? null : String(row.agent), commit: row.commit === null ? null : String(row.commit),
-    runner: row.runner === null ? null : Number(row.runner), workdir: row.workdir === null ? null : String(row.workdir), issue_id: row.issue_id === null ? null : String(row.issue_id), goal_id: row.goal_id == null ? null : String(row.goal_id), priority: Number(row.priority), created_at: String(row.created_at), updated_at: String(row.updated_at),
+    runner: row.runner === null ? null : Number(row.runner), workdir: row.workdir === null ? null : String(row.workdir), issue_id: row.issue_id === null ? null : String(row.issue_id), goal_id: row.goal_id == null ? null : String(row.goal_id), design_session: row.design_session == null ? null : String(row.design_session), priority: Number(row.priority), created_at: String(row.created_at), updated_at: String(row.updated_at),
   };
 }
