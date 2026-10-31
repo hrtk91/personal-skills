@@ -19,7 +19,7 @@ if ! git rev-parse --verify "${range%..*}^{commit}" >/dev/null 2>&1 ||
 fi
 
 failed=0
-gitleaks git --no-banner --redact --log-opts="$range"
+gitleaks git --no-banner --redact --verbose --log-opts="$range"
 gitleaks_status=$?
 if [[ $gitleaks_status -ne 0 ]]; then
   echo "pre-push-check: gitleaks found a secret or failed (exit $gitleaks_status)" >&2
