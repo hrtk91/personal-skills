@@ -69,7 +69,7 @@ export function submitConsultIntent(ledger:Ledger,repo:string,value:unknown):{ok
   const task=ledger.get(intent.taskId);if(!task||task.repo!==repo)fail(404,'Task not found');
   if(intent.intent==='consult-decide'){
     if(typeof intent.text!=='string')fail(400,'answer text is required');
-    try{answerTask(ledger,task.id,intent.text,intent.to??'待ち');}catch(e){fail(400,e instanceof Error?e.message:String(e));}return {ok:true};
+    try{answerTask(ledger,task.id,intent.text,intent.to??'待ち',undefined,'あなた',null);}catch(e){fail(400,e instanceof Error?e.message:String(e));}return {ok:true};
   }
   if(intent.intent!=='consult-send')fail(400,'invalid intent');
   if(!['review','worker'].includes(intent.partner))fail(400,'invalid partner');
