@@ -40,6 +40,31 @@ grep -F 'file.txt:' "$tmp/home.out" >/dev/null || fail 'HOME finding did not ide
 ! grep -F "$HOME" "$tmp/home.out" >/dev/null || fail 'HOME path leaked in diagnostic'
 echo "PASS: HOME path is rejected with file and line only"
 
+# A path added in one commit and removed in the next remains detectable in the pushed history.
+new_repo "$tmp/home-history"
+printf 'path=%s/history\n' "$HOME" >>"$tmp/home-history/file.txt"
+git -C "$tmp/home-history" commit -qam add-home-path
+added_sha=$(git -C "$tmp/home-history" rev-parse --short HEAD)
+printf 'clean again\n' >>"$tmp/home-history/file.txt"
+git -C "$tmp/home-history" commit -qam remove-home-path
+if (cd "$tmp/home-history" && "$repo_root/tools/pre-push-check/check.sh" HEAD~2..HEAD) >"$tmp/home-history.out" 2>&1; then
+  fail 'HOME path removed by a later commit was accepted'
+fi
+grep -F "$added_sha:file.txt:" "$tmp/home-history.out" >/dev/null || fail 'history finding did not identify the adding commit, file, and line'
+! grep -F "$HOME" "$tmp/home-history.out" >/dev/null || fail 'HOME path leaked in history diagnostic'
+echo "PASS: HOME path added then removed across commits is rejected with commit, file, and line"
+
+# A diff body beginning with two plus signs must not be mistaken for a file header.
+new_repo "$tmp/double-plus"
+printf '++ %s/x\n' "$HOME" >>"$tmp/double-plus/file.txt"
+git -C "$tmp/double-plus" commit -qam double-plus-home-path
+if (cd "$tmp/double-plus" && "$repo_root/tools/pre-push-check/check.sh" HEAD~1..HEAD) >"$tmp/double-plus.out" 2>&1; then
+  fail 'HOME path on a ++-prefixed added line was accepted'
+fi
+grep -F 'file.txt:' "$tmp/double-plus.out" >/dev/null || fail '++-prefixed finding did not identify the file and line'
+! grep -F "$HOME" "$tmp/double-plus.out" >/dev/null || fail 'HOME path leaked in ++-prefixed diagnostic'
+echo "PASS: ++-prefixed HOME path is rejected with file and line only"
+
 # A well-known GitHub token-shaped fake secret is rejected by real gitleaks.
 new_repo "$tmp/secret"
 printf 'token=ghp_123456789012345678901234567890123456\n' >>"$tmp/secret/file.txt"

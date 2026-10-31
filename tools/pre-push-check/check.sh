@@ -27,29 +27,35 @@ if [[ $gitleaks_status -ne 0 ]]; then
 fi
 
 if [[ -n ${HOME:-} ]]; then
-  matches=$(git diff --no-ext-diff --no-color --unified=0 "$range" -- | awk -v home="$HOME" '
-    /^\+\+\+ / { file=substr($0,7); next }
-    /^@@ / {
-      line=0
-      if (match($0, /\+[0-9]+/)) {
-        value=substr($0, RSTART+1, RLENGTH-1)
-        line=value+0
+  while IFS= read -r commit; do
+    [[ -n $commit ]] || continue
+    short_commit=$(git rev-parse --short "$commit")
+    matches=$(git diff-tree --no-ext-diff --no-color --root --no-commit-id -p --unified=0 -m "$commit" -- | awk -v home="$HOME" -v commit="$short_commit" '
+      /^diff --git / { in_header=1; file=""; next }
+      in_header && /^\+\+\+ / { file=substr($0,7); next }
+      /^@@ / {
+        in_header=0
+        line=0
+        if (match($0, /\+[0-9]+/)) {
+          value=substr($0, RSTART+1, RLENGTH-1)
+          line=value+0
+        }
+        next
       }
-      next
-    }
-    /^\+/ {
-      if (index(substr($0,2), home)) printf "%s:%d\n", file, line
-      line++
-      next
-    }
-    /^ / { line++; next }
-  ')
-  if [[ -n $matches ]]; then
-    while IFS= read -r location; do
-      echo "pre-push-check: current HOME path added at $location" >&2
-    done <<< "$matches"
-    failed=1
-  fi
+      /^\+/ {
+        if (index(substr($0,2), home)) printf "%s:%s:%d\n", commit, file, line
+        line++
+        next
+      }
+      /^ / { line++; next }
+    ')
+    if [[ -n $matches ]]; then
+      while IFS= read -r location; do
+        echo "pre-push-check: current HOME path added at $location" >&2
+      done <<< "$matches"
+      failed=1
+    fi
+  done < <(git rev-list "$range")
 fi
 
 exit "$failed"
