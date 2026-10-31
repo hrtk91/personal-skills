@@ -2,7 +2,7 @@
 import { reapplyRevertedMerge, realAdvanceDeps } from './advance.ts';
 import type { Ledger, Status, Task } from './ledger.ts';
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, basename } from 'node:path';
 import { homedir } from 'node:os';
 import { hasPrincipleRef } from './principles.ts';
 
@@ -19,7 +19,8 @@ export function answerTask(ledger: Ledger, id: string, text: string, to: Status 
     const common = readFileSync(join(homedir(), '.claude/rules/principles.md'), 'utf8');
     const repoPath = join(task.repo, 'PRINCIPLES.md');
     const repo = (() => { try { return readFileSync(repoPath, 'utf8'); } catch { return ''; } })();
-    const valid = principle.startsWith('共通:') ? hasPrincipleRef(common, principle, '共通') : principle.startsWith('価値基準') ? hasPrincipleRef(common, principle, '共通') || hasPrincipleRef(repo, principle, task.repo) : hasPrincipleRef(repo, principle, task.repo);
+    const target = basename(task.repo);
+    const valid = principle.startsWith('共通:') ? hasPrincipleRef(common, principle, '共通') : hasPrincipleRef(repo, principle, target);
     if (!valid) throw new Error(`原則の参照がありません: ${principle}`);
   }
   if (attempts !== undefined && (!Number.isSafeInteger(attempts) || attempts < 0)) throw new Error('--attempts は 0 以上の整数');

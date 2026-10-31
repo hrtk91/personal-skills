@@ -201,20 +201,26 @@ export class Ledger {
     const task = this.get(id);
     if (!task) throw new Error(`台帳にありません: ${id}`);
     const at = this.now().toISOString();
+    const decisionIds: string[] = [];
     this.db.exec('BEGIN IMMEDIATE');
     try {
       this.db.prepare(`UPDATE tasks SET status=?,note=?,attempts=COALESCE(?,attempts),updated_at=? WHERE id=?`).run(to, `答え: ${text}`, attempts ?? null, at, id);
       this.event(id, task.status, to, `答え: ${text}`, at);
       this.db.prepare('INSERT INTO answers(task_id,at,by,text,to_status,principle) VALUES(?,?,?,?,?,?)').run(id,at,by,text,to,principle);
+      if (to === 'やめ') this.blockDependents(id, at, decisionIds);
+      if (to === '判断待ち' && task.status !== '判断待ち') decisionIds.unshift(id);
       this.db.exec('COMMIT');
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
+    if (this.path !== ':memory:') for (const decisionId of decisionIds) spawnDecisionRefresh(decisionId, this.path);
+    this.pushEvents(id, at);
+    for (const decisionId of decisionIds) if (decisionId !== id) this.pushEvents(decisionId, at);
     return this.get(id)!;
   }
   addPrincipleCandidate(input:{target:string;text:string;quote:string;quote_at?:string|null;source?:string|null}):number {
     const r=this.db.prepare("INSERT INTO principle_candidates(target,text,quote,quote_at,source,status,created_at) VALUES(?,?,?,?,?,'案',?)").run(input.target,input.text,input.quote,input.quote_at??null,input.source??null,this.now().toISOString()); return Number(r.lastInsertRowid);
   }
   listPrincipleCandidates(status?:string):Record<string,unknown>[] { return this.db.prepare(`SELECT * FROM principle_candidates${status?' WHERE status=?':''} ORDER BY id`).all(...(status?[status]:[])) as Record<string,unknown>[]; }
-  markPrinciple(id:number,status:string,finalText?:string):void { const allowed=['案','入れる','直して入れる','入れない','入れた']; if(!allowed.includes(status))throw new Error(`status が不正: ${status}`); if(status==='直して入れる'&&!finalText?.trim())throw new Error('直して入れるには --final が必要です'); const r=this.db.prepare('UPDATE principle_candidates SET status=?,final_text=?,decided_at=? WHERE id=?').run(status,finalText??null,this.now().toISOString(),id);if(!Number(r.changes))throw new Error(`原則案がありません: ${id}`); }
+  markPrinciple(id:number,status:string,finalText?:string):void { const allowed=['案','入れる','直して入れる','入れない','入れた']; if(!allowed.includes(status))throw new Error(`status が不正: ${status}`); if(status==='直して入れる'&&!finalText?.trim())throw new Error('直して入れるには --final が必要です'); const userDecision=['入れる','直して入れる','入れない'].includes(status); const r=this.db.prepare('UPDATE principle_candidates SET status=?,final_text=COALESCE(?,final_text),decided_at=CASE WHEN ? THEN ? ELSE decided_at END WHERE id=?').run(status,finalText??null,userDecision?1:0,userDecision?this.now().toISOString():null,id);if(!Number(r.changes))throw new Error(`原則案がありません: ${id}`); }
   setTaskGoal(taskId:string,goalId:string|null):void {if(!this.get(taskId))throw new Error(`台帳にありません: ${taskId}`);if(goalId&&!this.getGoal(goalId))throw new Error(`Goal がありません: ${goalId}`);this.db.prepare('UPDATE tasks SET goal_id=?,updated_at=? WHERE id=?').run(goalId,this.now().toISOString(),taskId);}
   addAnswerFeedback(taskId:string,answerAt:string,note:string):void { if(!this.get(taskId))throw new Error(`台帳にありません: ${taskId}`); if(!this.db.prepare('SELECT 1 FROM answers WHERE task_id=? AND at=?').get(taskId,answerAt))throw new Error('対象の答えがありません');this.db.prepare('INSERT INTO answer_feedback(task_id,answer_at,note,at) VALUES(?,?,?,?)').run(taskId,answerAt,note,this.now().toISOString()); }
   listFeedback(since?:string):Record<string,unknown>[] {return this.db.prepare(`SELECT * FROM answer_feedback${since?' WHERE at>=?':''} ORDER BY at`).all(...(since?[since]:[])) as Record<string,unknown>[];}

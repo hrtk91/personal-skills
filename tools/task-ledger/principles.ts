@@ -5,7 +5,7 @@ export function parsePrinciples(markdown: string, target: '共通' | string = '�
   let valueSection = false;
   const items: Principle[] = [];
   let current: { number: string; title: string; body: string[]; value: boolean } | null = null;
-  const finish = () => { if (current) items.push({ ref: current.value ? `価値基準${current.number}` : `${target}:${current.number}`, number: current.number, title: current.title, body: current.body.join('\n').trim() }); };
+  const finish = () => { if (current) items.push({ ref: `${target}:${current.value ? `価値基準${current.number}` : current.number}`, number: current.number, title: current.title, body: current.body.join('\n').trim() }); };
   for (const line of lines) {
     if (/^##\s+大事な価値基準\s*$/.test(line)) { finish(); current = null; valueSection = true; continue; }
     if (/^##\s+/.test(line)) { finish(); current = null; valueSection = false; continue; }
